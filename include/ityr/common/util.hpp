@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdarg>
 #include <iostream>
 #include <sstream>
 
