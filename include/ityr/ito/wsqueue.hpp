@@ -13,7 +13,10 @@
 
 namespace ityr::ito {
 
-class wsqueue_full_exception : public std::exception {};
+class wsqueue_full_exception : public std::exception {
+public:
+  const char* what() const noexcept override { return "Work stealing queue is full."; }
+};
 
 template <typename Entry>
 class wsqueue {
@@ -204,6 +207,8 @@ public:
     auto remote_qs = common::mpi_get_value<queue_state>(target_rank, 0, queue_state_win_.win());
     return remote_qs.empty();
   }
+
+  const common::global_lock& lock() const { return queue_lock_; }
 };
 
 ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
