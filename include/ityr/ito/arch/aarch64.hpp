@@ -2,8 +2,7 @@
 
 #include "ityr/common/util.hpp"
 
-namespace ityr {
-namespace ito {
+namespace ityr::ito {
 
 #if defined(__ARM_FEATURE_SVE)
 #define ITYR_AARCH64_FLOAT_CLOBBERS \
@@ -56,8 +55,8 @@ public:
                                      save_context_fn_t fn,
                                      void*             arg0,
                                      void*             arg1) {
-    register void* parent_cf_x9 asm("x9")  = (void*)(parent_cf);
-    register void* fn_x10       asm("x10") = (void*)(fn);
+    register void* parent_cf_x9 asm("x9")  = reinterpret_cast<void*>(parent_cf);
+    register void* fn_x10       asm("x10") = reinterpret_cast<void*>(fn);
     register void* arg0_x1      asm("x1")  = arg0;
     register void* arg1_x2      asm("x2")  = arg1;
     asm volatile (
@@ -108,11 +107,11 @@ public:
                             void*              arg1,
                             void*              arg2,
                             void*              arg3) {
-    uintptr_t sp = (uintptr_t)stack_buf + stack_size - 1;
+    uintptr_t sp = reinterpret_cast<uintptr_t>(stack_buf) + stack_size - 1;
     sp &= 0xFFFFFFFFFFFFFFF0;
 
-    register void* sp_x9   asm("x9")  = (void*)(sp);
-    register void* fn_x10  asm("x10") = (void*)(fn);
+    register void* sp_x9   asm("x9")  = reinterpret_cast<void*>(sp);
+    register void* fn_x10  asm("x10") = reinterpret_cast<void*>(fn);
     register void* arg0_x0 asm("x0")  = arg0;
     register void* arg1_x1 asm("x1")  = arg1;
     register void* arg2_x2 asm("x2")  = arg2;
@@ -140,7 +139,7 @@ public:
                             void*              arg1,
                             void*              arg2,
                             void*              arg3) {
-    uintptr_t sp = (uintptr_t)stack_ptr & 0xFFFFFFFFFFFFFFF0;
+    uintptr_t sp = reinterpret_cast<uintptr_t>(stack_ptr) & 0xFFFFFFFFFFFFFFF0;
 
     register void* arg0_x0 asm("x0") = arg0;
     register void* arg1_x1 asm("x1") = arg1;
@@ -159,6 +158,5 @@ public:
 
 };
 
-}
 }
 

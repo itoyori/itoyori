@@ -1,34 +1,28 @@
 #pragma once
 
 #include "ityr/common/util.hpp"
-#include <cstdint>
 
 #if defined(__x86_64__)
 
 #include "ityr/ito/arch/x86_64.hpp"
-namespace ityr {
-namespace ito {
+namespace ityr::ito {
 using context_frame = context_frame_x86_64;
 using context = context_x86_64;
-}
 }
 
 #elif defined(__aarch64__)
 
 #include "ityr/ito/arch/aarch64.hpp"
-namespace ityr {
-namespace ito {
+namespace ityr::ito {
 using context_frame = context_frame_aarch64;
 using context = context_aarch64;
-}
 }
 
 #else
 #error "This architecture is not supported"
 #endif
 
-namespace ityr {
-namespace ito {
+namespace ityr::ito {
 
 ITYR_TEST_CASE("[ityr::ito::context] save_context_with_call()") {
   int x = 3;
@@ -144,5 +138,4 @@ ITYR_TEST_CASE("[ityr::ito::context] jump_to_stack()") {
   std::free(stack_buf);
 }
 
-}
 }

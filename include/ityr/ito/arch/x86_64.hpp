@@ -2,8 +2,7 @@
 
 #include "ityr/common/util.hpp"
 
-namespace ityr {
-namespace ito {
+namespace ityr::ito {
 
 #if defined(__AVX512F__)
 #define ITYR_X86_64_FLOAT_REGS \
@@ -35,8 +34,8 @@ public:
                                      save_context_fn_t fn,
                                      void*             arg0,
                                      void*             arg1) {
-    register void* parent_cf_r8 asm("r8") = (void*)(parent_cf);
-    register void* fn_r9        asm("r9") = (void*)(fn);
+    register void* parent_cf_r8 asm("r8") = reinterpret_cast<void*>(parent_cf);
+    register void* fn_r9        asm("r9") = reinterpret_cast<void*>(fn);
     asm volatile (
         /* save red zone */
         "sub  $128, %%rsp\n\t"
@@ -101,11 +100,11 @@ public:
                             void*              arg1,
                             void*              arg2,
                             void*              arg3) {
-    uintptr_t sp = (uintptr_t)stack_buf + stack_size - 1;
+    uintptr_t sp = reinterpret_cast<uintptr_t>(stack_buf) + stack_size - 1;
     sp &= 0xFFFFFFFFFFFFFFF0;
 
-    register void* sp_r8 asm("r8") = (void*)(sp);
-    register void* fn_r9 asm("r9") = (void*)(fn);
+    register void* sp_r8 asm("r8") = reinterpret_cast<void*>(sp);
+    register void* fn_r9 asm("r9") = reinterpret_cast<void*>(fn);
     asm volatile (
         "mov  %%rsp, %%rax\n\t"
         "mov  %0, %%rsp\n\t"
@@ -130,7 +129,7 @@ public:
                             void*              arg1,
                             void*              arg2,
                             void*              arg3) {
-    uintptr_t sp = (uintptr_t)stack_ptr & 0xFFFFFFFFFFFFFFF0;
+    uintptr_t sp = reinterpret_cast<uintptr_t>(stack_ptr) & 0xFFFFFFFFFFFFFFF0;
 
     asm volatile (
         "mov  %0, %%rsp\n\t"
@@ -145,5 +144,4 @@ public:
 
 };
 
-}
 }
