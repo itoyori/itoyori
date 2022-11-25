@@ -45,8 +45,7 @@
 #define ITYR_ASSERT(cond) assert(cond)
 #endif
 
-namespace ityr {
-namespace common {
+namespace ityr::common {
 
 __attribute__((noinline))
 inline void die(const char* fmt, ...) {
@@ -91,5 +90,4 @@ inline T get_env(const char* env_var, T default_val, int rank) {
   return val;
 }
 
-}
 }
