@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdarg>
+#include <unistd.h>
 #include <iostream>
 #include <sstream>
 
@@ -60,7 +61,7 @@ inline void die(const char* fmt, ...) {
   fprintf(stderr, "\x1b[31m%s\x1b[39m\n", msg);
   fflush(stderr);
 
-  abort();
+  std::abort();
 }
 
 template <typename T>
@@ -88,6 +89,44 @@ inline T get_env(const char* env_var, T default_val, int rank) {
     std::cout << env_var << " = " << val << std::endl;
   }
   return val;
+}
+
+template <typename T>
+constexpr inline bool is_pow2(T x) {
+  return !(x & (x - 1));
+}
+
+template <typename T>
+constexpr inline T round_down_pow2(T x, T alignment) {
+  ITYR_CHECK(is_pow2(alignment));
+  return x & ~(alignment - 1);
+}
+
+template <typename T>
+constexpr inline T round_up_pow2(T x, T alignment) {
+  ITYR_CHECK(is_pow2(alignment));
+  return (x + alignment - 1) & ~(alignment - 1);
+}
+
+ITYR_TEST_CASE("[ityr::common::util] round up/down for integers") {
+  ITYR_CHECK(is_pow2(128));
+  ITYR_CHECK(!is_pow2(129));
+  ITYR_CHECK(round_down_pow2(1100, 128) == 1024);
+  ITYR_CHECK(round_down_pow2(128, 128) == 128);
+  ITYR_CHECK(round_down_pow2(129, 128) == 128);
+  ITYR_CHECK(round_down_pow2(255, 128) == 128);
+  ITYR_CHECK(round_down_pow2(73, 128) == 0);
+  ITYR_CHECK(round_down_pow2(0, 128) == 0);
+  ITYR_CHECK(round_up_pow2(1100, 128) == 1152);
+  ITYR_CHECK(round_up_pow2(128, 128) == 128);
+  ITYR_CHECK(round_up_pow2(129, 128) == 256);
+  ITYR_CHECK(round_up_pow2(255, 128) == 256);
+  ITYR_CHECK(round_up_pow2(73, 128) == 128);
+  ITYR_CHECK(round_up_pow2(0, 128) == 0);
+}
+
+inline std::size_t get_page_size() {
+  return sysconf(_SC_PAGE_SIZE);
 }
 
 }

@@ -23,20 +23,42 @@ inline MPI_Request mpi_ibarrier(MPI_Comm comm) {
 }
 
 template <typename T>
-inline T mpi_reduce(const T*    buf,
-                    std::size_t count,
-                    int         root_rank,
-                    MPI_Comm    comm,
-                    MPI_Op      op = MPI_SUM) {
+inline void mpi_bcast(T*          buf,
+                      std::size_t count,
+                      int         root_rank,
+                      MPI_Comm    comm) {
   T result;
-  MPI_Reduce(buf,
-             &result,
+  MPI_Bcast(buf,
+            count,
+            mpi_type<T>(),
+            root_rank,
+            comm);
+  return result;
+}
+
+template <typename T>
+inline T mpi_bcast_value(const T& value,
+                         int      root_rank,
+                         MPI_Comm comm) {
+  T result = value;
+  mpi_bcast(&result, 1, root_rank, comm);
+  return result;
+}
+
+template <typename T>
+inline void mpi_reduce(const T*    sendbuf,
+                       T*          recvbuf,
+                       std::size_t count,
+                       int         root_rank,
+                       MPI_Comm    comm,
+                       MPI_Op      op = MPI_SUM) {
+  MPI_Reduce(sendbuf,
+             recvbuf,
              count,
              mpi_type<T>(),
              op,
              root_rank,
              comm);
-  return result;
 }
 
 template <typename T>
@@ -44,7 +66,32 @@ inline T mpi_reduce_value(const T& value,
                           int      root_rank,
                           MPI_Comm comm,
                           MPI_Op   op = MPI_SUM) {
-  return mpi_reduce(&value, 1, root_rank, comm, op);
+  T result;
+  mpi_reduce(&value, &result, 1, root_rank, comm, op);
+  return result;
+}
+
+template <typename T>
+inline void mpi_allreduce(const T*    sendbuf,
+                          T*          recvbuf,
+                          std::size_t count,
+                          MPI_Comm    comm,
+                          MPI_Op      op = MPI_SUM) {
+  MPI_Allreduce(sendbuf,
+                recvbuf,
+                count,
+                mpi_type<T>(),
+                op,
+                comm);
+}
+
+template <typename T>
+inline T mpi_allreduce_value(const T& value,
+                             MPI_Comm comm,
+                             MPI_Op   op = MPI_SUM) {
+  T result;
+  mpi_allreduce(&value, &result, 1, comm, op);
+  return result;
 }
 
 inline void mpi_wait(MPI_Request& req) {
