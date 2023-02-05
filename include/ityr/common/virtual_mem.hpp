@@ -181,7 +181,7 @@ inline virtual_mem reserve_same_vm_coll(const topology& topo,
 }
 
 ITYR_TEST_CASE("[ityr::common::virtual_mem] allocate the same virtual memory across processes") {
-  topology topo(MPI_COMM_WORLD, false);
+  topology topo;
 
   std::size_t pagesize = get_page_size();
   virtual_mem vm = reserve_same_vm_coll(topo, pagesize * 32);

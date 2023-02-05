@@ -204,19 +204,19 @@ private:
     return entries_win_.local_buf();
   }
 
-  const common::topology&                    topo_;
-  const int                                  n_entries_;
-  const common::mpi_win_manager<queue_state> queue_state_win_;
-  const common::mpi_win_manager<Entry>       entries_win_;
-  const common::global_lock                  queue_lock_;
-  bool                                       local_empty_ = false;
+  const common::topology&              topo_;
+  int                                  n_entries_;
+  common::mpi_win_manager<queue_state> queue_state_win_;
+  common::mpi_win_manager<Entry>       entries_win_;
+  common::global_lock                  queue_lock_;
+  bool                                 local_empty_ = false;
 };
 
 ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
   int n_entries = 1000;
   using entry_t = int;
 
-  common::topology topo(MPI_COMM_WORLD, false);
+  common::topology topo;
   wsqueue<entry_t> wsq(topo, n_entries);
 
   auto my_rank = topo.my_rank();

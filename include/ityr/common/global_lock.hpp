@@ -35,12 +35,12 @@ public:
 private:
   using lock_t = int;
 
-  const topology&               topo_;
-  const mpi_win_manager<lock_t> lock_win_;
+  const topology&         topo_;
+  mpi_win_manager<lock_t> lock_win_;
 };
 
 ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
-  topology topo(MPI_COMM_WORLD, false);
+  topology topo;
   global_lock lock(topo);
 
   using value_t = std::size_t;

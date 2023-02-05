@@ -86,7 +86,7 @@ private:
 };
 
 ITYR_TEST_CASE("[ityr::common::physical_mem] map physical memory to two different virtual addresses") {
-  topology topo(MPI_COMM_WORLD, false);
+  topology topo;
   std::size_t pagesize = get_page_size();
 
   std::stringstream ss;
@@ -127,4 +127,3 @@ ITYR_TEST_CASE("[ityr::common::physical_mem] map physical memory to two differen
 }
 
 }
-
