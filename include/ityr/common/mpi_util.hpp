@@ -8,11 +8,12 @@
 namespace ityr::common {
 
 template <typename T> inline MPI_Datatype mpi_type();
-template <>           inline MPI_Datatype mpi_type<int>()           { return MPI_INT;           }
-template <>           inline MPI_Datatype mpi_type<unsigned int>()  { return MPI_UNSIGNED;      }
-template <>           inline MPI_Datatype mpi_type<long>()          { return MPI_LONG;          }
-template <>           inline MPI_Datatype mpi_type<unsigned long>() { return MPI_UNSIGNED_LONG; }
-template <>           inline MPI_Datatype mpi_type<bool>()          { return MPI_CXX_BOOL;      }
+template <>           inline MPI_Datatype mpi_type<int>()           { return MPI_INT;               }
+template <>           inline MPI_Datatype mpi_type<unsigned int>()  { return MPI_UNSIGNED;          }
+template <>           inline MPI_Datatype mpi_type<long>()          { return MPI_LONG;              }
+template <>           inline MPI_Datatype mpi_type<unsigned long>() { return MPI_UNSIGNED_LONG;     }
+template <>           inline MPI_Datatype mpi_type<bool>()          { return MPI_CXX_BOOL;          }
+template <>           inline MPI_Datatype mpi_type<void*>()         { return mpi_type<uintptr_t>(); }
 
 inline int mpi_comm_rank(MPI_Comm comm) {
   int rank;
