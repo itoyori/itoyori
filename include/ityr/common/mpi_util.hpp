@@ -7,10 +7,10 @@
 
 namespace ityr::common {
 
-template <class T> inline MPI_Datatype mpi_type();
-template <>        inline MPI_Datatype mpi_type<int>()           { return MPI_INT;           }
-template <>        inline MPI_Datatype mpi_type<long>()          { return MPI_LONG;          }
-template <>        inline MPI_Datatype mpi_type<unsigned long>() { return MPI_UNSIGNED_LONG; }
+template <typename T> inline MPI_Datatype mpi_type();
+template <>           inline MPI_Datatype mpi_type<int>()           { return MPI_INT;           }
+template <>           inline MPI_Datatype mpi_type<long>()          { return MPI_LONG;          }
+template <>           inline MPI_Datatype mpi_type<unsigned long>() { return MPI_UNSIGNED_LONG; }
 
 inline void mpi_barrier(MPI_Comm comm) {
   MPI_Barrier(comm);
@@ -318,9 +318,6 @@ class mpi_win_manager;
 
 template <>
 class mpi_win_manager<void> {
-  MPI_Win win_     = MPI_WIN_NULL;
-  void*   baseptr_ = nullptr;
-
 public:
   mpi_win_manager() {}
   mpi_win_manager(MPI_Comm comm) {
@@ -361,30 +358,14 @@ public:
 
   MPI_Win win() const { return win_; }
   void* baseptr() const { return baseptr_; }
+
+private:
+  MPI_Win win_     = MPI_WIN_NULL;
+  void*   baseptr_ = nullptr;
 };
 
 template <typename T>
 class mpi_win_manager {
-  const mpi_win_manager<void> win_;
-  const MPI_Comm              comm_ = MPI_COMM_NULL;
-  const span<T>               local_buf_;
-
-  span<T> init_local_buf(std::size_t count) const {
-    T* local_base = baseptr();
-    for (std::size_t i = 0; i < count; i++) {
-      new (local_base + i) T();
-    }
-    mpi_barrier(comm_);
-    return span<T>{local_base, count};
-  }
-
-  void destroy_local_buf() const {
-    if (!local_buf_.empty()) {
-      mpi_barrier(comm_);
-      std::destroy(local_buf_.begin(), local_buf_.end());
-    }
-  }
-
 public:
   mpi_win_manager() {}
   mpi_win_manager(MPI_Comm comm) : win_(comm), comm_(comm) {}
@@ -409,6 +390,27 @@ public:
   T* baseptr() const { return reinterpret_cast<T*>(win_.baseptr()); }
 
   span<T> local_buf() const { return local_buf_; }
+
+private:
+  span<T> init_local_buf(std::size_t count) const {
+    T* local_base = baseptr();
+    for (std::size_t i = 0; i < count; i++) {
+      new (local_base + i) T();
+    }
+    mpi_barrier(comm_);
+    return span<T>{local_base, count};
+  }
+
+  void destroy_local_buf() const {
+    if (!local_buf_.empty()) {
+      mpi_barrier(comm_);
+      std::destroy(local_buf_.begin(), local_buf_.end());
+    }
+  }
+
+  const mpi_win_manager<void> win_;
+  const MPI_Comm              comm_ = MPI_COMM_NULL;
+  const span<T>               local_buf_;
 };
 
 }

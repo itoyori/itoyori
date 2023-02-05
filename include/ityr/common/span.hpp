@@ -21,11 +21,6 @@ public:
   using iterator     = pointer;
   using reference    = T&;
 
-private:
-  pointer   ptr_ = nullptr;
-  size_type n_   = 0;
-
-public:
   span() {}
   template <typename ContiguousIterator>
   span(ContiguousIterator first, size_type n) :
@@ -53,6 +48,10 @@ public:
     assert(offset + count <= n_);
     return {ptr_ + offset, count};
   }
+
+private:
+  pointer   ptr_ = nullptr;
+  size_type n_   = 0;
 };
 
 template <typename T>

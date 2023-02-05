@@ -20,58 +20,6 @@ public:
 
 template <typename Entry>
 class wsqueue {
-  struct queue_state {
-    std::atomic<int> top  = 0;
-    std::atomic<int> base = 0;
-    // Check if they are safe to be accessed by MPI RMA
-    static_assert(sizeof(std::atomic<int>) == sizeof(int));
-
-    queue_state() = default;
-
-    // Copy constructors for std::atomic are deleted
-    queue_state(const queue_state& qs) {
-      top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    }
-    queue_state& operator=(const queue_state& qs) {
-      top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    }
-
-    queue_state(queue_state&& wm) = default;
-    queue_state& operator=(queue_state&& wm) = default;
-
-    int size() const {
-      return std::max(0, top.load(std::memory_order_relaxed) -
-                         base.load(std::memory_order_relaxed));
-    }
-
-    bool empty() const {
-      return top.load(std::memory_order_relaxed) <=
-             base.load(std::memory_order_relaxed);
-    }
-  };
-
-  static_assert(std::is_standard_layout_v<queue_state>);
-  // FIXME: queue_state is no longer trivially copyable.
-  //        Thus, strictly speaking, using MPI RMA for queue_state is illegal.
-  // static_assert(std::is_trivially_copyable_v<queue_state>);
-
-  const common::topology&                    topo_;
-  const int                                  n_entries_;
-  const common::mpi_win_manager<queue_state> queue_state_win_;
-  const common::mpi_win_manager<Entry>       entries_win_;
-  const common::global_lock                  queue_lock_;
-  bool                                       local_empty_ = false;
-
-  queue_state& local_queue_state() const {
-    return queue_state_win_.local_buf()[0];
-  }
-
-  auto local_entries() const {
-    return entries_win_.local_buf();
-  }
-
 public:
   wsqueue(const common::topology& topo, int n_entries) :
       topo_(topo),
@@ -209,6 +157,59 @@ public:
   }
 
   const common::global_lock& lock() const { return queue_lock_; }
+
+private:
+  struct queue_state {
+    std::atomic<int> top  = 0;
+    std::atomic<int> base = 0;
+    // Check if they are safe to be accessed by MPI RMA
+    static_assert(sizeof(std::atomic<int>) == sizeof(int));
+
+    queue_state() = default;
+
+    // Copy constructors for std::atomic are deleted
+    queue_state(const queue_state& qs) {
+      top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+    queue_state& operator=(const queue_state& qs) {
+      top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
+    queue_state(queue_state&& wm) = default;
+    queue_state& operator=(queue_state&& wm) = default;
+
+    int size() const {
+      return std::max(0, top.load(std::memory_order_relaxed) -
+                         base.load(std::memory_order_relaxed));
+    }
+
+    bool empty() const {
+      return top.load(std::memory_order_relaxed) <=
+             base.load(std::memory_order_relaxed);
+    }
+  };
+
+  static_assert(std::is_standard_layout_v<queue_state>);
+  // FIXME: queue_state is no longer trivially copyable.
+  //        Thus, strictly speaking, using MPI RMA for queue_state is illegal.
+  // static_assert(std::is_trivially_copyable_v<queue_state>);
+
+  queue_state& local_queue_state() const {
+    return queue_state_win_.local_buf()[0];
+  }
+
+  auto local_entries() const {
+    return entries_win_.local_buf();
+  }
+
+  const common::topology&                    topo_;
+  const int                                  n_entries_;
+  const common::mpi_win_manager<queue_state> queue_state_win_;
+  const common::mpi_win_manager<Entry>       entries_win_;
+  const common::global_lock                  queue_lock_;
+  bool                                       local_empty_ = false;
 };
 
 ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {

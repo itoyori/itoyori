@@ -11,86 +11,6 @@ class topology {
 public:
   using rank_t = int;
 
-private:
-  struct comm_group {
-    rank_t   my_rank  = -1;
-    rank_t   n_ranks  = -1;
-    MPI_Comm mpicomm  = MPI_COMM_NULL;
-    bool     own_comm = false;
-
-    comm_group(MPI_Comm comm, bool own) : mpicomm(comm), own_comm(own) {
-      MPI_Comm_rank(mpicomm, &my_rank);
-      MPI_Comm_size(mpicomm, &n_ranks);
-      ITYR_CHECK(my_rank != -1);
-      ITYR_CHECK(n_ranks != -1);
-    }
-
-    ~comm_group() {
-      if (own_comm) {
-        MPI_Comm_free(&mpicomm);
-      }
-    }
-  };
-
-  const comm_group cg_global_;
-
-  const bool shared_memory_enabled_;
-
-  const comm_group cg_intra_;
-  const comm_group cg_inter_;
-
-  struct map_entry {
-    rank_t intra_rank;
-    rank_t inter_rank;
-  };
-  const std::vector<map_entry> process_map_; // global_rank -> (intra, inter rank)
-  const std::vector<rank_t> intra2global_rank_;
-
-  MPI_Comm create_intra_comm() {
-    if (shared_memory_enabled_) {
-      MPI_Comm h;
-      MPI_Comm_split_type(mpicomm(), MPI_COMM_TYPE_SHARED, my_rank(), MPI_INFO_NULL, &h);
-      return h;
-    } else {
-      return MPI_COMM_SELF;
-    }
-  }
-
-  MPI_Comm create_inter_comm() {
-    if (shared_memory_enabled_) {
-      MPI_Comm h;
-      MPI_Comm_split(mpicomm(), intra_my_rank(), my_rank(), &h);
-      return h;
-    } else {
-      return mpicomm();
-    }
-  }
-
-  std::vector<map_entry> create_process_map() {
-    map_entry my_entry {intra_my_rank(), inter_my_rank()};
-    std::vector<map_entry> ret(n_ranks());
-    MPI_Allgather(&my_entry,
-                  sizeof(map_entry),
-                  MPI_BYTE,
-                  ret.data(),
-                  sizeof(map_entry),
-                  MPI_BYTE,
-                  mpicomm());
-    return ret;
-  }
-
-  std::vector<rank_t> create_intra2global_rank() {
-    std::vector<rank_t> ret;
-    for (rank_t i = 0; i < n_ranks(); i++) {
-      if (process_map_[i].inter_rank == inter_my_rank()) {
-        ret.push_back(i);
-      }
-    }
-    ITYR_CHECK(ret.size() == std::size_t(intra_n_ranks()));
-    return ret;
-  }
-
-public:
   topology(MPI_Comm comm, bool shared_memory_enabled = true) :
     cg_global_(comm, false),
     shared_memory_enabled_(get_env("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, my_rank())),
@@ -133,6 +53,82 @@ public:
     return inter_rank(target_global_rank) == inter_my_rank();
   }
 
+private:
+  struct comm_group {
+    rank_t   my_rank  = -1;
+    rank_t   n_ranks  = -1;
+    MPI_Comm mpicomm  = MPI_COMM_NULL;
+    bool     own_comm = false;
+
+    comm_group(MPI_Comm comm, bool own) : mpicomm(comm), own_comm(own) {
+      MPI_Comm_rank(mpicomm, &my_rank);
+      MPI_Comm_size(mpicomm, &n_ranks);
+      ITYR_CHECK(my_rank != -1);
+      ITYR_CHECK(n_ranks != -1);
+    }
+
+    ~comm_group() {
+      if (own_comm) {
+        MPI_Comm_free(&mpicomm);
+      }
+    }
+  };
+
+  struct process_map_entry {
+    rank_t intra_rank;
+    rank_t inter_rank;
+  };
+
+  MPI_Comm create_intra_comm() {
+    if (shared_memory_enabled_) {
+      MPI_Comm h;
+      MPI_Comm_split_type(mpicomm(), MPI_COMM_TYPE_SHARED, my_rank(), MPI_INFO_NULL, &h);
+      return h;
+    } else {
+      return MPI_COMM_SELF;
+    }
+  }
+
+  MPI_Comm create_inter_comm() {
+    if (shared_memory_enabled_) {
+      MPI_Comm h;
+      MPI_Comm_split(mpicomm(), intra_my_rank(), my_rank(), &h);
+      return h;
+    } else {
+      return mpicomm();
+    }
+  }
+
+  std::vector<process_map_entry> create_process_map() {
+    process_map_entry my_entry {intra_my_rank(), inter_my_rank()};
+    std::vector<process_map_entry> ret(n_ranks());
+    MPI_Allgather(&my_entry,
+                  sizeof(process_map_entry),
+                  MPI_BYTE,
+                  ret.data(),
+                  sizeof(process_map_entry),
+                  MPI_BYTE,
+                  mpicomm());
+    return ret;
+  }
+
+  std::vector<rank_t> create_intra2global_rank() {
+    std::vector<rank_t> ret;
+    for (rank_t i = 0; i < n_ranks(); i++) {
+      if (process_map_[i].inter_rank == inter_my_rank()) {
+        ret.push_back(i);
+      }
+    }
+    ITYR_CHECK(ret.size() == std::size_t(intra_n_ranks()));
+    return ret;
+  }
+
+  const comm_group                     cg_global_;
+  const bool                           shared_memory_enabled_;
+  const comm_group                     cg_intra_;
+  const comm_group                     cg_inter_;
+  const std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)
+  const std::vector<rank_t>            intra2global_rank_;
 };
 
 }

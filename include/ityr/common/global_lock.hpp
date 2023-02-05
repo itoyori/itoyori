@@ -9,11 +9,6 @@
 namespace ityr::common {
 
 class global_lock {
-  using lock_t = int;
-
-  const topology&               topo_;
-  const mpi_win_manager<lock_t> lock_win_;
-
 public:
   global_lock(const topology& topo) :
       topo_(topo), lock_win_(topo_.mpicomm(), 1) {}
@@ -36,6 +31,12 @@ public:
     lock_t result = mpi_atomic_get_value<lock_t>(target_rank, 0, lock_win_.win());
     return result == 1;
   }
+
+private:
+  using lock_t = int;
+
+  const topology&               topo_;
+  const mpi_win_manager<lock_t> lock_win_;
 };
 
 ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
