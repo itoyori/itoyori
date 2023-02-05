@@ -25,9 +25,9 @@ class virtual_mem {
 public:
   virtual_mem() {}
   virtual_mem(std::size_t size, std::size_t alignment = alignof(max_align_t)) :
-    addr_(mmap_no_physical_mem(nullptr, size, false, alignment)), size_(size) {}
+      addr_(mmap_no_physical_mem(nullptr, size, false, alignment)), size_(size) {}
   virtual_mem(void* addr, std::size_t size, std::size_t alignment = alignof(max_align_t)) :
-    addr_(mmap_no_physical_mem(addr, size, false, alignment)), size_(size) {}
+      addr_(mmap_no_physical_mem(addr, size, false, alignment)), size_(size) {}
 
   ~virtual_mem() {
     if (addr_) {

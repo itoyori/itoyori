@@ -12,12 +12,12 @@ public:
   using rank_t = int;
 
   topology(MPI_Comm comm, bool shared_memory_enabled = true) :
-    cg_global_(comm, false),
-    shared_memory_enabled_(get_env("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, my_rank())),
-    cg_intra_(create_intra_comm(), shared_memory_enabled_),
-    cg_inter_(create_inter_comm(), shared_memory_enabled_),
-    process_map_(create_process_map()),
-    intra2global_rank_(create_intra2global_rank()) {}
+      cg_global_(comm, false),
+      shared_memory_enabled_(get_env("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, my_rank())),
+      cg_intra_(create_intra_comm(), shared_memory_enabled_),
+      cg_inter_(create_inter_comm(), shared_memory_enabled_),
+      process_map_(create_process_map()),
+      intra2global_rank_(create_intra2global_rank()) {}
 
   MPI_Comm mpicomm() const { return cg_global_.mpicomm; }
   rank_t   my_rank() const { return cg_global_.my_rank; }
