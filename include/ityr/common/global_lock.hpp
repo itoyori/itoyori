@@ -10,8 +10,8 @@ namespace ityr::common {
 
 class global_lock {
 public:
-  global_lock(const topology& topo) :
-      topo_(topo), lock_win_(topo_.mpicomm(), 1) {}
+  global_lock(const topology& topo)
+    : topo_(topo), lock_win_(topo_.mpicomm(), 1) {}
 
   bool trylock(topology::rank_t target_rank) const {
     lock_t result = mpi_atomic_cas_value<lock_t>(1, 0, target_rank, 0, lock_win_.win());

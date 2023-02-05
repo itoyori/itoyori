@@ -11,13 +11,17 @@ class topology {
 public:
   using rank_t = int;
 
-  topology(MPI_Comm comm, bool shared_memory_enabled = true) :
-      cg_global_(comm, false),
+  topology() : topology(MPI_COMM_WORLD, false) {}
+  topology(MPI_Comm comm, bool shared_memory_enabled = true)
+    : cg_global_(comm, false),
       shared_memory_enabled_(get_env("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, my_rank())),
       cg_intra_(create_intra_comm(), shared_memory_enabled_),
       cg_inter_(create_inter_comm(), shared_memory_enabled_),
       process_map_(create_process_map()),
       intra2global_rank_(create_intra2global_rank()) {}
+
+  topology(const topology&) = delete;
+  topology& operator=(const topology&) = delete;
 
   MPI_Comm mpicomm() const { return cg_global_.mpicomm; }
   rank_t   my_rank() const { return cg_global_.my_rank; }
@@ -123,12 +127,12 @@ private:
     return ret;
   }
 
-  const comm_group                     cg_global_;
-  const bool                           shared_memory_enabled_;
-  const comm_group                     cg_intra_;
-  const comm_group                     cg_inter_;
-  const std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)
-  const std::vector<rank_t>            intra2global_rank_;
+  comm_group                     cg_global_;
+  bool                           shared_memory_enabled_;
+  comm_group                     cg_intra_;
+  comm_group                     cg_inter_;
+  std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)
+  std::vector<rank_t>            intra2global_rank_;
 };
 
 }

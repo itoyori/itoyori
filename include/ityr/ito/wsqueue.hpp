@@ -21,8 +21,8 @@ public:
 template <typename Entry>
 class wsqueue {
 public:
-  wsqueue(const common::topology& topo, int n_entries) :
-      topo_(topo),
+  wsqueue(const common::topology& topo, int n_entries)
+    : topo_(topo),
       n_entries_(n_entries),
       queue_state_win_(topo_.mpicomm(), 1),
       entries_win_(topo_.mpicomm(), n_entries_),

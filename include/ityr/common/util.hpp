@@ -48,7 +48,7 @@
 
 namespace ityr::common {
 
-__attribute__((noinline))
+[[noreturn]] __attribute__((noinline))
 inline void die(const char* fmt, ...) {
   constexpr int slen = 128;
   char msg[slen];
@@ -126,7 +126,8 @@ ITYR_TEST_CASE("[ityr::common::util] round up/down for integers") {
 }
 
 inline std::size_t get_page_size() {
-  return sysconf(_SC_PAGE_SIZE);
+  static std::size_t pagesize = sysconf(_SC_PAGE_SIZE);
+  return pagesize;
 }
 
 }

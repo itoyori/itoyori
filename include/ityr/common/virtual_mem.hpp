@@ -24,10 +24,10 @@ inline void* mmap_no_physical_mem(void*       addr,
 class virtual_mem {
 public:
   virtual_mem() {}
-  virtual_mem(std::size_t size, std::size_t alignment = alignof(max_align_t)) :
-      addr_(mmap_no_physical_mem(nullptr, size, false, alignment)), size_(size) {}
-  virtual_mem(void* addr, std::size_t size, std::size_t alignment = alignof(max_align_t)) :
-      addr_(mmap_no_physical_mem(addr, size, false, alignment)), size_(size) {}
+  virtual_mem(std::size_t size, std::size_t alignment = alignof(max_align_t))
+    : addr_(mmap_no_physical_mem(nullptr, size, false, alignment)), size_(size) {}
+  virtual_mem(void* addr, std::size_t size, std::size_t alignment = alignof(max_align_t))
+    : addr_(mmap_no_physical_mem(addr, size, false, alignment)), size_(size) {}
 
   ~virtual_mem() {
     if (addr_) {
@@ -138,7 +138,7 @@ inline void* mmap_no_physical_mem(void*       addr,
 inline virtual_mem reserve_same_vm_coll(const topology& topo,
                                         std::size_t     size,
                                         std::size_t     alignment = alignof(max_align_t)) {
-  uintptr_t vm_addr;
+  uintptr_t vm_addr = 0;
   virtual_mem vm;
 
   std::vector<virtual_mem> prev_vms;

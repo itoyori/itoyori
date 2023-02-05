@@ -23,11 +23,11 @@ public:
 
   span() {}
   template <typename ContiguousIterator>
-  span(ContiguousIterator first, size_type n) :
-      ptr_(&(*first)), n_(n) {}
+  span(ContiguousIterator first, size_type n)
+    : ptr_(&(*first)), n_(n) {}
   template <typename ContiguousIterator>
-  span(ContiguousIterator first, ContiguousIterator last) :
-      ptr_(&(*first)), n_(last - first) {}
+  span(ContiguousIterator first, ContiguousIterator last)
+    : ptr_(&(*first)), n_(last - first) {}
   template <typename U>
   span(span<U> s) : ptr_(s.data()), n_(s.size() * sizeof(U) / sizeof(T)) {}
 
