@@ -9,8 +9,24 @@ namespace ityr::common {
 
 template <typename T> inline MPI_Datatype mpi_type();
 template <>           inline MPI_Datatype mpi_type<int>()           { return MPI_INT;           }
+template <>           inline MPI_Datatype mpi_type<unsigned int>()  { return MPI_UNSIGNED;      }
 template <>           inline MPI_Datatype mpi_type<long>()          { return MPI_LONG;          }
 template <>           inline MPI_Datatype mpi_type<unsigned long>() { return MPI_UNSIGNED_LONG; }
+template <>           inline MPI_Datatype mpi_type<bool>()          { return MPI_CXX_BOOL;      }
+
+inline int mpi_comm_rank(MPI_Comm comm) {
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+  ITYR_CHECK(rank >= 0);
+  return rank;
+}
+
+inline int mpi_comm_size(MPI_Comm comm) {
+  int size;
+  MPI_Comm_size(comm, &size);
+  ITYR_CHECK(size >= 0);
+  return size;
+}
 
 inline void mpi_barrier(MPI_Comm comm) {
   MPI_Barrier(comm);
@@ -410,5 +426,22 @@ private:
   const MPI_Comm              comm_ = MPI_COMM_NULL;
   const span<T>               local_buf_;
 };
+
+template <typename T>
+inline T getenv_coll(const char* env_var, T default_val, MPI_Comm comm) {
+  static bool print_env = getenv_with_default("ITYR_PRINT_ENV", false);
+
+  int rank = mpi_comm_rank(comm);
+  T val = default_val;
+
+  if (rank == 0) {
+    val = getenv_with_default(env_var, default_val);
+    if (print_env) {
+      std::cout << env_var << " = " << val << std::endl;
+    }
+  }
+
+  return mpi_bcast_value(val, 0, comm);
+}
 
 }

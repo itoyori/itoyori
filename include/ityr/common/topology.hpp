@@ -4,6 +4,7 @@
 #include <mpi.h>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/mpi_util.hpp"
 
 namespace ityr::common {
 
@@ -13,8 +14,8 @@ public:
 
   topology() : topology(MPI_COMM_WORLD, false) {}
   topology(MPI_Comm comm, bool shared_memory_enabled = true)
-    : cg_global_(comm, false),
-      shared_memory_enabled_(get_env("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, my_rank())),
+    : shared_memory_enabled_(getenv_coll("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, comm)),
+      cg_global_(comm, false),
       cg_intra_(create_intra_comm(), shared_memory_enabled_),
       cg_inter_(create_inter_comm(), shared_memory_enabled_),
       process_map_(create_process_map()),
@@ -59,17 +60,14 @@ public:
 
 private:
   struct comm_group {
-    rank_t   my_rank  = -1;
-    rank_t   n_ranks  = -1;
+    rank_t   my_rank;
+    rank_t   n_ranks;
     MPI_Comm mpicomm  = MPI_COMM_NULL;
     bool     own_comm = false;
 
-    comm_group(MPI_Comm comm, bool own) : mpicomm(comm), own_comm(own) {
-      MPI_Comm_rank(mpicomm, &my_rank);
-      MPI_Comm_size(mpicomm, &n_ranks);
-      ITYR_CHECK(my_rank != -1);
-      ITYR_CHECK(n_ranks != -1);
-    }
+    comm_group(MPI_Comm comm, bool own)
+      : my_rank(mpi_comm_rank(comm)), n_ranks(mpi_comm_size(comm)),
+        mpicomm(comm), own_comm(own) {}
 
     ~comm_group() {
       if (own_comm) {
@@ -127,8 +125,8 @@ private:
     return ret;
   }
 
-  comm_group                     cg_global_;
   bool                           shared_memory_enabled_;
+  comm_group                     cg_global_;
   comm_group                     cg_intra_;
   comm_group                     cg_inter_;
   std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)

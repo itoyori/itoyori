@@ -65,14 +65,13 @@ inline void die(const char* fmt, ...) {
 }
 
 template <typename T>
-inline T get_env_(const char* env_var, T default_val) {
+inline T getenv_with_default(const char* env_var, T default_val) {
   if (const char* val_str = std::getenv(env_var)) {
     T val;
     std::stringstream ss(val_str);
     ss >> val;
     if (ss.fail()) {
-      fprintf(stderr, "Environment variable '%s' is invalid.\n", env_var);
-      exit(1);
+      die("Environment variable '%s' is invalid.\n", env_var);
     }
     return val;
   } else {
@@ -80,15 +79,26 @@ inline T get_env_(const char* env_var, T default_val) {
   }
 }
 
-template <typename T>
-inline T get_env(const char* env_var, T default_val, int rank) {
-  static bool print_env = get_env_("ITYR_PRINT_ENV", false);
+constexpr inline uint64_t next_pow2(uint64_t x) {
+  x--;
+  x |= x >> 1;
+  x |= x >> 2;
+  x |= x >> 4;
+  x |= x >> 8;
+  x |= x >> 16;
+  x |= x >> 32;
+  return x + 1;
+}
 
-  T val = get_env_(env_var, default_val);
-  if (print_env && rank == 0) {
-    std::cout << env_var << " = " << val << std::endl;
-  }
-  return val;
+ITYR_TEST_CASE("[ityr::common::util] next_pow2") {
+  ITYR_CHECK(next_pow2(0) == 0);
+  ITYR_CHECK(next_pow2(1) == 1);
+  ITYR_CHECK(next_pow2(2) == 2);
+  ITYR_CHECK(next_pow2(3) == 4);
+  ITYR_CHECK(next_pow2(4) == 4);
+  ITYR_CHECK(next_pow2(5) == 8);
+  ITYR_CHECK(next_pow2(15) == 16);
+  ITYR_CHECK(next_pow2((uint64_t(1) << 38) - 100) == uint64_t(1) << 38);
 }
 
 template <typename T>
