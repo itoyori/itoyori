@@ -56,7 +56,7 @@ public:
   }
 
   template <typename T, typename Fn, typename... Args>
-  thread_handler<T> fork_root(Fn&& fn, Args&&... args) {
+  T root_exec(Fn&& fn, Args&&... args) {
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
 
     suspend([&, ts](context_frame* cf) {
@@ -71,7 +71,10 @@ public:
 
     sched_loop([=]() { return ts->resume_flag >= 1; });
 
-    return {ts, true};
+    T retval = ts->retval;
+    std::destroy_at(ts);
+    thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
+    return retval;
   }
 
   template <typename T>

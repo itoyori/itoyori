@@ -5,7 +5,6 @@
 #include "ityr/common/allocator.hpp"
 #include "ityr/ito/worker.hpp"
 #include "ityr/ito/scheduler.hpp"
-#include "ityr/ito/context.hpp"
 
 namespace ityr::ito {
 
@@ -18,18 +17,6 @@ public:
     fork(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
-  template <typename Fn, typename... Args>
-  void fork(Fn&& fn, Args&&... args) {
-    worker& w = worker_get();
-    handler_ = w.sched().fork<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
-  }
-
-  template <typename Fn, typename... Args>
-  void fork_root(Fn&& fn, Args&&... args) {
-    worker& w = worker_get();
-    handler_ = w.sched().fork_root<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
-  }
-
   thread(const thread&) = delete;
   thread& operator=(const thread&) = delete;
 
@@ -39,6 +26,12 @@ public:
     handler_ = th.handler_;
     th.handler_ = scheduler::thread_handler<T>{};
     return *this;
+  }
+
+  template <typename Fn, typename... Args>
+  void fork(Fn&& fn, Args&&... args) {
+    worker& w = worker_get();
+    handler_ = w.sched().fork<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   T join() {
