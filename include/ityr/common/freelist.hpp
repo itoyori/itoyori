@@ -87,7 +87,6 @@ private:
   struct entry {
     uintptr_t   addr;
     std::size_t size;
-    explicit entry(uintptr_t a, std::size_t s) : addr(a), size(s) {}
   };
 
   std::list<entry> fl_;

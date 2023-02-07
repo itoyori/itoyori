@@ -145,6 +145,16 @@ inline void mpi_get_nb(T*          origin,
 }
 
 template <typename T>
+inline void mpi_get(T*          origin,
+                    std::size_t count,
+                    int         target_rank,
+                    std::size_t target_disp,
+                    MPI_Win     win) {
+  mpi_get_nb(origin, count, target_rank, target_disp, win);
+  mpi_win_flush(target_rank, win);
+}
+
+template <typename T>
 inline MPI_Request mpi_rget(T*          origin,
                             std::size_t count,
                             int         target_rank,
@@ -189,6 +199,16 @@ inline void mpi_put_nb(const T*    origin,
           sizeof(T) * count,
           MPI_BYTE,
           win);
+}
+
+template <typename T>
+inline void mpi_put(const T*    origin,
+                    std::size_t count,
+                    int         target_rank,
+                    std::size_t target_disp,
+                    MPI_Win     win) {
+  mpi_put_nb(origin, count, target_rank, target_disp, win);
+  mpi_win_flush(target_rank, win);
 }
 
 template <typename T>

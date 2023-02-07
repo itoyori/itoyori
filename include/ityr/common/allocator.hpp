@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <sys/mman.h>
 
 #define PCAS_HAS_MEMORY_RESOURCE __has_include(<memory_resource>)
@@ -168,8 +169,6 @@ public:
     std::byte* p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
     std::byte* ret = p + pad_bytes;
 
-    printf("alloc: %p %ld\n", p, real_bytes);
-
     ITYR_CHECK(ret + bytes <= p + real_bytes);
     ITYR_CHECK(p + sizeof(header) <= ret);
 
@@ -184,23 +183,33 @@ public:
   }
 
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment = alignof(max_align_t)) override {
-    std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
-    std::size_t real_bytes = bytes + pad_bytes;
-
-    header* h = reinterpret_cast<header*>(reinterpret_cast<std::byte*>(p) - pad_bytes);
-    remove_header_from_list(h);
-
-    printf("dealloc: %p %ld\n", h, real_bytes);
-
-    std_pool_mr_.deallocate(h, real_bytes, alignment);
+    auto target_rank = get_owner(p);
+    if (target_rank == topo_.my_rank()) {
+      local_deallocate(p, bytes, alignment);
+    } else {
+      remote_deallocate(p, bytes, target_rank, alignment);
+    }
   }
 
   bool do_is_equal(const pmr::memory_resource& other) const noexcept override {
     return this == &other;
   }
 
+  void local_deallocate(void* p, std::size_t bytes, std::size_t alignment = alignof(max_align_t)) {
+    ITYR_CHECK(get_owner(p) == topo_.my_rank());
+
+    std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
+    std::size_t real_bytes = bytes + pad_bytes;
+
+    header* h = reinterpret_cast<header*>(reinterpret_cast<std::byte*>(p) - pad_bytes);
+    remove_header_from_list(h);
+
+    std_pool_mr_.deallocate(h, real_bytes, alignment);
+  }
+
   void remote_deallocate(void* p, std::size_t bytes [[maybe_unused]], int target_rank, std::size_t alignment = alignof(max_align_t)) {
     ITYR_CHECK(topo_.my_rank() != target_rank);
+    ITYR_CHECK(get_owner(p) == target_rank);
 
     static constexpr int one = 1;
     static int ret; // dummy value; passing NULL to result_addr causes segfault on some MPI
@@ -226,6 +235,10 @@ public:
         h = h->next;
       }
     }
+  }
+
+  bool is_locally_accessible(const void* p) const {
+    return topo_.is_locally_accessible(get_owner(p));
   }
 
   // mainly for debugging
@@ -333,6 +346,52 @@ private:
   header                            allocated_list_;
   header*                           allocated_list_end_ = &allocated_list_;
 };
+
+template <typename T>
+void remote_get(const remotable_resource& rmr, T* origin_p, const T* target_p, std::size_t size) {
+  if (rmr.is_locally_accessible(target_p)) {
+    std::memcpy(origin_p, target_p, size * sizeof(T));
+  } else {
+    auto target_rank = rmr.get_owner(target_p);
+    mpi_get(origin_p, size, target_rank, rmr.get_disp(target_p), rmr.win());
+  }
+}
+
+template <typename T>
+T remote_get_value(const remotable_resource& rmr, const T* target_p) {
+  if (rmr.is_locally_accessible(target_p)) {
+    return *target_p;
+  } else {
+    auto target_rank = rmr.get_owner(target_p);
+    return mpi_get_value<T>(target_rank, rmr.get_disp(target_p), rmr.win());
+  }
+}
+
+template <typename T>
+void remote_put(const remotable_resource& rmr, const T* origin_p, T* target_p, std::size_t size) {
+  if (rmr.is_locally_accessible(target_p)) {
+    std::memcpy(target_p, origin_p, size * sizeof(T));
+  } else {
+    auto target_rank = rmr.get_owner(target_p);
+    mpi_put(origin_p, size, target_rank, rmr.get_disp(target_p), rmr.win());
+  }
+}
+
+template <typename T>
+void remote_put_value(const remotable_resource& rmr, const T& val, T* target_p) {
+  if (rmr.is_locally_accessible(target_p)) {
+    *target_p = val;
+  } else {
+    auto target_rank = rmr.get_owner(target_p);
+    mpi_put_value(val, target_rank, rmr.get_disp(target_p), rmr.win());
+  }
+}
+
+template <typename T>
+T remote_faa_value(const remotable_resource& rmr, const T& val, T* target_p) {
+  auto target_rank = rmr.get_owner(target_p);
+  return mpi_atomic_faa_value(val, target_rank, rmr.get_disp(target_p), rmr.win());
+}
 
 // Tests
 // -----------------------------------------------------------------------------
