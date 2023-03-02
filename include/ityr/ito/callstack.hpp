@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/mpi_util.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
@@ -20,6 +21,18 @@ public:
   void* top() const { return vm_.addr(); }
   void* bottom() const { return reinterpret_cast<std::byte*>(vm_.addr()) + vm_.size(); }
   std::size_t size() const { return vm_.size(); }
+
+  void direct_copy_from(void*                    addr,
+                        std::size_t              size,
+                        common::topology::rank_t target_rank) const {
+    ITYR_CHECK(target_rank != topo_.my_rank());
+    ITYR_CHECK(target_rank < topo_.n_ranks());
+    ITYR_CHECK(vm_.addr() <= addr);
+    ITYR_CHECK(reinterpret_cast<std::byte*>(addr) + size <= reinterpret_cast<std::byte*>(vm_.addr()) + vm_.size());
+
+    auto target_disp = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(vm_.addr());
+    common::mpi_get(reinterpret_cast<std::byte*>(addr), size, target_rank, target_disp, win_.win());
+  }
 
 private:
   static std::string stack_shmem_name(int rank) {

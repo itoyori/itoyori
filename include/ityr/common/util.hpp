@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstdarg>
+#include <ctime>
 #include <unistd.h>
 #include <iostream>
 #include <sstream>
@@ -48,10 +49,33 @@
 
 namespace ityr::common {
 
+inline uint64_t get_time_ns() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
+}
+
+inline constexpr int max_verbose_level = 0;
+
+template <int LEVEL = 1>
+inline void verbose(const char* fmt, ...) {
+  if (LEVEL <= max_verbose_level) {
+    constexpr int slen = 256;
+    static char msg[slen];
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(msg, slen, fmt, args);
+    va_end(args);
+
+    fprintf(stderr, "%ld: %s\n", get_time_ns(), msg);
+  }
+}
+
 [[noreturn]] __attribute__((noinline))
 inline void die(const char* fmt, ...) {
-  constexpr int slen = 128;
-  char msg[slen];
+  constexpr int slen = 256;
+  static char msg[slen];
 
   va_list args;
   va_start(args, fmt);

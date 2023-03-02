@@ -21,7 +21,7 @@ public:
   template <typename Fn, typename... Args>
   auto root_exec(Fn&& fn, Args&&... args) {
     using ret_t = std::invoke_result_t<Fn, Args...>;
-    ret_t retval;
+    ret_t retval {};
     if (topo_.my_rank() == 0) {
       retval = sched_.root_exec<ret_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
     } else {
@@ -35,10 +35,10 @@ public:
   scheduler& sched() { return sched_; }
 
 private:
-  const common::topology&            topo_;
-  callstack                          stack_;
-  bool                               is_spmd_ = true;
-  scheduler                          sched_;
+  const common::topology& topo_;
+  callstack               stack_;
+  bool                    is_spmd_ = true;
+  scheduler               sched_;
 };
 
 inline std::optional<worker>& worker_get_() {

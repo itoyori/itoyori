@@ -46,4 +46,28 @@ ITYR_TEST_CASE("[ityr::ito] fib") {
   ito_fini();
 }
 
+ITYR_TEST_CASE("[ityr::ito] load balancing") {
+  common::topology topo;
+  ito_init(topo);
+
+  std::function<int(int)> lb = [&](int n) -> int {
+    if (n == 0) {
+      return 0;
+    } else if (n == 1) {
+      common::mpi_barrier(topo.mpicomm());
+      return 1;
+    } else {
+      ito::thread<int> th([=]{ return lb(n / 2); });
+      int y = lb(n - n / 2);
+      int x = th.join();
+      return x + y;
+    }
+  };
+
+  int r = root_exec(lb, topo.n_ranks());
+  ITYR_CHECK(r == topo.n_ranks());
+
+  ito_fini();
+}
+
 }
