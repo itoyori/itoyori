@@ -11,11 +11,11 @@
 
 namespace ityr::ito {
 
-inline void ito_init(const common::topology& topo) {
+inline void init(const common::topology& topo) {
   worker_init(topo);
 }
 
-inline void ito_fini() {
+inline void fini() {
   worker_fini();
 }
 
@@ -27,7 +27,7 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
 
 ITYR_TEST_CASE("[ityr::ito] fib") {
   common::topology topo;
-  ito_init(topo);
+  init(topo);
 
   std::function<int(int)> fib = [&](int n) -> int {
     if (n <= 1) {
@@ -43,12 +43,12 @@ ITYR_TEST_CASE("[ityr::ito] fib") {
   int r = root_exec(fib, 10);
   ITYR_CHECK(r == 89);
 
-  ito_fini();
+  fini();
 }
 
 ITYR_TEST_CASE("[ityr::ito] load balancing") {
   common::topology topo;
-  ito_init(topo);
+  init(topo);
 
   std::function<void(int)> lb = [&](int n) {
     if (n == 0) {
@@ -64,7 +64,7 @@ ITYR_TEST_CASE("[ityr::ito] load balancing") {
 
   root_exec(lb, topo.n_ranks());
 
-  ito_fini();
+  fini();
 }
 
 }

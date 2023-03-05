@@ -33,3 +33,8 @@ if(BUILD_TESTING)
   list(APPEND CMAKE_CTEST_ARGUMENTS "--output-on-failure")
   add_subdirectory(tests)
 endif()
+
+option(BUILD_EXAMPLES "Build and install examples" ON)
+if(BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
