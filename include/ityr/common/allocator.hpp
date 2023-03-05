@@ -142,7 +142,10 @@ public:
       win_mr_(local_base_addr_, local_max_size_, win()),
       block_mr_(&win_mr_, getenv_coll("ITYR_ALLOCATOR_BLOCK_SIZE", std::size_t(2), topo_.mpicomm()) * 1024 * 1024),
       std_pool_mr_(my_std_pool_options(), &block_mr_),
-      max_unflushed_free_objs_(getenv_coll("ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS", 10, topo_.mpicomm())) {}
+      max_unflushed_free_objs_(getenv_coll("ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS", 10, topo_.mpicomm())),
+      allocated_size_(0),
+      allocated_size_threshold_(std::size_t(2) * 1024 * 1024) {}
+
 
   MPI_Win win() const { return win_.win(); }
 
@@ -166,6 +169,11 @@ public:
     std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
     std::size_t real_bytes = bytes + pad_bytes;
 
+    if (allocated_size_ >= allocated_size_threshold_) {
+      collect_deallocated();
+      allocated_size_threshold_ = allocated_size_ * 2;
+    }
+
     std::byte* p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
     std::byte* ret = p + pad_bytes;
 
@@ -178,6 +186,8 @@ public:
     ITYR_CHECK(allocated_list_end_->next == nullptr);
     allocated_list_end_->next = h;
     allocated_list_end_ = h;
+
+    allocated_size_ += real_bytes;
 
     return ret;
   }
@@ -205,6 +215,8 @@ public:
     remove_header_from_list(h);
 
     std_pool_mr_.deallocate(h, real_bytes, alignment);
+
+    allocated_size_ -= real_bytes;
   }
 
   void remote_deallocate(void* p, std::size_t bytes [[maybe_unused]], int target_rank, std::size_t alignment = alignof(max_align_t)) {
@@ -230,6 +242,7 @@ public:
         header h_copy = *h;
         remove_header_from_list(h);
         std_pool_mr_.deallocate(reinterpret_cast<void*>(h), h_copy.size, h_copy.alignment);
+        allocated_size_ -= h_copy.size;
         h = h_copy.next;
       } else {
         h = h->next;
@@ -345,6 +358,8 @@ private:
   int                               max_unflushed_free_objs_;
   header                            allocated_list_;
   header*                           allocated_list_end_ = &allocated_list_;
+  std::size_t                       allocated_size_;
+  std::size_t                       allocated_size_threshold_;
 };
 
 template <typename T>
