@@ -20,6 +20,9 @@ public:
 
   template <typename Fn, typename... Args>
   auto root_exec(Fn&& fn, Args&&... args) {
+    ITYR_CHECK(is_spmd_);
+    is_spmd_ = false;
+
     using retval_t = std::invoke_result_t<Fn, Args...>;
     if constexpr (std::is_void_v<retval_t>) {
       if (topo_.my_rank() == 0) {
@@ -37,6 +40,8 @@ public:
       }
       return common::mpi_bcast_value(retval, 0, topo_.mpicomm());
     }
+
+    is_spmd_ = true;
   }
 
   bool is_spmd() const { return is_spmd_; }
