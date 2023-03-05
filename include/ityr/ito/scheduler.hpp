@@ -41,6 +41,32 @@ public:
       suspended_thread_allocator_(topo_) {}
 
   template <typename T, typename Fn, typename... Args>
+  T root_exec(Fn&& fn, Args&&... args) {
+    thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
+
+    suspend([&, ts](context_frame* cf) {
+      sched_cf_ = cf;
+      cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom());
+      root_on_stack([&, ts, fn, args...]() {
+        common::verbose("Starting root thread %p", ts);
+
+        T retval = invoke_fn<T>(fn, args...);
+
+        common::verbose("Root thread %p is completed", ts);
+
+        on_root_die(ts, retval);
+      });
+    });
+
+    sched_loop([=]() { return ts->resume_flag >= 1; });
+
+    T retval = ts->retval;
+    std::destroy_at(ts);
+    thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
+    return retval;
+  }
+
+  template <typename T, typename Fn, typename... Args>
   thread_handler<T> fork(Fn&& fn, Args&&... args) {
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
     thread_handler<T> th;
@@ -75,36 +101,12 @@ public:
     return th;
   }
 
-  template <typename T, typename Fn, typename... Args>
-  T root_exec(Fn&& fn, Args&&... args) {
-    thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
-
-    suspend([&, ts](context_frame* cf) {
-      sched_cf_ = cf;
-      cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom());
-      root_on_stack([&, ts, fn, args...]() {
-        common::verbose("Starting root thread %p", ts);
-
-        T retval = invoke_fn<T>(fn, args...);
-
-        common::verbose("Root thread %p is completed", ts);
-
-        on_root_die(ts, retval);
-      });
-    });
-
-    sched_loop([=]() { return ts->resume_flag >= 1; });
-
-    T retval = ts->retval;
-    std::destroy_at(ts);
-    thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
-    return retval;
-  }
-
   template <typename T>
   T join(thread_handler<T>& th) {
     if (th.serialized) {
       common::verbose("Skip join for serialized thread (fast path)");
+      // We can skip deallocaton for its thread state because it has been already deallocated
+      // when the thread is serialized (i.e., at a fork)
       return th.retval_ser;
     }
 
@@ -155,17 +157,12 @@ public:
   }
 
   template <typename CondFn>
-  void sched_loop(CondFn cond_fn) {
+  void sched_loop(CondFn&& cond_fn) {
     common::verbose("Enter scheduling loop");
 
-    while (!cond_fn()) {
+    while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
       steal();
     }
-    auto req = common::mpi_ibarrier(topo_.mpicomm());
-    while (!common::mpi_test(req)) {
-      steal();
-    }
-    common::mpi_barrier(topo_.mpicomm());
 
     common::verbose("Exit scheduling loop");
   }
@@ -306,6 +303,20 @@ private:
     }, &fn, nullptr, nullptr, nullptr);
   }
 
+  template <typename CondFn>
+  bool should_exit_sched_loop(CondFn&& cond_fn) {
+    if (sched_loop_exit_req_ == MPI_REQUEST_NULL &&
+        std::forward<CondFn>(cond_fn)()) {
+      // If a given condition is met, enters a barrier
+      sched_loop_exit_req_ = common::mpi_ibarrier(topo_.mpicomm());
+    }
+    if (sched_loop_exit_req_ != MPI_REQUEST_NULL) {
+      // If the barrier is resolved, the scheduler loop should terminate
+      return common::mpi_test(sched_loop_exit_req_);
+    }
+    return false;
+  }
+
   struct wsqueue_entry {
     void*       frame_base;
     std::size_t frame_size;
@@ -316,8 +327,9 @@ private:
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;
   common::remotable_resource suspended_thread_allocator_;
-  context_frame*             cf_top_   = nullptr;
-  context_frame*             sched_cf_ = nullptr;
+  context_frame*             cf_top_               = nullptr;
+  context_frame*             sched_cf_             = nullptr;
+  MPI_Request                sched_loop_exit_req_  = MPI_REQUEST_NULL;
 };
 
 }

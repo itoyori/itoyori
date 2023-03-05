@@ -27,6 +27,7 @@ public:
       } else {
         sched_.sched_loop([]{ return true; });
       }
+      common::mpi_barrier(topo_.mpicomm());
     } else {
       retval_t retval {};
       if (topo_.my_rank() == 0) {
