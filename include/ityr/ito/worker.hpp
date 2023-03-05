@@ -20,14 +20,22 @@ public:
 
   template <typename Fn, typename... Args>
   auto root_exec(Fn&& fn, Args&&... args) {
-    using ret_t = std::invoke_result_t<Fn, Args...>;
-    ret_t retval {};
-    if (topo_.my_rank() == 0) {
-      retval = sched_.root_exec<ret_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    using retval_t = std::invoke_result_t<Fn, Args...>;
+    if constexpr (std::is_void_v<retval_t>) {
+      if (topo_.my_rank() == 0) {
+        sched_.root_exec<scheduler::no_retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+      } else {
+        sched_.sched_loop([]{ return true; });
+      }
     } else {
-      sched_.sched_loop([]{ return true; });
+      retval_t retval {};
+      if (topo_.my_rank() == 0) {
+        retval = sched_.root_exec<retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+      } else {
+        sched_.sched_loop([]{ return true; });
+      }
+      return common::mpi_bcast_value(retval, 0, topo_.mpicomm());
     }
-    return common::mpi_bcast_value(retval, 0, topo_.mpicomm());
   }
 
   bool is_spmd() const { return is_spmd_; }

@@ -11,6 +11,8 @@ namespace ityr::ito {
 
 class scheduler {
 public:
+  struct no_retval_t {};
+
   struct suspended_state {
     void*       evacuation_ptr;
     void*       frame_base;
@@ -39,7 +41,7 @@ public:
       suspended_thread_allocator_(topo_) {}
 
   template <typename T, typename Fn, typename... Args>
-  thread_handler<T> fork(Fn fn, Args... args) {
+  thread_handler<T> fork(Fn&& fn, Args&&... args) {
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
     thread_handler<T> th;
     th.state = ts;
@@ -52,7 +54,7 @@ public:
 
       common::verbose("Starting new thread %p", ts);
 
-      T retval = fn(args...);
+      T retval = invoke_fn<T>(fn, args...);
 
       common::verbose("Thread %p is completed", ts);
 
@@ -74,7 +76,7 @@ public:
   }
 
   template <typename T, typename Fn, typename... Args>
-  T root_exec(Fn fn, Args... args) {
+  T root_exec(Fn&& fn, Args&&... args) {
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
 
     suspend([&, ts](context_frame* cf) {
@@ -83,7 +85,7 @@ public:
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
 
-        T retval = fn(args...);
+        T retval = invoke_fn<T>(fn, args...);
 
         common::verbose("Root thread %p is completed", ts);
 
@@ -112,7 +114,9 @@ public:
     T retval;
     if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
       common::verbose("Thread %p is already joined", ts);
-      retval = remote_get_value(thread_state_allocator_, &ts->retval);
+      if constexpr (!std::is_same_v<T, no_retval_t>) {
+        retval = remote_get_value(thread_state_allocator_, &ts->retval);
+      }
 
     } else {
       suspend([&, ts](context_frame* cf) {
@@ -139,7 +143,9 @@ public:
 
       common::verbose("Resume continuation of join for thread %p", ts);
 
-      retval = remote_get_value(thread_state_allocator_, &ts->retval);
+      if constexpr (!std::is_same_v<T, no_retval_t>) {
+        retval = remote_get_value(thread_state_allocator_, &ts->retval);
+      }
     }
 
     std::destroy_at(ts);
@@ -165,11 +171,24 @@ public:
   }
 
 private:
+  template <typename T, typename Fn, typename... Args>
+  T invoke_fn(Fn&& fn, Args&&... args) {
+    T retval;
+    if constexpr (!std::is_same_v<T, no_retval_t>) {
+      retval = fn(args...);
+    } else {
+      fn(args...);
+    }
+    return retval;
+  }
+
   template <typename T>
   void on_die(thread_state<T>* ts, const T& retval) {
     auto qe = wsq_.pop();
     if (!qe.has_value()) {
-      remote_put_value(thread_state_allocator_, retval, &ts->retval);
+      if constexpr (!std::is_same_v<T, no_retval_t>) {
+        remote_put_value(thread_state_allocator_, retval, &ts->retval);
+      }
       // race
       if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
         common::verbose("Win the join race for thread %p (joined thread)", ts);
@@ -184,7 +203,9 @@ private:
 
   template <typename T>
   void on_root_die(thread_state<T>* ts, const T& retval) {
-    remote_put_value(thread_state_allocator_, retval, &ts->retval);
+    if constexpr (!std::is_same_v<T, no_retval_t>) {
+      remote_put_value(thread_state_allocator_, retval, &ts->retval);
+    }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
     resume_sched();
   }
