@@ -103,7 +103,7 @@ inline T getenv_with_default(const char* env_var, T default_val) {
   }
 }
 
-constexpr inline uint64_t next_pow2(uint64_t x) {
+inline uint64_t next_pow2(uint64_t x) {
   x--;
   x |= x >> 1;
   x |= x >> 2;
@@ -126,18 +126,18 @@ ITYR_TEST_CASE("[ityr::common::util] next_pow2") {
 }
 
 template <typename T>
-constexpr inline bool is_pow2(T x) {
+inline bool is_pow2(T x) {
   return !(x & (x - 1));
 }
 
 template <typename T>
-constexpr inline T round_down_pow2(T x, T alignment) {
+inline T round_down_pow2(T x, T alignment) {
   ITYR_CHECK(is_pow2(alignment));
   return x & ~(alignment - 1);
 }
 
 template <typename T>
-constexpr inline T round_up_pow2(T x, T alignment) {
+inline T round_up_pow2(T x, T alignment) {
   ITYR_CHECK(is_pow2(alignment));
   return (x + alignment - 1) & ~(alignment - 1);
 }
