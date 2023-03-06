@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.1)
 
-# set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_BUILD_TYPE RelWithDebInfo)
-
 include_directories(../doctest)
 add_executable(doctest.out doctest.cpp)
 target_link_libraries(doctest.out itoyori)
