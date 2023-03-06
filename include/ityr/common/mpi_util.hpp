@@ -348,6 +348,37 @@ inline T mpi_atomic_put_value(const T&    value,
   return result;
 }
 
+class mpi_initializer {
+public:
+  mpi_initializer() {
+    MPI_Initialized(&initialized_outside_);
+    if (!initialized_outside_) {
+      MPI_Init(nullptr, nullptr);
+    }
+  }
+
+  ~mpi_initializer() {
+    if (!initialized_outside_) {
+      MPI_Finalize();
+    }
+  }
+
+  mpi_initializer(const mpi_initializer&) = delete;
+  mpi_initializer& operator=(const mpi_initializer&) = delete;
+
+  mpi_initializer(mpi_initializer&& mi) noexcept
+    : initialized_outside_(mi.initialized_outside_) { mi.initialized_outside_ = 1; }
+  mpi_initializer& operator=(mpi_initializer&& mi) noexcept {
+    this->~mpi_initializer();
+    this->initialized_outside_ = mi.initialized_outside_;
+    mi.initialized_outside_ = 1;
+    return *this;
+  }
+
+private:
+  int initialized_outside_ = 1;
+};
+
 template <typename T>
 class mpi_win_manager;
 

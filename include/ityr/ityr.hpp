@@ -13,29 +13,13 @@ namespace ityr {
 class ityr {
 public:
   ityr(MPI_Comm comm)
-    : mpi_initialized_outside_(init_mpi_if_needed()),
-      topo_(comm) {}
-
-  ~ityr() {
-    if (!mpi_initialized_outside_) {
-      MPI_Finalize();
-    }
-  }
+    : topo_(comm) {}
 
   const common::topology& topology() const { return topo_; }
 
 private:
-  bool init_mpi_if_needed() {
-    int initialized_outside;
-    MPI_Initialized(&initialized_outside);
-    if (!initialized_outside) {
-      MPI_Init(nullptr, nullptr);
-    }
-    return initialized_outside;
-  }
-
-  bool             mpi_initialized_outside_;
-  common::topology topo_;
+  common::mpi_initializer mi_;
+  common::topology        topo_;
 };
 
 inline std::optional<ityr>& get_instance_() {
