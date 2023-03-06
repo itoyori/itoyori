@@ -25,6 +25,14 @@ if(MPI_CXX_LINK_FLAGS)
   target_link_options(itoyori INTERFACE ${MPI_CXX_LINK_OPTIONS})
 endif()
 
+include(CheckIncludeFileCXX)
+check_include_file_cxx(memory_resource HAS_STD_MEMORY_RESOURCE)
+if(NOT HAS_STD_MEMORY_RESOURCE)
+  find_package(Boost 1.80.0 REQUIRED COMPONENTS container)
+  include_directories(${Boost_INCLUDE_DIRS})
+  target_link_libraries(itoyori INTERFACE ${Boost_LIBRARIES})
+endif()
+
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
