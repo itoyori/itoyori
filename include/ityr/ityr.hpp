@@ -2,6 +2,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/wallclock.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
@@ -17,6 +18,7 @@ public:
 private:
   common::mpi_initializer                                    mi_;
   common::singleton_initializer<common::topology::instance>  topo_;
+  common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<ito::instance>               ito_;
 };
 
