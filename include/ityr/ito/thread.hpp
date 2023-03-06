@@ -2,7 +2,6 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/topology.hpp"
-#include "ityr/common/allocator.hpp"
 #include "ityr/ito/worker.hpp"
 #include "ityr/ito/scheduler.hpp"
 

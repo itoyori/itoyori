@@ -1,7 +1,5 @@
 #pragma once
 
-#include <mpi.h>
-
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/mpi_rma.hpp"

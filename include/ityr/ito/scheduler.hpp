@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/mpi_util.hpp"
+#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/allocator.hpp"
 #include "ityr/ito/context.hpp"

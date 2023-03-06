@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-
 #include "ityr/common/util.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/ito/callstack.hpp"

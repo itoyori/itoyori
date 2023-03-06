@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cassert>
-#include <vector>
-#include <mpi.h>
 
 #include "ityr/common/util.hpp"
 
