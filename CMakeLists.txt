@@ -29,7 +29,6 @@ include(CheckIncludeFileCXX)
 check_include_file_cxx(memory_resource HAS_STD_MEMORY_RESOURCE)
 if(NOT HAS_STD_MEMORY_RESOURCE)
   find_package(Boost 1.80.0 REQUIRED COMPONENTS container)
-  include_directories(${Boost_INCLUDE_DIRS})
   target_link_libraries(itoyori INTERFACE ${Boost_LIBRARIES})
 endif()
 
