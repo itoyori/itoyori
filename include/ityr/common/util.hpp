@@ -49,7 +49,7 @@
 
 namespace ityr::common {
 
-inline uint64_t get_time_ns() {
+inline uint64_t clock_gettime_ns() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
@@ -68,7 +68,7 @@ inline void verbose(const char* fmt, ...) {
     vsnprintf(msg, slen, fmt, args);
     va_end(args);
 
-    fprintf(stderr, "%ld: %s\n", get_time_ns(), msg);
+    fprintf(stderr, "%ld: %s\n", clock_gettime_ns(), msg);
   }
 }
 

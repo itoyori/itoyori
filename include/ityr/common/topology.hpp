@@ -1,7 +1,6 @@
 #pragma once
 
 #include <vector>
-#include <mpi.h>
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
@@ -12,9 +11,9 @@ class topology {
 public:
   using rank_t = int;
 
-  topology() : topology(MPI_COMM_WORLD, false) {}
-  topology(MPI_Comm comm, bool shared_memory_enabled = true)
-    : shared_memory_enabled_(getenv_coll("ITYR_ENABLE_SHARED_MEMORY", shared_memory_enabled, comm)),
+  topology() : topology(MPI_COMM_WORLD) {}
+  topology(MPI_Comm comm)
+    : shared_memory_enabled_(getenv_coll("ITYR_ENABLE_SHARED_MEMORY", true, comm)),
       cg_global_(comm, false),
       cg_intra_(create_intra_comm(), shared_memory_enabled_),
       cg_inter_(create_inter_comm(), shared_memory_enabled_),

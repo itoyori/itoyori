@@ -75,13 +75,13 @@ int main(int argc, char** argv) {
   for (int r = 0; r < n_repeats; r++) {
     ityr::barrier();
 
-    auto t0 = ityr::common::get_time_ns();
+    auto t0 = ityr::common::clock_gettime_ns();
 
     result_t result = ityr::ito::root_exec([]{
       return fib_rec(n_input);
     });
 
-    auto t1 = ityr::common::get_time_ns();
+    auto t1 = ityr::common::clock_gettime_ns();
 
     if (ityr::is_master()) {
       printf("[%d] %ld ns\n", r, t1 - t0);

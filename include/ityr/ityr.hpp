@@ -14,7 +14,7 @@ class ityr {
 public:
   ityr(MPI_Comm comm)
     : mpi_initialized_outside_(init_mpi_if_needed()),
-      topo_(comm, false) {}
+      topo_(comm) {}
 
   ~ityr() {
     if (!mpi_initialized_outside_) {
