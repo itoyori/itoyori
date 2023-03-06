@@ -5,6 +5,8 @@
 #include "ityr/common/util.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/ito/ito.hpp"
+#include "ityr/pattern/iterator.hpp"
+#include "ityr/pattern/parallel_loop.hpp"
 
 namespace ityr {
 
