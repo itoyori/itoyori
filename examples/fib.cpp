@@ -28,7 +28,7 @@ result_t fib_rec(int n) {
 }
 
 void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
-  if (ityr::my_rank() == 0) {
+  if (ityr::is_master()) {
     printf("Usage: %s [options]\n"
            "  options:\n"
            "    -n : input size (int)\n"
@@ -77,7 +77,9 @@ int main(int argc, char** argv) {
 
     auto t0 = ityr::common::get_time_ns();
 
-    result_t result = ityr::ito::root_exec([]{ return fib_rec(n_input); });
+    result_t result = ityr::ito::root_exec([]{
+      return fib_rec(n_input);
+    });
 
     auto t1 = ityr::common::get_time_ns();
 
