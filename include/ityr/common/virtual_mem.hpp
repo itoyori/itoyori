@@ -135,9 +135,8 @@ inline void* mmap_no_physical_mem(void*       addr,
   }
 }
 
-inline virtual_mem reserve_same_vm_coll(const topology& topo,
-                                        std::size_t     size,
-                                        std::size_t     alignment = alignof(max_align_t)) {
+inline virtual_mem reserve_same_vm_coll(std::size_t size,
+                                        std::size_t alignment = alignof(max_align_t)) {
   uintptr_t vm_addr = 0;
   virtual_mem vm;
 
@@ -147,15 +146,15 @@ inline virtual_mem reserve_same_vm_coll(const topology& topo,
   // Repeat until the same virtual memory address is allocated
   // TODO: smarter allocation using `pmap` result?
   for (int n_trial = 0; n_trial <= max_trial; n_trial++) {
-    if (topo.my_rank() == 0) {
+    if (topology::my_rank() == 0) {
       vm = virtual_mem(size, alignment);
       vm_addr = reinterpret_cast<uintptr_t>(vm.addr());
     }
 
-    vm_addr = mpi_bcast_value(vm_addr, 0, topo.mpicomm());
+    vm_addr = mpi_bcast_value(vm_addr, 0, topology::mpicomm());
 
     int status = 0; // 0: OK, 1: failed
-    if (topo.my_rank() != 0) {
+    if (topology::my_rank() != 0) {
       try {
         vm = virtual_mem(reinterpret_cast<void*>(vm_addr), size, alignment);
       } catch (mmap_noreplace_exception& e) {
@@ -163,7 +162,7 @@ inline virtual_mem reserve_same_vm_coll(const topology& topo,
       }
     }
 
-    int status_all = mpi_allreduce_value(status, topo.mpicomm());
+    int status_all = mpi_allreduce_value(status, topology::mpicomm());
 
     if (status_all == 0) {
       // prev_vms are automatically freed
@@ -181,17 +180,17 @@ inline virtual_mem reserve_same_vm_coll(const topology& topo,
 }
 
 ITYR_TEST_CASE("[ityr::common::virtual_mem] allocate the same virtual memory across processes") {
-  topology topo;
+  singleton_initializer<topology::instance> topo;
 
   std::size_t pagesize = get_page_size();
-  virtual_mem vm = reserve_same_vm_coll(topo, pagesize * 32);
+  virtual_mem vm = reserve_same_vm_coll(pagesize * 32);
   ITYR_CHECK(vm.addr() != nullptr);
 
   uintptr_t vm_addr = reinterpret_cast<uintptr_t>(vm.addr());
   std::size_t vm_size = vm.size();
 
-  uintptr_t vm_addr_root = mpi_bcast_value(vm_addr, 0, topo.mpicomm());
-  std::size_t vm_size_root = mpi_bcast_value(vm_size, 0, topo.mpicomm());
+  uintptr_t vm_addr_root = mpi_bcast_value(vm_addr, 0, topology::mpicomm());
+  std::size_t vm_size_root = mpi_bcast_value(vm_size, 0, topology::mpicomm());
 
   ITYR_CHECK(vm_addr == vm_addr_root);
   ITYR_CHECK(vm_size == vm_size_root);

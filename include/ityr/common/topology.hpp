@@ -5,12 +5,12 @@
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
 
-namespace ityr::common {
+namespace ityr::common::topology {
+
+using rank_t = int;
 
 class topology {
 public:
-  using rank_t = int;
-
   topology() : topology(MPI_COMM_WORLD) {}
   topology(MPI_Comm comm)
     : shared_memory_enabled_(getenv_coll("ITYR_ENABLE_SHARED_MEMORY", true, comm)),
@@ -53,7 +53,7 @@ public:
     return intra2global_rank_[intra_rank];
   }
 
-  bool is_locally_accessible(topology::rank_t target_global_rank) const {
+  bool is_locally_accessible(rank_t target_global_rank) const {
     return inter_rank(target_global_rank) == inter_my_rank();
   }
 
@@ -131,5 +131,24 @@ private:
   std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)
   std::vector<rank_t>            intra2global_rank_;
 };
+
+using instance = singleton<topology>;
+
+inline MPI_Comm mpicomm() { return instance::get().mpicomm(); }
+inline rank_t   my_rank() { return instance::get().my_rank(); }
+inline rank_t   n_ranks() { return instance::get().n_ranks(); }
+
+inline MPI_Comm intra_mpicomm() { return instance::get().intra_mpicomm(); }
+inline rank_t   intra_my_rank() { return instance::get().intra_my_rank(); }
+inline rank_t   intra_n_ranks() { return instance::get().intra_n_ranks(); }
+
+inline MPI_Comm inter_mpicomm() { return instance::get().inter_mpicomm(); }
+inline rank_t   inter_my_rank() { return instance::get().inter_my_rank(); }
+inline rank_t   inter_n_ranks() { return instance::get().inter_n_ranks(); }
+
+inline rank_t intra_rank(rank_t global_rank) { return instance::get().intra_rank(global_rank); };
+inline rank_t inter_rank(rank_t global_rank) { return instance::get().inter_rank(global_rank); };
+
+inline bool is_locally_accessible(rank_t target_global_rank) { return instance::get().is_locally_accessible(target_global_rank); };
 
 }

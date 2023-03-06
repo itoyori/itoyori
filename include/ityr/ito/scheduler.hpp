@@ -33,12 +33,9 @@ public:
     T                retval_ser; // return the result by value if the thread is serialized
   };
 
-  scheduler(const common::topology& topo, const callstack& stack)
-    : topo_(topo),
-      stack_(stack),
-      wsq_(topo_, common::getenv_coll("ITYR_ITO_WSQUEUE_CAPACITY", 1024, topo.mpicomm())),
-      thread_state_allocator_(topo_),
-      suspended_thread_allocator_(topo_) {}
+  scheduler(const callstack& stack)
+    : stack_(stack),
+      wsq_(common::getenv_coll("ITYR_ITO_WSQUEUE_CAPACITY", 1024, common::topology::mpicomm())) {}
 
   template <typename T, typename Fn, typename... Args>
   T root_exec(Fn&& fn, Args&&... args) {
@@ -208,16 +205,16 @@ private:
   }
 
   common::topology::rank_t get_random_rank() {
-    ITYR_CHECK(topo_.n_ranks() > 1);
+    ITYR_CHECK(common::topology::n_ranks() > 1);
     static std::mt19937 engine(std::random_device{}());
-    static std::uniform_int_distribution<common::topology::rank_t> dist(0, topo_.n_ranks() - 2);
+    static std::uniform_int_distribution<common::topology::rank_t> dist(0, common::topology::n_ranks() - 2);
 
     auto rank = dist(engine);
-    if (rank >= topo_.my_rank()) rank++;
+    if (rank >= common::topology::my_rank()) rank++;
 
     ITYR_CHECK(0 <= rank);
-    ITYR_CHECK(rank != topo_.my_rank());
-    ITYR_CHECK(rank < topo_.n_ranks());
+    ITYR_CHECK(rank != common::topology::my_rank());
+    ITYR_CHECK(rank < common::topology::n_ranks());
     return rank;
   }
 
@@ -308,7 +305,7 @@ private:
     if (sched_loop_exit_req_ == MPI_REQUEST_NULL &&
         std::forward<CondFn>(cond_fn)()) {
       // If a given condition is met, enters a barrier
-      sched_loop_exit_req_ = common::mpi_ibarrier(topo_.mpicomm());
+      sched_loop_exit_req_ = common::mpi_ibarrier(common::topology::mpicomm());
     }
     if (sched_loop_exit_req_ != MPI_REQUEST_NULL) {
       // If the barrier is resolved, the scheduler loop should terminate
@@ -322,7 +319,6 @@ private:
     std::size_t frame_size;
   };
 
-  const common::topology&    topo_;
   const callstack&           stack_;
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;

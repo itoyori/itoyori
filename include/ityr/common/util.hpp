@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <iostream>
 #include <sstream>
+#include <optional>
 
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)
@@ -163,5 +164,62 @@ inline std::size_t get_page_size() {
   static std::size_t pagesize = sysconf(_SC_PAGE_SIZE);
   return pagesize;
 }
+
+template <typename T>
+class singleton {
+public:
+  static auto& get() {
+    ITYR_CHECK(initialized());
+    return *get_optional();
+  }
+
+  static bool initialized() {
+    return get_optional().has_value();
+  }
+
+  template <typename... Args>
+  static void init(Args&&... args) {
+    ITYR_CHECK(!initialized());
+    get_optional().emplace(std::forward<Args>(args)...);
+  }
+
+  static void fini() {
+    ITYR_CHECK(initialized());
+    get_optional().reset();
+  }
+
+private:
+  static auto& get_optional() {
+    static std::optional<T> instance;
+    return instance;
+  }
+};
+
+template <typename Singleton>
+class singleton_initializer {
+public:
+  template <typename... Args>
+  singleton_initializer(Args&&... args) {
+    if (!Singleton::initialized()) {
+      Singleton::init(std::forward<Args>(args)...);
+      should_finalize_ = true;
+    }
+  }
+
+  ~singleton_initializer() {
+    if (should_finalize_) {
+      Singleton::fini();
+    }
+  }
+
+  singleton_initializer(const singleton_initializer&) = delete;
+  singleton_initializer& operator=(const singleton_initializer&) = delete;
+
+  singleton_initializer(singleton_initializer&& i) = delete;
+  singleton_initializer& operator=(singleton_initializer&& i) = delete;
+
+private:
+  bool should_finalize_ = false;
+};
 
 }

@@ -18,6 +18,7 @@ namespace ityr::common { namespace pmr = boost::container::pmr; }
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
@@ -131,18 +132,17 @@ private:
 
 class remotable_resource final : public pmr::memory_resource {
 public:
-  remotable_resource(const topology& topo)
-    : topo_(topo),
-      local_max_size_(get_local_max_size()),
-      global_max_size_(local_max_size_ * topo_.n_ranks()),
-      vm_(reserve_same_vm_coll(topo, global_max_size_, local_max_size_)),
+  remotable_resource()
+    : local_max_size_(get_local_max_size()),
+      global_max_size_(local_max_size_ * topology::n_ranks()),
+      vm_(reserve_same_vm_coll(global_max_size_, local_max_size_)),
       pm_(init_pm()),
-      local_base_addr_(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(vm_.addr()) + local_max_size_ * topo_.my_rank())),
+      local_base_addr_(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(vm_.addr()) + local_max_size_ * topology::my_rank())),
       win_(create_win()),
       win_mr_(local_base_addr_, local_max_size_, win()),
-      block_mr_(&win_mr_, getenv_coll("ITYR_ALLOCATOR_BLOCK_SIZE", std::size_t(2), topo_.mpicomm()) * 1024 * 1024),
+      block_mr_(&win_mr_, getenv_coll("ITYR_ALLOCATOR_BLOCK_SIZE", std::size_t(2), topology::mpicomm()) * 1024 * 1024),
       std_pool_mr_(my_std_pool_options(), &block_mr_),
-      max_unflushed_free_objs_(getenv_coll("ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS", 10, topo_.mpicomm())),
+      max_unflushed_free_objs_(getenv_coll("ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS", 10, topology::mpicomm())),
       allocated_size_(0),
       allocated_size_threshold_(std::size_t(2) * 1024 * 1024) {}
 
@@ -194,7 +194,7 @@ public:
 
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment = alignof(max_align_t)) override {
     auto target_rank = get_owner(p);
-    if (target_rank == topo_.my_rank()) {
+    if (target_rank == topology::my_rank()) {
       local_deallocate(p, bytes, alignment);
     } else {
       remote_deallocate(p, bytes, target_rank, alignment);
@@ -206,7 +206,7 @@ public:
   }
 
   void local_deallocate(void* p, std::size_t bytes, std::size_t alignment = alignof(max_align_t)) {
-    ITYR_CHECK(get_owner(p) == topo_.my_rank());
+    ITYR_CHECK(get_owner(p) == topology::my_rank());
 
     std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
     std::size_t real_bytes = bytes + pad_bytes;
@@ -220,7 +220,7 @@ public:
   }
 
   void remote_deallocate(void* p, std::size_t bytes [[maybe_unused]], int target_rank, std::size_t alignment = alignof(max_align_t)) {
-    ITYR_CHECK(topo_.my_rank() != target_rank);
+    ITYR_CHECK(topology::my_rank() != target_rank);
     ITYR_CHECK(get_owner(p) == target_rank);
 
     static constexpr int one = 1;
@@ -251,7 +251,7 @@ public:
   }
 
   bool is_locally_accessible(const void* p) const {
-    return topo_.is_locally_accessible(get_owner(p));
+    return topology::is_locally_accessible(get_owner(p));
   }
 
   // mainly for debugging
@@ -268,7 +268,7 @@ private:
   }
 
   std::size_t get_local_max_size() const {
-    std::size_t upper_limit = (std::size_t(1) << 40) / next_pow2(topo_.n_ranks());
+    std::size_t upper_limit = (std::size_t(1) << 40) / next_pow2(topology::n_ranks());
     std::size_t default_local_size_mb;
     if constexpr (use_dynamic_win) {
       default_local_size_mb = upper_limit / 1024 / 1024;
@@ -276,7 +276,7 @@ private:
       default_local_size_mb = 128;
     }
 
-    auto ret = std::size_t(getenv_coll("ITYR_ALLOCATOR_MAX_LOCAL_SIZE", default_local_size_mb, topo_.mpicomm())) * 1024 * 1024; // MB
+    auto ret = std::size_t(getenv_coll("ITYR_ALLOCATOR_MAX_LOCAL_SIZE", default_local_size_mb, topology::mpicomm())) * 1024 * 1024; // MB
     ITYR_CHECK(ret <= upper_limit);
     return ret;
   }
@@ -284,14 +284,14 @@ private:
   physical_mem init_pm() const {
     physical_mem pm;
 
-    if (topo_.intra_my_rank() == 0) {
-      pm = physical_mem(allocator_shmem_name(topo_.inter_my_rank()), global_max_size_, true);
+    if (topology::intra_my_rank() == 0) {
+      pm = physical_mem(allocator_shmem_name(topology::inter_my_rank()), global_max_size_, true);
     }
 
-    mpi_barrier(topo_.intra_mpicomm());
+    mpi_barrier(topology::intra_mpicomm());
 
-    if (topo_.intra_my_rank() != 0) {
-      pm = physical_mem(allocator_shmem_name(topo_.inter_my_rank()), global_max_size_, false);
+    if (topology::intra_my_rank() != 0) {
+      pm = physical_mem(allocator_shmem_name(topology::inter_my_rank()), global_max_size_, false);
     }
 
     ITYR_CHECK(vm_.size() == global_max_size_);
@@ -302,10 +302,10 @@ private:
 
   mpi_win_manager<std::byte> create_win() const {
     if constexpr (use_dynamic_win) {
-      return {topo_.mpicomm()};
+      return {topology::mpicomm()};
     } else {
-      auto local_base_addr = reinterpret_cast<std::byte*>(vm_.addr()) + local_max_size_ * topo_.my_rank();
-      return {topo_.mpicomm(), local_base_addr, local_max_size_};
+      auto local_base_addr = reinterpret_cast<std::byte*>(vm_.addr()) + local_max_size_ * topology::my_rank();
+      return {topology::mpicomm(), local_base_addr, local_max_size_};
     }
   }
 
@@ -345,7 +345,6 @@ private:
     return get_disp(flag_addr);
   }
 
-  const topology&                   topo_;
   const std::size_t                 local_max_size_;
   const std::size_t                 global_max_size_;
   virtual_mem                       vm_;
@@ -412,8 +411,9 @@ T remote_faa_value(const remotable_resource& rmr, const T& val, T* target_p) {
 // -----------------------------------------------------------------------------
 
 ITYR_TEST_CASE("[ityr::common::allocator] basic test") {
-  topology topo;
-  remotable_resource allocator(topo);
+  singleton_initializer<topology::instance> topo;
+
+  remotable_resource allocator;
 
   ITYR_SUBCASE("Local alloc/dealloc") {
     std::vector<std::size_t> sizes = {1, 2, 4, 8, 16, 32, 100, 200, 1000, 100000, 1000000};
@@ -437,16 +437,16 @@ ITYR_TEST_CASE("[ityr::common::allocator] basic test") {
     void* p = allocator.allocate(size);
 
     for (std::size_t i = 0; i < size; i++) {
-      reinterpret_cast<uint8_t*>(p)[i] = topo.my_rank();
+      reinterpret_cast<uint8_t*>(p)[i] = topology::my_rank();
     }
 
-    std::vector<void*> addrs(topo.n_ranks());
-    addrs[topo.my_rank()] = p;
+    std::vector<void*> addrs(topology::n_ranks());
+    addrs[topology::my_rank()] = p;
 
     // GET
-    for (int target_rank = 0; target_rank < topo.n_ranks(); target_rank++) {
-      addrs[target_rank] = mpi_bcast_value(addrs[target_rank], target_rank, topo.mpicomm());
-      if (topo.my_rank() != target_rank) {
+    for (int target_rank = 0; target_rank < topology::n_ranks(); target_rank++) {
+      addrs[target_rank] = mpi_bcast_value(addrs[target_rank], target_rank, topology::mpicomm());
+      if (topology::my_rank() != target_rank) {
         std::vector<uint8_t> buf(size);
         mpi_get_nb(buf.data(), size, target_rank, allocator.get_disp(addrs[target_rank]), allocator.win());
         mpi_win_flush(target_rank, allocator.win());
@@ -455,40 +455,40 @@ ITYR_TEST_CASE("[ityr::common::allocator] basic test") {
           ITYR_CHECK(buf[i] == target_rank);
         }
       }
-      mpi_barrier(topo.mpicomm());
+      mpi_barrier(topology::mpicomm());
     }
 
     // PUT
     std::vector<uint8_t> buf(size);
     for (std::size_t i = 0; i < size; i++) {
-      buf[i] = topo.my_rank();
+      buf[i] = topology::my_rank();
     }
 
-    int target_rank = (topo.my_rank() + 1) % topo.n_ranks();
+    int target_rank = (topology::my_rank() + 1) % topology::n_ranks();
     mpi_put_nb(buf.data(), size, target_rank, allocator.get_disp(addrs[target_rank]), allocator.win());
     mpi_win_flush_all(allocator.win());
 
-    mpi_barrier(topo.mpicomm());
+    mpi_barrier(topology::mpicomm());
 
     for (std::size_t i = 0; i < size; i++) {
-      ITYR_CHECK(reinterpret_cast<uint8_t*>(p)[i] == (topo.n_ranks() + topo.my_rank() - 1) % topo.n_ranks());
+      ITYR_CHECK(reinterpret_cast<uint8_t*>(p)[i] == (topology::n_ranks() + topology::my_rank() - 1) % topology::n_ranks());
     }
 
     ITYR_SUBCASE("Local free") {
       allocator.deallocate(p, size);
     }
 
-    if (topo.n_ranks() > 1) {
+    if (topology::n_ranks() > 1) {
       ITYR_SUBCASE("Remote free") {
         ITYR_CHECK(!allocator.empty());
 
-        mpi_barrier(topo.mpicomm());
+        mpi_barrier(topology::mpicomm());
 
-        int target_rank = (topo.my_rank() + 1) % topo.n_ranks();
+        int target_rank = (topology::my_rank() + 1) % topology::n_ranks();
         allocator.remote_deallocate(addrs[target_rank], size, target_rank);
 
         mpi_win_flush_all(allocator.win());
-        mpi_barrier(topo.mpicomm());
+        mpi_barrier(topology::mpicomm());
 
         allocator.collect_deallocated();
       }

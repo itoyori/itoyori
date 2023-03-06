@@ -84,8 +84,7 @@ inline T parallel_reduce_aux(parallel_loop_options options,
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce") {
-  common::topology topo;
-  ito::init(topo);
+  ito::init();
 
   ITYR_SUBCASE("default cutoff") {
     int n = 10000;

@@ -4,14 +4,15 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 
 namespace ityr::common {
 
 class global_lock {
 public:
-  global_lock(const topology& topo)
-    : topo_(topo), lock_win_(topo_.mpicomm(), 1) {}
+  global_lock()
+    : lock_win_(topology::mpicomm(), 1) {}
 
   bool trylock(topology::rank_t target_rank) const {
     lock_t result = mpi_atomic_cas_value<lock_t>(1, 0, target_rank, 0, lock_win_.win());
@@ -35,20 +36,20 @@ public:
 private:
   using lock_t = int;
 
-  const topology&         topo_;
   mpi_win_manager<lock_t> lock_win_;
 };
 
 ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
-  topology topo;
-  global_lock lock(topo);
+  singleton_initializer<topology::instance> topo;
+
+  global_lock lock;
 
   using value_t = std::size_t;
-  mpi_win_manager<value_t> value_win(topo.mpicomm(), 1);
+  mpi_win_manager<value_t> value_win(topology::mpicomm(), 1);
 
   ITYR_CHECK(value_win.local_buf()[0] == 0);
 
-  auto n_ranks = topo.n_ranks();
+  auto n_ranks = topology::n_ranks();
 
   std::size_t n_updates = 100;
 
@@ -62,7 +63,7 @@ ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
       lock.unlock(target_rank);
     }
 
-    mpi_barrier(topo.mpicomm());
+    mpi_barrier(topology::mpicomm());
   }
 
   ITYR_CHECK(value_win.local_buf()[0] == n_updates * n_ranks);

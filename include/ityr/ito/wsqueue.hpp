@@ -8,6 +8,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/global_lock.hpp"
 
@@ -21,12 +22,10 @@ public:
 template <typename Entry>
 class wsqueue {
 public:
-  wsqueue(const common::topology& topo, int n_entries)
-    : topo_(topo),
-      n_entries_(n_entries),
-      queue_state_win_(topo_.mpicomm(), 1),
-      entries_win_(topo_.mpicomm(), n_entries_),
-      queue_lock_(topo_) {}
+  wsqueue(int n_entries)
+    : n_entries_(n_entries),
+      queue_state_win_(common::topology::mpicomm(), 1),
+      entries_win_(common::topology::mpicomm(), n_entries_) {}
 
   void push(const Entry& entry) {
     local_empty_ = false;
@@ -37,7 +36,7 @@ public:
     int t = qs.top.load(std::memory_order_relaxed);
 
     if (t == n_entries_) {
-      queue_lock_.lock(topo_.my_rank());
+      queue_lock_.lock(common::topology::my_rank());
 
       int b = qs.base.load(std::memory_order_relaxed);
 
@@ -52,7 +51,7 @@ public:
 
       t = t - b;
 
-      queue_lock_.unlock(topo_.my_rank());
+      queue_lock_.unlock(common::topology::my_rank());
     }
 
     entries[t] = entry;
@@ -82,7 +81,7 @@ public:
     } else {
       qs.top.store(t + 1, std::memory_order_relaxed);
 
-      queue_lock_.lock(topo_.my_rank());
+      queue_lock_.lock(common::topology::my_rank());
 
       qs.top.store(t, std::memory_order_relaxed);
       int b = qs.base.load(std::memory_order_relaxed);
@@ -105,7 +104,7 @@ public:
         local_empty_ = true;
       }
 
-      queue_lock_.unlock(topo_.my_rank());
+      queue_lock_.unlock(common::topology::my_rank());
     }
 
     return ret;
@@ -206,7 +205,6 @@ private:
     return entries_win_.local_buf();
   }
 
-  const common::topology&              topo_;
   int                                  n_entries_;
   common::mpi_win_manager<queue_state> queue_state_win_;
   common::mpi_win_manager<Entry>       entries_win_;
@@ -218,11 +216,11 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
   int n_entries = 1000;
   using entry_t = int;
 
-  common::topology topo;
-  wsqueue<entry_t> wsq(topo, n_entries);
+  common::singleton_initializer<common::topology::instance> topo;
+  wsqueue<entry_t> wsq(n_entries);
 
-  auto my_rank = topo.my_rank();
-  auto n_ranks = topo.n_ranks();
+  auto my_rank = common::topology::my_rank();
+  auto n_ranks = common::topology::n_ranks();
 
   ITYR_SUBCASE("local push and pop") {
     int n_trial = 3;
@@ -251,7 +249,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
     for (common::topology::rank_t target_rank = 0; target_rank < n_ranks; target_rank++) {
       ITYR_CHECK(wsq.empty(target_rank));
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       entry_t sum_expected = 0;
       if (target_rank == my_rank) {
@@ -261,7 +259,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         }
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       entry_t local_sum = 0;
 
@@ -305,8 +303,8 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         }
       }
 
-      common::mpi_barrier(topo.mpicomm());
-      entry_t sum_all = common::mpi_reduce_value(local_sum, target_rank, topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
+      entry_t sum_all = common::mpi_reduce_value(local_sum, target_rank, common::topology::mpicomm());
 
       ITYR_CHECK(wsq.empty(target_rank));
 
@@ -314,7 +312,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         ITYR_CHECK(sum_all == sum_expected);
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
     }
   }
 
@@ -324,7 +322,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
     for (common::topology::rank_t target_rank = 0; target_rank < n_ranks; target_rank++) {
       ITYR_CHECK(wsq.empty(target_rank));
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       if (target_rank == my_rank) {
         entry_t sum_expected = 0;
@@ -344,17 +342,17 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
           }
         }
 
-        auto req = common::mpi_ibarrier(topo.mpicomm());
+        auto req = common::mpi_ibarrier(common::topology::mpicomm());
         common::mpi_wait(req);
 
-        entry_t sum_all = common::mpi_reduce_value(local_sum, target_rank, topo.mpicomm());
+        entry_t sum_all = common::mpi_reduce_value(local_sum, target_rank, common::topology::mpicomm());
 
         ITYR_CHECK(sum_all == sum_expected);
 
       } else {
         entry_t local_sum = 0;
 
-        auto req = common::mpi_ibarrier(topo.mpicomm());
+        auto req = common::mpi_ibarrier(common::topology::mpicomm());
         while (!common::mpi_test(req)) {
           auto result = wsq.steal_aborting(target_rank);
           if (result.has_value()) {
@@ -364,10 +362,10 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
 
         ITYR_CHECK(wsq.empty(target_rank));
 
-        common::mpi_reduce_value(local_sum, target_rank, topo.mpicomm());
+        common::mpi_reduce_value(local_sum, target_rank, common::topology::mpicomm());
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
     }
   }
 
@@ -377,7 +375,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
     for (common::topology::rank_t target_rank = 0; target_rank < n_ranks; target_rank++) {
       ITYR_CHECK(wsq.empty(target_rank));
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       if (target_rank == my_rank) {
         for (int i = 0; i < n_entries; i++) {
@@ -385,7 +383,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         }
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       // only one process steals
       if ((target_rank + 1) % n_ranks == my_rank) {
@@ -397,7 +395,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         }
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       if (target_rank == my_rank) {
         // push half of the queue
@@ -411,7 +409,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
         }
       }
 
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
 
       ITYR_CHECK(wsq.empty(target_rank));
     }

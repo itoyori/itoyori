@@ -11,29 +11,36 @@
 
 namespace ityr::ito {
 
-inline void init(const common::topology& topo) {
-  worker_init(topo);
-}
+class ito {
+public:
+  ito(MPI_Comm comm)
+    : topo_(comm) {}
 
-inline void fini() {
-  worker_fini();
-}
+private:
+  common::mpi_initializer                                    mi_;
+  common::singleton_initializer<common::topology::instance>  topo_;
+  common::singleton_initializer<worker::instance>            worker_;
+};
+
+using instance = common::singleton<ito>;
+
+inline void init(MPI_Comm comm = MPI_COMM_WORLD) { instance::init(comm); }
+inline void fini()                               { instance::fini();     }
 
 template <typename Fn, typename... Args>
 inline auto root_exec(Fn&& fn, Args&&... args) {
-  worker& w = worker_get();
+  auto& w = worker::instance::get();
   return w.root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
 }
 
 ITYR_TEST_CASE("[ityr::ito] fib") {
-  common::topology topo;
-  init(topo);
+  init();
 
   std::function<int(int)> fib = [&](int n) -> int {
     if (n <= 1) {
       return 1;
     } else {
-      ito::thread<int> th([=]{ return fib(n - 1); });
+      thread<int> th([=]{ return fib(n - 1); });
       int y = fib(n - 2);
       int x = th.join();
       return x + y;
@@ -47,22 +54,21 @@ ITYR_TEST_CASE("[ityr::ito] fib") {
 }
 
 ITYR_TEST_CASE("[ityr::ito] load balancing") {
-  common::topology topo;
-  init(topo);
+  init();
 
   std::function<void(int)> lb = [&](int n) {
     if (n == 0) {
       return;
     } else if (n == 1) {
-      common::mpi_barrier(topo.mpicomm());
+      common::mpi_barrier(common::topology::mpicomm());
     } else {
-      ito::thread<void> th([=]{ return lb(n / 2); });
+      thread<void> th([=]{ return lb(n / 2); });
       lb(n - n / 2);
       th.join();
     }
   };
 
-  root_exec(lb, topo.n_ranks());
+  root_exec(lb, common::topology::n_ranks());
 
   fini();
 }

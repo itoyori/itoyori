@@ -33,18 +33,18 @@ public:
 
   template <typename Fn, typename... Args>
   void fork(Fn&& fn, Args&&... args) {
-    worker& w = worker_get();
+    auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
-    handler_ = w.sched().fork<sched_retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    handler_ = w.sched().template fork<sched_retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   T join() {
-    worker& w = worker_get();
+    auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     if constexpr (std::is_void_v<T>) {
-      w.sched().join(handler_);
+      w.sched().template join(handler_);
     } else {
-      return w.sched().join(handler_);
+      return w.sched().template join(handler_);
     }
   }
 
