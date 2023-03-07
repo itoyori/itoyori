@@ -40,6 +40,11 @@ public:
 
   virtual std::string str() const { return "UNKNOWN"; }
 
+  virtual void clear() {
+    acc_time_ = 0;
+    count_ = 0;
+  }
+
   virtual void flush() {
     auto t_total = state_.t_end - state_.t_begin;
     if (state_.output_per_rank) {
@@ -61,26 +66,24 @@ public:
         print_stats_sum(acc_time_sum, t_total_sum, count_sum);
       }
     }
-    acc_time_ = 0;
-    count_ = 0;
-  };
+  }
 
 protected:
   using counter_t = uint64_t;
 
-  void print_stats_per_rank(topology::rank_t       rank,
-                            wallclock::wallclock_t acc_time,
-                            wallclock::wallclock_t t_total,
-                            counter_t              count) const {
+  virtual void print_stats_per_rank(topology::rank_t       rank,
+                                    wallclock::wallclock_t acc_time,
+                                    wallclock::wallclock_t t_total,
+                                    counter_t              count) const {
     printf("  %-23s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %8ld ave: %8ld ns\n",
            str().c_str(), rank,
            (double)acc_time / t_total * 100, acc_time, t_total,
            count, count == 0 ? 0 : (acc_time / count));
   }
 
-  void print_stats_sum(wallclock::wallclock_t acc_time,
-                       wallclock::wallclock_t t_total,
-                       counter_t              count) const {
+  virtual void print_stats_sum(wallclock::wallclock_t acc_time,
+                               wallclock::wallclock_t t_total,
+                               counter_t              count) const {
     printf("  %-23s : %10.6f %% ( %15ld ns / %15ld ns ) count: %8ld ave: %8ld ns\n",
            str().c_str(),
            (double)acc_time / t_total * 100, acc_time, t_total,
@@ -122,6 +125,9 @@ public:
       printf("\n");
       fflush(stdout);
     }
+    for (auto&& e : events_) {
+      e->clear();
+    }
   }
 
   profiler_state& get_state() { return state_; }
@@ -144,14 +150,14 @@ public:
   }
 };
 
-template <typename Event>
-inline auto interval_begin() {
-  return singleton<Event>::get().interval_begin();
+template <typename Event, typename... Args>
+inline typename Event::interval_begin_data interval_begin(Args&&... args) {
+  return singleton<Event>::get().interval_begin(std::forward<Args>(args)...);
 }
 
-template <typename Event, typename IBD>
-inline void interval_end(IBD ibd) {
-  singleton<Event>::get().interval_end(ibd);
+template <typename Event, typename... Args>
+inline void interval_end(typename Event::interval_begin_data ibd, Args&&... args) {
+  singleton<Event>::get().interval_end(ibd, std::forward<Args>(args)...);
 }
 
 inline void begin() {

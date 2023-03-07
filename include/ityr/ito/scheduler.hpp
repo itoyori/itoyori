@@ -224,22 +224,22 @@ private:
   void steal() {
     auto target_rank = get_random_rank();
 
-    auto ibd = common::profiler::interval_begin<prof_event_steal>();
+    auto ibd = common::profiler::interval_begin<prof_event_steal>(target_rank);
 
     if (wsq_.empty(target_rank)) {
-      common::profiler::interval_end<prof_event_steal>(ibd);
+      common::profiler::interval_end<prof_event_steal>(ibd, false);
       return;
     }
 
     if (!wsq_.lock().trylock(target_rank)) {
-      common::profiler::interval_end<prof_event_steal>(ibd);
+      common::profiler::interval_end<prof_event_steal>(ibd, false);
       return;
     }
 
     auto we = wsq_.steal_nolock(target_rank);
     if (!we.has_value()) {
       wsq_.lock().unlock(target_rank);
-      common::profiler::interval_end<prof_event_steal>(ibd);
+      common::profiler::interval_end<prof_event_steal>(ibd, false);
       return;
     }
 
@@ -250,7 +250,7 @@ private:
 
     wsq_.lock().unlock(target_rank);
 
-    common::profiler::interval_end<prof_event_steal>(ibd);
+    common::profiler::interval_end<prof_event_steal>(ibd, true);
 
     context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base);
     suspend([&](context_frame* cf) {
@@ -329,9 +329,50 @@ private:
     std::size_t frame_size;
   };
 
-  struct prof_event_steal : public common::profiler::event {
+  class prof_event_steal : public common::profiler::event {
+  public:
     using common::profiler::event::event;
-    std::string str() const override { return "steal"; };
+    auto interval_begin(common::topology::rank_t target_rank [[maybe_unused]]) {
+      return common::profiler::event::interval_begin();
+    }
+    void interval_end(interval_begin_data ibd, bool success) {
+      if (state_.enabled) {
+        auto t = common::wallclock::gettime_ns();
+        auto t0 = ibd;
+        if (success) {
+          acc_time_success_ += t - t0;
+          count_success_++;
+        } else {
+          acc_time_fail_ += t - t0;
+          count_fail_++;
+        }
+      }
+    }
+    std::string str() const override {
+      return success_mode ? "steal_success" : "steal_fail";
+    }
+    void flush() override {
+      success_mode = true;
+      acc_time_ = acc_time_success_;
+      count_ = count_success_;
+      common::profiler::event::flush();
+      success_mode = false;
+      acc_time_ = acc_time_fail_;
+      count_ = count_fail_;
+      common::profiler::event::flush();
+    }
+    void clear() override {
+      acc_time_success_ = 0;
+      acc_time_fail_    = 0;
+      count_success_    = 0;
+      count_fail_       = 0;
+    }
+  private:
+    common::wallclock::wallclock_t acc_time_success_ = 0;
+    common::wallclock::wallclock_t acc_time_fail_    = 0;
+    counter_t                      count_success_    = 0;
+    counter_t                      count_fail_       = 0;
+    bool                           success_mode;
   };
   common::profiler::event_initializer<prof_event_steal> prof_event_steal_;
 
