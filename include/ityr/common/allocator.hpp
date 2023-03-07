@@ -5,8 +5,8 @@
 #include <cstring>
 #include <sys/mman.h>
 
-#define PCAS_HAS_MEMORY_RESOURCE __has_include(<memory_resource>)
-#if PCAS_HAS_MEMORY_RESOURCE
+#define ITYR_HAS_MEMORY_RESOURCE __has_include(<memory_resource>)
+#if ITYR_HAS_MEMORY_RESOURCE
 #include <memory_resource>
 namespace ityr::common { namespace pmr = std::pmr; }
 #else

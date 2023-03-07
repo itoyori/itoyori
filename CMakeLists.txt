@@ -22,6 +22,7 @@ include_directories(${MPI_CXX_INCLUDE_PATH})
 
 add_library(itoyori INTERFACE)
 target_include_directories(itoyori INTERFACE include)
+target_include_directories(itoyori INTERFACE massivelogger/include)
 target_link_libraries(itoyori INTERFACE ${MPI_CXX_LIBRARIES} rt)
 target_compile_options(itoyori INTERFACE -Wall -Wextra -fno-stack-protector)
 
@@ -45,6 +46,7 @@ endif()
 
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 include(CTest)
 if(BUILD_TESTING)

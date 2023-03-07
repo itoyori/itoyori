@@ -25,39 +25,60 @@ struct prof_phase_spmd : public common::profiler::event {
 struct prof_event_sched_steal : public common::profiler::event {
   using common::profiler::event::event;
 
-  auto interval_begin(common::wallclock::wallclock_t t,
+  auto interval_begin(common::profiler::mode_stats,
+                      common::wallclock::wallclock_t t,
                       common::topology::rank_t       target_rank [[maybe_unused]]) {
-    return common::profiler::event::interval_begin(t);
+    return t;
   }
 
-  void interval_end(common::wallclock::wallclock_t        t,
-                    common::profiler::interval_begin_data ibd,
-                    bool                                  success) {
-    if (state_.enabled) {
-      auto t0 = ibd;
-      if (success) {
-        acc_time_success_ += t - t0;
-        count_success_++;
-      } else {
-        acc_time_fail_ += t - t0;
-        count_fail_++;
-      }
-    }
+  void interval_end(common::profiler::mode_stats,
+                    common::wallclock::wallclock_t                    t,
+                    common::profiler::mode_stats::interval_begin_data ibd,
+                    bool                                              success) {
+    do_acc(t - ibd, success);
+  }
+
+  auto interval_begin(common::profiler::mode_trace,
+                      common::wallclock::wallclock_t t,
+                      common::topology::rank_t       target_rank) {
+    auto ibd = MLOG_BEGIN(&state_.trace_md, 0, t, target_rank);
+    return ibd;
+  }
+
+  void interval_end(common::profiler::mode_trace,
+                    common::wallclock::wallclock_t                    t,
+                    common::profiler::mode_trace::interval_begin_data ibd,
+                    bool                                              success) {
+    MLOG_END(&state_.trace_md, 0, ibd, trace_decoder_base, this, t, success);
+  }
+
+  void* trace_decoder(FILE* stream, void* buf0, void* buf1) override {
+    auto t0          = MLOG_READ_ARG(&buf0, common::wallclock::wallclock_t);
+    auto target_rank = MLOG_READ_ARG(&buf0, common::topology::rank_t);
+    auto t1          = MLOG_READ_ARG(&buf1, common::wallclock::wallclock_t);
+    auto success     = MLOG_READ_ARG(&buf1, bool);
+
+    do_acc(t1 - t0, success);
+
+    success_mode_ = success;
+    auto rank = common::topology::my_rank();
+    fprintf(stream, "%d,%lu,%d,%lu,%s,%d\n", rank, t0, rank, t1, str().c_str(), target_rank);
+    return buf1;
   }
 
   std::string str() const override {
-    return success_mode ? "sched_steal (success)" : "sched_steal (fail)";
+    return success_mode_ ? "sched_steal (success)" : "sched_steal (fail)";
   }
 
-  void flush() override {
-    success_mode = true;
+  void print_stats() override {
+    success_mode_ = true;
     acc_time_ = acc_time_success_;
     count_ = count_success_;
-    common::profiler::event::flush();
-    success_mode = false;
+    common::profiler::event::print_stats();
+    success_mode_ = false;
     acc_time_ = acc_time_fail_;
     count_ = count_fail_;
-    common::profiler::event::flush();
+    common::profiler::event::print_stats();
   }
 
   void clear() override {
@@ -68,11 +89,21 @@ struct prof_event_sched_steal : public common::profiler::event {
   }
 
 private:
+  void do_acc(common::wallclock::wallclock_t t, bool success) {
+    if (success) {
+      acc_time_success_ += t;
+      count_success_++;
+    } else {
+      acc_time_fail_ += t;
+      count_fail_++;
+    }
+  }
+
   common::wallclock::wallclock_t acc_time_success_ = 0;
   common::wallclock::wallclock_t acc_time_fail_    = 0;
   counter_t                      count_success_    = 0;
   counter_t                      count_fail_       = 0;
-  bool                           success_mode;
+  bool                           success_mode_;
 };
 
 struct prof_event_wsqueue_push : public common::profiler::event {
@@ -100,9 +131,9 @@ public:
   prof_events() {}
 
 private:
-  common::profiler::event_initializer<prof_phase_sched>         sched_;
-  common::profiler::event_initializer<prof_phase_thread>        thread_;
-  common::profiler::event_initializer<prof_phase_spmd>          spmd_;
+  common::profiler::event_initializer<prof_phase_sched>         phase_sched_;
+  common::profiler::event_initializer<prof_phase_thread>        phase_thread_;
+  common::profiler::event_initializer<prof_phase_spmd>          phase_spmd_;
   common::profiler::event_initializer<prof_event_sched_steal>   sched_steal_;
   common::profiler::event_initializer<prof_event_wsqueue_push>  wsqueue_push_;
   common::profiler::event_initializer<prof_event_wsqueue_pop>   wsqueue_pop_;

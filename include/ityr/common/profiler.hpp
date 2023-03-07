@@ -2,6 +2,9 @@
 
 #include <limits>
 #include <tuple>
+#include <memory>
+
+#include <mlog/mlog.h>
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
@@ -10,20 +13,24 @@
 
 namespace ityr::common::profiler {
 
-enum class profiler_mode {
-  Disabled,
-  Stats,
+struct mode_disabled {
+  using interval_begin_data = void*;
 };
 
-inline constexpr profiler_mode mode = profiler_mode::Disabled;
+struct mode_stats {
+  using interval_begin_data = wallclock::wallclock_t;
+};
 
-using interval_begin_data = wallclock::wallclock_t;
+struct mode_trace {
+  using interval_begin_data = void*;
+};
 
 struct profiler_state {
   bool                   enabled;
   wallclock::wallclock_t t_begin;
   wallclock::wallclock_t t_end;
   bool                   output_per_rank;
+  mlog_data_t            trace_md;
 };
 
 class event {
@@ -31,15 +38,40 @@ public:
   event(profiler_state& state)
     : state_(state) {}
 
-  interval_begin_data interval_begin(wallclock::wallclock_t t) {
+  mode_stats::interval_begin_data interval_begin(mode_disabled, wallclock::wallclock_t) { return {}; }
+  void interval_end(mode_disabled, wallclock::wallclock_t, mode_disabled::interval_begin_data) {}
+
+  mode_stats::interval_begin_data interval_begin(mode_stats, wallclock::wallclock_t t) {
     return t;
   }
 
-  void interval_end(wallclock::wallclock_t t, interval_begin_data ibd) {
-    /* auto t0 = std::max(state_.t_begin, ibd); */
-    auto t0 = ibd;
-    acc_time_ += t - t0;
-    count_++;
+  void interval_end(mode_stats, wallclock::wallclock_t t, mode_stats::interval_begin_data ibd) {
+    do_acc(t - ibd);
+  }
+
+  mode_trace::interval_begin_data interval_begin(mode_trace, wallclock::wallclock_t t) {
+    auto ibd = MLOG_BEGIN(&state_.trace_md, 0, t);
+    return ibd;
+  }
+
+  void interval_end(mode_trace, wallclock::wallclock_t t, mode_trace::interval_begin_data ibd) {
+    MLOG_END(&state_.trace_md, 0, ibd, trace_decoder_base, this, t);
+  }
+
+  static void* trace_decoder_base(FILE* stream, int, int, void* buf0, void* buf1) {
+    event* e = MLOG_READ_ARG(&buf1, event*);
+    return e->trace_decoder(stream, buf0, buf1);
+  }
+
+  virtual void* trace_decoder(FILE* stream, void* buf0, void* buf1) {
+    auto t0 = MLOG_READ_ARG(&buf0, wallclock::wallclock_t);
+    auto t1 = MLOG_READ_ARG(&buf1, wallclock::wallclock_t);
+
+    do_acc(t1 - t0);
+
+    auto rank = topology::my_rank();
+    fprintf(stream, "%d,%lu,%d,%lu,%s\n", rank, t0, rank, t1, str().c_str());
+    return buf1;
   }
 
   virtual std::string str() const { return "UNKNOWN"; }
@@ -49,7 +81,7 @@ public:
     count_ = 0;
   }
 
-  virtual void flush() {
+  virtual void print_stats() {
     auto t_total = state_.t_end - state_.t_begin;
     if (state_.output_per_rank) {
       if (topology::my_rank() == 0) {
@@ -73,6 +105,11 @@ public:
   }
 
 protected:
+  void do_acc(wallclock::wallclock_t t) {
+    acc_time_ += t;
+    count_++;
+  }
+
   using counter_t = uint64_t;
 
   virtual void print_stats_per_rank(topology::rank_t       rank,
@@ -99,10 +136,15 @@ protected:
   counter_t              count_    = 0;
 };
 
+template <typename Mode>
 class profiler {
 public:
   profiler() {
     state_.output_per_rank = getenv_coll("ITYR_PROF_OUTPUT_PER_RANK", false, topology::mpicomm());
+    if constexpr (std::is_same_v<Mode, mode_trace>) {
+      mlog_init(&state_.trace_md, 1, getenv_coll("ITYR_PROF_TRACE_INITIAL_SIZE", 1 << 20, topology::mpicomm()));
+      trace_out_file_ = {std::fopen(trace_out_filename().c_str(), "w"), &std::fclose};
+    }
   }
 
   void add(event* e) {
@@ -118,14 +160,17 @@ public:
     state_.enabled = false;
     state_.t_end = wallclock::gettime_ns();
     if (last_phase_ != nullptr) {
-      last_phase_->interval_end(state_.t_end, phase_ibd_);
+      last_phase_->interval_end(Mode{}, state_.t_end, phase_ibd_);
       last_phase_ = nullptr;
     }
   }
 
   void flush() {
+    if constexpr (std::is_same_v<Mode, mode_trace>) {
+      mlog_flush_all(&state_.trace_md, trace_out_file_.get());
+    }
     for (auto&& e : events_) {
-      e->flush();
+      e->print_stats();
     }
     if (topology::my_rank() == 0) {
       printf("\n");
@@ -134,6 +179,7 @@ public:
     for (auto&& e : events_) {
       e->clear();
     }
+    mlog_clear_all(&state_.trace_md);
   }
 
   profiler_state& get_state() { return state_; }
@@ -146,25 +192,36 @@ public:
       auto& phase_to   = singleton<PhaseTo>::get();
 
       if (last_phase_ == nullptr) {
-        phase_ibd_ = phase_from.interval_begin(state_.t_begin);
+        phase_ibd_ = phase_from.interval_begin(Mode{}, state_.t_begin);
       } else {
         ITYR_CHECK(last_phase_ == &phase_from);
       }
 
-      phase_from.interval_end(t, phase_ibd_);
-      phase_ibd_ = phase_to.interval_begin(t);
+      phase_from.interval_end(Mode{}, t, phase_ibd_);
+      phase_ibd_ = phase_to.interval_begin(Mode{}, t);
       last_phase_ = &phase_to;
     }
   }
 
 private:
-  std::vector<event*> events_;
-  profiler_state      state_;
-  event*              last_phase_ = nullptr;
-  interval_begin_data phase_ibd_;
+  static std::string trace_out_filename() {
+    std::stringstream ss;
+    ss << "ityr_log_" << topology::my_rank() << ".ignore";
+    return ss.str();
+  }
+
+  std::vector<event*>                   events_;
+  profiler_state                        state_;
+  event*                                last_phase_ = nullptr;
+  typename Mode::interval_begin_data    phase_ibd_;
+  std::unique_ptr<FILE, int (*)(FILE*)> trace_out_file_ = {nullptr, nullptr};
 };
 
-using instance = singleton<profiler>;
+using mode = mode_disabled;
+
+using instance = singleton<profiler<mode>>;
+
+using interval_begin_data = mode::interval_begin_data;
 
 template <typename Event>
 class event_initializer : public singleton_initializer<singleton<Event>> {
@@ -179,9 +236,9 @@ public:
 
 template <typename Event, typename... Args>
 inline interval_begin_data interval_begin(Args&&... args) {
-  if constexpr (mode != profiler_mode::Disabled) {
+  if constexpr (!std::is_same_v<mode, mode_disabled>) {
     auto t = wallclock::gettime_ns();
-    return singleton<Event>::get().interval_begin(t, std::forward<Args>(args)...);
+    return singleton<Event>::get().interval_begin(mode{}, t, std::forward<Args>(args)...);
   } else {
     return {};
   }
@@ -189,11 +246,11 @@ inline interval_begin_data interval_begin(Args&&... args) {
 
 template <typename Event, typename... Args>
 inline void interval_end(interval_begin_data ibd, Args&&... args) {
-  if constexpr (mode != profiler_mode::Disabled) {
+  if constexpr (!std::is_same_v<mode, mode_disabled>) {
     auto& state = instance::get().get_state();
     if (state.enabled) {
       auto t = wallclock::gettime_ns();
-      singleton<Event>::get().interval_end(t, ibd, std::forward<Args>(args)...);
+      singleton<Event>::get().interval_end(mode{}, t, ibd, std::forward<Args>(args)...);
     }
   }
 }
@@ -224,7 +281,7 @@ private:
 
 template <typename PhaseFrom, typename PhaseTo>
 inline void switch_phase() {
-  if constexpr (mode != profiler_mode::Disabled) {
+  if constexpr (!std::is_same_v<mode, mode_disabled>) {
     instance::get().switch_phase<PhaseFrom, PhaseTo>();
   }
 }
@@ -239,7 +296,7 @@ inline void end() {
 }
 
 inline void flush() {
-  if constexpr (mode != profiler_mode::Disabled) {
+  if constexpr (!std::is_same_v<mode, mode_disabled>) {
     instance::get().flush();
   }
 }

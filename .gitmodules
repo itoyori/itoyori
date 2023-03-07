@@ -1,3 +1,6 @@
 [submodule "doctest"]
 	path = doctest
 	url = https://github.com/doctest/doctest.git
+[submodule "massivelogger"]
+	path = massivelogger
+	url = https://github.com/massivethreads/massivelogger
