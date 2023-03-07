@@ -99,19 +99,49 @@ struct prof_event_wsqueue_empty : public common::prof_event_target_base {
   std::string str() const override { return "wsqueue_empty"; }
 };
 
-struct prof_phase_sched : public common::profiler::event {
+struct prof_phase_sched_loop : public common::profiler::event {
   using event::event;
-  std::string str() const override { return "phase_sched"; }
+  std::string str() const override { return "P_sched_loop"; }
+};
+
+struct prof_phase_sched_fork : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_fork"; }
+};
+
+struct prof_phase_sched_join : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_join"; }
+};
+
+struct prof_phase_sched_die : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_die"; }
+};
+
+struct prof_phase_sched_resume_parent : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_resume_parent"; }
+};
+
+struct prof_phase_sched_resume_join : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_resume_join"; }
+};
+
+struct prof_phase_sched_resume_stolen : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_resume_stolen"; }
 };
 
 struct prof_phase_thread : public common::profiler::event {
   using event::event;
-  std::string str() const override { return "phase_thread"; }
+  std::string str() const override { return "P_thread"; }
 };
 
 struct prof_phase_spmd : public common::profiler::event {
   using event::event;
-  std::string str() const override { return "phase_spmd"; }
+  std::string str() const override { return "P_spmd"; }
 };
 
 class prof_events {
@@ -119,14 +149,20 @@ public:
   prof_events() {}
 
 private:
-  common::profiler::event_initializer<prof_event_sched_steal>   sched_steal_;
-  common::profiler::event_initializer<prof_event_wsqueue_push>  wsqueue_push_;
-  common::profiler::event_initializer<prof_event_wsqueue_pop>   wsqueue_pop_;
-  common::profiler::event_initializer<prof_event_wsqueue_steal> wsqueue_steal_;
-  common::profiler::event_initializer<prof_event_wsqueue_empty> wsqueue_empty_;
-  common::profiler::event_initializer<prof_phase_sched>         phase_sched_;
-  common::profiler::event_initializer<prof_phase_thread>        phase_thread_;
-  common::profiler::event_initializer<prof_phase_spmd>          phase_spmd_;
+  common::profiler::event_initializer<prof_event_sched_steal>         sched_steal_;
+  common::profiler::event_initializer<prof_event_wsqueue_push>        wsqueue_push_;
+  common::profiler::event_initializer<prof_event_wsqueue_pop>         wsqueue_pop_;
+  common::profiler::event_initializer<prof_event_wsqueue_steal>       wsqueue_steal_;
+  common::profiler::event_initializer<prof_event_wsqueue_empty>       wsqueue_empty_;
+  common::profiler::event_initializer<prof_phase_sched_loop>          phase_sched_loop_;
+  common::profiler::event_initializer<prof_phase_sched_fork>          phase_sched_fork_;
+  common::profiler::event_initializer<prof_phase_sched_join>          phase_sched_join_;
+  common::profiler::event_initializer<prof_phase_sched_die>           phase_sched_die_;
+  common::profiler::event_initializer<prof_phase_sched_resume_parent> phase_sched_resume_parent_;
+  common::profiler::event_initializer<prof_phase_sched_resume_join>   phase_sched_resume_join_;
+  common::profiler::event_initializer<prof_phase_sched_resume_stolen> phase_sched_resume_stolen_;
+  common::profiler::event_initializer<prof_phase_thread>              phase_thread_;
+  common::profiler::event_initializer<prof_phase_spmd>                phase_spmd_;
 };
 
 }

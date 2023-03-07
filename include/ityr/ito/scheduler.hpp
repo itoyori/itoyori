@@ -43,6 +43,8 @@ public:
 
   template <typename T, typename Fn, typename... Args>
   T root_exec(Fn&& fn, Args&&... args) {
+    common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_fork>();
+
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
 
     suspend([&, ts](context_frame* cf) {
@@ -50,11 +52,11 @@ public:
       cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom());
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
-        common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
+        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
         T retval = invoke_fn<T>(fn, args...);
 
-        common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+        common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Root thread %p is completed", ts);
 
         on_root_die(ts, retval);
@@ -63,15 +65,20 @@ public:
 
     sched_loop([=]() { return ts->resume_flag >= 1; });
 
+    common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
+
     T retval = ts->retval;
     std::destroy_at(ts);
     thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
+
+    common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
+
     return retval;
   }
 
   template <typename T, typename Fn, typename... Args>
   thread_handler<T> fork(Fn&& fn, Args&&... args) {
-    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
     thread_handler<T> th;
@@ -84,11 +91,11 @@ public:
       wsq_.push(wsqueue_entry{cf, cf_size});
 
       common::verbose("Starting new thread %p", ts);
-      common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
+      common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
       T retval = invoke_fn<T>(fn, args...);
 
-      common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+      common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
       common::verbose("Thread %p is completed", ts);
 
       on_die(ts, retval);
@@ -103,15 +110,21 @@ public:
       th.retval_ser = retval;
 
       common::verbose("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
+
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
     });
 
-    common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
+    if (th.serialized) {
+      common::profiler::switch_phase<prof_phase_sched_resume_parent, prof_phase_thread>();
+    } else {
+      common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
+    }
     return th;
   }
 
   template <typename T>
   T join(thread_handler<T>& th) {
-    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_join>();
 
     T retval;
     if (th.serialized) {
@@ -131,6 +144,7 @@ public:
         }
 
       } else {
+        bool migrated = true;
         suspend([&, ts](context_frame* cf) {
           std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
           void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
@@ -145,15 +159,20 @@ public:
           // race
           if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
             common::verbose("Win the join race for thread %p (joining thread)", ts);
+            common::profiler::switch_phase<prof_phase_sched_join, prof_phase_sched_loop>();
             resume_sched();
           } else {
             common::verbose("Lose the join race for thread %p (joining thread)", ts);
             suspended_thread_allocator_.deallocate(ss.evacuation_ptr, ss.frame_size);
-            resume(cf);
+            migrated = false;
           }
         });
 
         common::verbose("Resume continuation of join for thread %p", ts);
+
+        if (migrated) {
+          common::profiler::switch_phase<prof_phase_sched_resume_join, prof_phase_sched_join>();
+        }
 
         if constexpr (!std::is_same_v<T, no_retval_t>) {
           retval = remote_get_value(thread_state_allocator_, &ts->retval);
@@ -165,7 +184,7 @@ public:
       th.state = nullptr;
     }
 
-    common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
+    common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
     return retval;
   }
 
@@ -202,9 +221,11 @@ private:
       // race
       if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
         common::verbose("Win the join race for thread %p (joined thread)", ts);
+        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
         resume_sched();
       } else {
         common::verbose("Lose the join race for thread %p (joined thread)", ts);
+        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_join>();
         suspended_state ss = remote_get_value(thread_state_allocator_, &ts->suspended);
         resume(ss);
       }
@@ -217,6 +238,8 @@ private:
       remote_put_value(thread_state_allocator_, retval, &ts->retval);
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
+
+    common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
     resume_sched();
   }
 
@@ -265,6 +288,8 @@ private:
 
     common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
 
+    common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+
     context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base);
     suspend([&](context_frame* cf) {
       sched_cf_ = cf;
@@ -304,6 +329,7 @@ private:
                          reinterpret_cast<std::byte*>(evacuation_ptr),
                          frame_size);
       allocator.deallocate(evacuation_ptr, frame_size);
+
       context_frame* cf = reinterpret_cast<context_frame*>(frame_base);
       context::resume(cf);
     }, &suspended_thread_allocator_, ss.evacuation_ptr, ss.frame_base, reinterpret_cast<void*>(ss.frame_size));
