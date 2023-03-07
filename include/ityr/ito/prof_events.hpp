@@ -9,21 +9,20 @@ namespace ityr::ito {
 
 struct prof_phase_sched : public common::profiler::event {
   using common::profiler::event::event;
-  std::string str() const override { return "sched"; }
+  std::string str() const override { return "phase_sched"; }
 };
 
 struct prof_phase_thread : public common::profiler::event {
   using common::profiler::event::event;
-  std::string str() const override { return "thread"; }
+  std::string str() const override { return "phase_thread"; }
 };
 
 struct prof_phase_spmd : public common::profiler::event {
   using common::profiler::event::event;
-  std::string str() const override { return "SPMD"; }
+  std::string str() const override { return "phase_spmd"; }
 };
 
-class prof_event_sched_steal : public common::profiler::event {
-public:
+struct prof_event_sched_steal : public common::profiler::event {
   using common::profiler::event::event;
 
   auto interval_begin(common::wallclock::wallclock_t t,
@@ -47,7 +46,7 @@ public:
   }
 
   std::string str() const override {
-    return success_mode ? "steal (success)" : "steal (fail)";
+    return success_mode ? "sched_steal (success)" : "sched_steal (fail)";
   }
 
   void flush() override {
@@ -76,15 +75,39 @@ private:
   bool                           success_mode;
 };
 
+struct prof_event_wsqueue_push : public common::profiler::event {
+  using common::profiler::event::event;
+  std::string str() const override { return "wsqueue_push"; }
+};
+
+struct prof_event_wsqueue_pop : public common::profiler::event {
+  using common::profiler::event::event;
+  std::string str() const override { return "wsqueue_pop"; }
+};
+
+struct prof_event_wsqueue_steal : public common::profiler::event {
+  using common::profiler::event::event;
+  std::string str() const override { return "wsqueue_steal"; }
+};
+
+struct prof_event_wsqueue_empty : public common::profiler::event {
+  using common::profiler::event::event;
+  std::string str() const override { return "wsqueue_empty"; }
+};
+
 class prof_events {
 public:
   prof_events() {}
 
 private:
-  common::profiler::event_initializer<prof_phase_sched>       sched_;
-  common::profiler::event_initializer<prof_phase_thread>      thread_;
-  common::profiler::event_initializer<prof_phase_spmd>        spmd_;
-  common::profiler::event_initializer<prof_event_sched_steal> sched_steal_;
+  common::profiler::event_initializer<prof_phase_sched>         sched_;
+  common::profiler::event_initializer<prof_phase_thread>        thread_;
+  common::profiler::event_initializer<prof_phase_spmd>          spmd_;
+  common::profiler::event_initializer<prof_event_sched_steal>   sched_steal_;
+  common::profiler::event_initializer<prof_event_wsqueue_push>  wsqueue_push_;
+  common::profiler::event_initializer<prof_event_wsqueue_pop>   wsqueue_pop_;
+  common::profiler::event_initializer<prof_event_wsqueue_steal> wsqueue_steal_;
+  common::profiler::event_initializer<prof_event_wsqueue_empty> wsqueue_empty_;
 };
 
 }

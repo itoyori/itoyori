@@ -10,6 +10,13 @@
 
 namespace ityr::common::profiler {
 
+enum class profiler_mode {
+  Disabled,
+  Stats,
+};
+
+inline constexpr profiler_mode mode = profiler_mode::Disabled;
+
 using interval_begin_data = wallclock::wallclock_t;
 
 struct profiler_state {
@@ -19,9 +26,9 @@ struct profiler_state {
   bool                   output_per_rank;
 };
 
-class event_stats {
+class event {
 public:
-  event_stats(profiler_state& state)
+  event(profiler_state& state)
     : state_(state) {}
 
   interval_begin_data interval_begin(wallclock::wallclock_t t) {
@@ -91,8 +98,6 @@ protected:
   wallclock::wallclock_t acc_time_ = 0;
   counter_t              count_    = 0;
 };
-
-using event = event_stats;
 
 class profiler {
 public:
@@ -174,22 +179,54 @@ public:
 
 template <typename Event, typename... Args>
 inline interval_begin_data interval_begin(Args&&... args) {
-  auto t = wallclock::gettime_ns();
-  return singleton<Event>::get().interval_begin(t, std::forward<Args>(args)...);
+  if constexpr (mode != profiler_mode::Disabled) {
+    auto t = wallclock::gettime_ns();
+    return singleton<Event>::get().interval_begin(t, std::forward<Args>(args)...);
+  } else {
+    return {};
+  }
 }
 
 template <typename Event, typename... Args>
 inline void interval_end(interval_begin_data ibd, Args&&... args) {
-  auto& state = instance::get().get_state();
-  if (state.enabled) {
-    auto t = wallclock::gettime_ns();
-    singleton<Event>::get().interval_end(t, ibd, std::forward<Args>(args)...);
+  if constexpr (mode != profiler_mode::Disabled) {
+    auto& state = instance::get().get_state();
+    if (state.enabled) {
+      auto t = wallclock::gettime_ns();
+      singleton<Event>::get().interval_end(t, ibd, std::forward<Args>(args)...);
+    }
   }
 }
 
+template <typename Event>
+class interval_scope {
+public:
+  template <typename... Args>
+  interval_scope(Args&&... args) {
+    ibd_ = interval_begin<Event>(std::forward<Args>(args)...);
+  }
+  ~interval_scope() {
+    interval_end<Event>(ibd_);
+  }
+
+  interval_scope(const interval_scope&) = delete;
+  interval_scope& operator=(const interval_scope&) = delete;
+
+  interval_scope(interval_scope&&) = delete;
+  interval_scope& operator=(interval_scope&&) = delete;
+
+private:
+  interval_begin_data ibd_;
+};
+
+#define ITYR_PROFILER_RECORD(event, ...) \
+  ityr::common::profiler::interval_scope<event> ITYR_ANON_VAL {__VA_ARGS__};
+
 template <typename PhaseFrom, typename PhaseTo>
 inline void switch_phase() {
-  instance::get().switch_phase<PhaseFrom, PhaseTo>();
+  if constexpr (mode != profiler_mode::Disabled) {
+    instance::get().switch_phase<PhaseFrom, PhaseTo>();
+  }
 }
 
 inline void begin() {
@@ -202,7 +239,9 @@ inline void end() {
 }
 
 inline void flush() {
-  instance::get().flush();
+  if constexpr (mode != profiler_mode::Disabled) {
+    instance::get().flush();
+  }
 }
 
 }

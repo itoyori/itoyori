@@ -11,6 +11,8 @@
 #include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/global_lock.hpp"
+#include "ityr/common/profiler.hpp"
+#include "ityr/ito/prof_events.hpp"
 
 namespace ityr::ito {
 
@@ -28,6 +30,8 @@ public:
       entries_win_(common::topology::mpicomm(), n_entries_) {}
 
   void push(const Entry& entry) {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_push);
+
     local_empty_ = false;
 
     queue_state& qs = local_queue_state();
@@ -60,6 +64,8 @@ public:
   }
 
   std::optional<Entry> pop() {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_pop);
+
     if (local_empty_) {
       return std::nullopt;
     }
@@ -111,6 +117,8 @@ public:
   }
 
   std::optional<Entry> steal_nolock(common::topology::rank_t target_rank) {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal);
+
     ITYR_CHECK(queue_lock_.is_locked(target_rank));
 
     std::optional<Entry> ret;
@@ -153,6 +161,8 @@ public:
   }
 
   bool empty(common::topology::rank_t target_rank) const {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_empty);
+
     auto remote_qs = common::mpi_get_value<queue_state>(target_rank, 0, queue_state_win_.win());
     return remote_qs.empty();
   }

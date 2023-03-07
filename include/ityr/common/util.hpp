@@ -48,6 +48,8 @@
 #define ITYR_ASSERT(cond) assert(cond)
 #endif
 
+#define ITYR_ANON_VAL ITYR_CONCAT(anon_, __LINE__)
+
 namespace ityr::common {
 
 inline uint64_t clock_gettime_ns() {
@@ -215,8 +217,8 @@ public:
   singleton_initializer(const singleton_initializer&) = delete;
   singleton_initializer& operator=(const singleton_initializer&) = delete;
 
-  singleton_initializer(singleton_initializer&& i) = delete;
-  singleton_initializer& operator=(singleton_initializer&& i) = delete;
+  singleton_initializer(singleton_initializer&&) = delete;
+  singleton_initializer& operator=(singleton_initializer&&) = delete;
 
 private:
   bool should_finalize_ = false;

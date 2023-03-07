@@ -224,8 +224,8 @@ public:
   mpi_initializer(const mpi_initializer&) = delete;
   mpi_initializer& operator=(const mpi_initializer&) = delete;
 
-  mpi_initializer(mpi_initializer&& mi) = delete;
-  mpi_initializer& operator=(mpi_initializer&& mi) = delete;
+  mpi_initializer(mpi_initializer&&) = delete;
+  mpi_initializer& operator=(mpi_initializer&&) = delete;
 
 private:
   int initialized_outside_ = 1;
