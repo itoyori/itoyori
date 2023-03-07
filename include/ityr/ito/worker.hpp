@@ -27,7 +27,12 @@ public:
       } else {
         sched_.sched_loop([]{ return true; });
       }
+
+      common::profiler::switch_phase<prof_phase_sched, prof_phase_spmd>();
+      is_spmd_ = true;
+
       common::mpi_barrier(common::topology::mpicomm());
+
     } else {
       retval_t retval {};
       if (common::topology::my_rank() == 0) {
@@ -35,12 +40,12 @@ public:
       } else {
         sched_.sched_loop([]{ return true; });
       }
+
+      common::profiler::switch_phase<prof_phase_sched, prof_phase_spmd>();
+      is_spmd_ = true;
+
       return common::mpi_bcast_value(retval, 0, common::topology::mpicomm());
     }
-
-    common::profiler::switch_phase<prof_phase_sched, prof_phase_spmd>();
-
-    is_spmd_ = true;
   }
 
   bool is_spmd() const { return is_spmd_; }
