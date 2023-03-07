@@ -116,7 +116,7 @@ protected:
                                     wallclock::wallclock_t acc_time,
                                     wallclock::wallclock_t t_total,
                                     counter_t              count) const {
-    printf("  %-21s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
+    printf("  %-22s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
            str().c_str(), rank,
            (double)acc_time / t_total * 100, acc_time, t_total,
            count, count == 0 ? 0 : (acc_time / count));
@@ -125,7 +125,7 @@ protected:
   virtual void print_stats_sum(wallclock::wallclock_t acc_time,
                                wallclock::wallclock_t t_total,
                                counter_t              count) const {
-    printf("  %-21s : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
+    printf("  %-22s : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
            str().c_str(),
            (double)acc_time / t_total * 100, acc_time, t_total,
            count, count == 0 ? 0 : (acc_time / count));

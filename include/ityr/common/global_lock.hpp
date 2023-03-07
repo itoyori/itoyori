@@ -4,6 +4,8 @@
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/profiler.hpp"
+#include "ityr/common/prof_events.hpp"
 
 namespace ityr::common {
 
@@ -13,6 +15,7 @@ public:
     : lock_win_(topology::mpicomm(), 1) {}
 
   bool trylock(topology::rank_t target_rank) const {
+    ITYR_PROFILER_RECORD(prof_event_global_lock_trylock, target_rank);
     lock_t result = mpi_atomic_cas_value<lock_t>(1, 0, target_rank, 0, lock_win_.win());
     return result == 0;
   }
@@ -22,6 +25,7 @@ public:
   }
 
   void unlock(topology::rank_t target_rank) const {
+    ITYR_PROFILER_RECORD(prof_event_global_lock_unlock, target_rank);
     lock_t ret = mpi_atomic_put_value<lock_t>(0, target_rank, 0, lock_win_.win());
     ITYR_CHECK_MESSAGE(ret == 1, "should be locked before unlock");
   }

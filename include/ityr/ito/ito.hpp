@@ -6,6 +6,7 @@
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
+#include "ityr/common/prof_events.hpp"
 #include "ityr/ito/thread.hpp"
 #include "ityr/ito/worker.hpp"
 #include "ityr/ito/prof_events.hpp"
@@ -23,7 +24,8 @@ private:
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
   common::singleton_initializer<worker::instance>            worker_;
-  prof_events                                                prof_events_;
+  common::prof_events                                        common_prof_events_;
+  prof_events                                                ito_prof_events_;
 };
 
 using instance = common::singleton<ito>;

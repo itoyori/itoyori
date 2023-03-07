@@ -23,6 +23,8 @@ namespace ityr::common { namespace pmr = boost::container::pmr; }
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/common/freelist.hpp"
+#include "ityr/common/profiler.hpp"
+#include "ityr/common/prof_events.hpp"
 
 namespace ityr::common {
 
@@ -166,6 +168,8 @@ public:
   }
 
   void* do_allocate(std::size_t bytes, std::size_t alignment = alignof(max_align_t)) override {
+    ITYR_PROFILER_RECORD(prof_event_allocator_alloc);
+
     std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
     std::size_t real_bytes = bytes + pad_bytes;
 
@@ -206,6 +210,8 @@ public:
   }
 
   void local_deallocate(void* p, std::size_t bytes, std::size_t alignment = alignof(max_align_t)) {
+    ITYR_PROFILER_RECORD(prof_event_allocator_free_local);
+
     ITYR_CHECK(get_owner(p) == topology::my_rank());
 
     std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
@@ -220,6 +226,8 @@ public:
   }
 
   void remote_deallocate(void* p, std::size_t bytes [[maybe_unused]], int target_rank, std::size_t alignment = alignof(max_align_t)) {
+    ITYR_PROFILER_RECORD(prof_event_allocator_free_remote, target_rank);
+
     ITYR_CHECK(topology::my_rank() != target_rank);
     ITYR_CHECK(get_owner(p) == target_rank);
 
@@ -236,6 +244,8 @@ public:
   }
 
   void collect_deallocated() {
+    ITYR_PROFILER_RECORD(prof_event_allocator_collect);
+
     header *h = allocated_list_.next;
     while (h) {
       if (h->freed) {
