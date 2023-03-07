@@ -10,6 +10,8 @@
 
 namespace ityr::common::profiler {
 
+using interval_begin_data = wallclock::wallclock_t;
+
 struct profiler_state {
   bool                   enabled;
   wallclock::wallclock_t t_begin;
@@ -22,20 +24,15 @@ public:
   event_stats(profiler_state& state)
     : state_(state) {}
 
-  using interval_begin_data = wallclock::wallclock_t;
-
-  interval_begin_data interval_begin() {
-    return wallclock::gettime_ns();
+  interval_begin_data interval_begin(wallclock::wallclock_t t) {
+    return t;
   }
 
-  void interval_end(interval_begin_data ibd) {
-    if (state_.enabled) {
-      auto t = wallclock::gettime_ns();
-      /* auto t0 = std::max(state_.t_begin, ibd); */
-      auto t0 = ibd;
-      acc_time_ += t - t0;
-      count_++;
-    }
+  void interval_end(wallclock::wallclock_t t, interval_begin_data ibd) {
+    /* auto t0 = std::max(state_.t_begin, ibd); */
+    auto t0 = ibd;
+    acc_time_ += t - t0;
+    count_++;
   }
 
   virtual std::string str() const { return "UNKNOWN"; }
@@ -75,7 +72,7 @@ protected:
                                     wallclock::wallclock_t acc_time,
                                     wallclock::wallclock_t t_total,
                                     counter_t              count) const {
-    printf("  %-23s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %8ld ave: %8ld ns\n",
+    printf("  %-21s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
            str().c_str(), rank,
            (double)acc_time / t_total * 100, acc_time, t_total,
            count, count == 0 ? 0 : (acc_time / count));
@@ -84,7 +81,7 @@ protected:
   virtual void print_stats_sum(wallclock::wallclock_t acc_time,
                                wallclock::wallclock_t t_total,
                                counter_t              count) const {
-    printf("  %-23s : %10.6f %% ( %15ld ns / %15ld ns ) count: %8ld ave: %8ld ns\n",
+    printf("  %-21s : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
            str().c_str(),
            (double)acc_time / t_total * 100, acc_time, t_total,
            count, count == 0 ? 0 : (acc_time / count));
@@ -115,6 +112,10 @@ public:
   void end() {
     state_.enabled = false;
     state_.t_end = wallclock::gettime_ns();
+    if (last_phase_ != nullptr) {
+      last_phase_->interval_end(state_.t_end, phase_ibd_);
+      last_phase_ = nullptr;
+    }
   }
 
   void flush() {
@@ -132,9 +133,30 @@ public:
 
   profiler_state& get_state() { return state_; }
 
+  template <typename PhaseFrom, typename PhaseTo>
+  void switch_phase() {
+    if (state_.enabled) {
+      auto t = wallclock::gettime_ns();
+      auto& phase_from = singleton<PhaseFrom>::get();
+      auto& phase_to   = singleton<PhaseTo>::get();
+
+      if (last_phase_ == nullptr) {
+        phase_ibd_ = phase_from.interval_begin(state_.t_begin);
+      } else {
+        ITYR_CHECK(last_phase_ == &phase_from);
+      }
+
+      phase_from.interval_end(t, phase_ibd_);
+      phase_ibd_ = phase_to.interval_begin(t);
+      last_phase_ = &phase_to;
+    }
+  }
+
 private:
   std::vector<event*> events_;
   profiler_state      state_;
+  event*              last_phase_ = nullptr;
+  interval_begin_data phase_ibd_;
 };
 
 using instance = singleton<profiler>;
@@ -151,13 +173,23 @@ public:
 };
 
 template <typename Event, typename... Args>
-inline typename Event::interval_begin_data interval_begin(Args&&... args) {
-  return singleton<Event>::get().interval_begin(std::forward<Args>(args)...);
+inline interval_begin_data interval_begin(Args&&... args) {
+  auto t = wallclock::gettime_ns();
+  return singleton<Event>::get().interval_begin(t, std::forward<Args>(args)...);
 }
 
 template <typename Event, typename... Args>
-inline void interval_end(typename Event::interval_begin_data ibd, Args&&... args) {
-  singleton<Event>::get().interval_end(ibd, std::forward<Args>(args)...);
+inline void interval_end(interval_begin_data ibd, Args&&... args) {
+  auto& state = instance::get().get_state();
+  if (state.enabled) {
+    auto t = wallclock::gettime_ns();
+    singleton<Event>::get().interval_end(t, ibd, std::forward<Args>(args)...);
+  }
+}
+
+template <typename PhaseFrom, typename PhaseTo>
+inline void switch_phase() {
+  instance::get().switch_phase<PhaseFrom, PhaseTo>();
 }
 
 inline void begin() {

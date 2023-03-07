@@ -18,6 +18,8 @@ public:
     ITYR_CHECK(is_spmd_);
     is_spmd_ = false;
 
+    common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched>();
+
     using retval_t = std::invoke_result_t<Fn, Args...>;
     if constexpr (std::is_void_v<retval_t>) {
       if (common::topology::my_rank() == 0) {
@@ -35,6 +37,8 @@ public:
       }
       return common::mpi_bcast_value(retval, 0, common::topology::mpicomm());
     }
+
+    common::profiler::switch_phase<prof_phase_sched, prof_phase_spmd>();
 
     is_spmd_ = true;
   }

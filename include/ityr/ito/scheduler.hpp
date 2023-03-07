@@ -9,6 +9,7 @@
 #include "ityr/ito/context.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/callstack.hpp"
+#include "ityr/ito/prof_events.hpp"
 
 namespace ityr::ito {
 
@@ -49,9 +50,11 @@ public:
       cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom());
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
+        common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
 
         T retval = invoke_fn<T>(fn, args...);
 
+        common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
         common::verbose("Root thread %p is completed", ts);
 
         on_root_die(ts, retval);
@@ -68,6 +71,8 @@ public:
 
   template <typename T, typename Fn, typename... Args>
   thread_handler<T> fork(Fn&& fn, Args&&... args) {
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
     thread_handler<T> th;
     th.state = ts;
@@ -79,9 +84,11 @@ public:
       wsq_.push(wsqueue_entry{cf, cf_size});
 
       common::verbose("Starting new thread %p", ts);
+      common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
 
       T retval = invoke_fn<T>(fn, args...);
 
+      common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
       common::verbose("Thread %p is completed", ts);
 
       on_die(ts, retval);
@@ -98,61 +105,67 @@ public:
       common::verbose("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
     });
 
+    common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
     return th;
   }
 
   template <typename T>
   T join(thread_handler<T>& th) {
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched>();
+
+    T retval;
     if (th.serialized) {
       common::verbose("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
       // when the thread is serialized (i.e., at a fork)
-      return th.retval_ser;
-    }
-
-    ITYR_CHECK(th.state != nullptr);
-    thread_state<T>* ts = th.state;
-
-    T retval;
-    if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
-      common::verbose("Thread %p is already joined", ts);
-      if constexpr (!std::is_same_v<T, no_retval_t>) {
-        retval = remote_get_value(thread_state_allocator_, &ts->retval);
-      }
+      retval = th.retval_ser;
 
     } else {
-      suspend([&, ts](context_frame* cf) {
-        std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
-        void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
-        std::memcpy(evacuation_ptr, cf, cf_size);
+      ITYR_CHECK(th.state != nullptr);
+      thread_state<T>* ts = th.state;
 
-        common::verbose("Evacuate suspended thread context [%p, %p) to %p",
-                        cf, cf->parent_frame, evacuation_ptr);
-
-        suspended_state ss {evacuation_ptr, cf, cf_size};
-        remote_put_value(thread_state_allocator_, ss, &ts->suspended);
-
-        // race
-        if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
-          common::verbose("Win the join race for thread %p (joining thread)", ts);
-          resume_sched();
-        } else {
-          common::verbose("Lose the join race for thread %p (joining thread)", ts);
-          suspended_thread_allocator_.deallocate(ss.evacuation_ptr, ss.frame_size);
-          resume(cf);
+      if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
+        common::verbose("Thread %p is already joined", ts);
+        if constexpr (!std::is_same_v<T, no_retval_t>) {
+          retval = remote_get_value(thread_state_allocator_, &ts->retval);
         }
-      });
 
-      common::verbose("Resume continuation of join for thread %p", ts);
+      } else {
+        suspend([&, ts](context_frame* cf) {
+          std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
+          void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
+          std::memcpy(evacuation_ptr, cf, cf_size);
 
-      if constexpr (!std::is_same_v<T, no_retval_t>) {
-        retval = remote_get_value(thread_state_allocator_, &ts->retval);
+          common::verbose("Evacuate suspended thread context [%p, %p) to %p",
+                          cf, cf->parent_frame, evacuation_ptr);
+
+          suspended_state ss {evacuation_ptr, cf, cf_size};
+          remote_put_value(thread_state_allocator_, ss, &ts->suspended);
+
+          // race
+          if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
+            common::verbose("Win the join race for thread %p (joining thread)", ts);
+            resume_sched();
+          } else {
+            common::verbose("Lose the join race for thread %p (joining thread)", ts);
+            suspended_thread_allocator_.deallocate(ss.evacuation_ptr, ss.frame_size);
+            resume(cf);
+          }
+        });
+
+        common::verbose("Resume continuation of join for thread %p", ts);
+
+        if constexpr (!std::is_same_v<T, no_retval_t>) {
+          retval = remote_get_value(thread_state_allocator_, &ts->retval);
+        }
       }
+
+      std::destroy_at(ts);
+      thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
+      th.state = nullptr;
     }
 
-    std::destroy_at(ts);
-    thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
-    th.state = nullptr;
+    common::profiler::switch_phase<prof_phase_sched, prof_phase_thread>();
     return retval;
   }
 
@@ -224,22 +237,22 @@ private:
   void steal() {
     auto target_rank = get_random_rank();
 
-    auto ibd = common::profiler::interval_begin<prof_event_steal>(target_rank);
+    auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
 
     if (wsq_.empty(target_rank)) {
-      common::profiler::interval_end<prof_event_steal>(ibd, false);
+      common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
       return;
     }
 
     if (!wsq_.lock().trylock(target_rank)) {
-      common::profiler::interval_end<prof_event_steal>(ibd, false);
+      common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
       return;
     }
 
     auto we = wsq_.steal_nolock(target_rank);
     if (!we.has_value()) {
       wsq_.lock().unlock(target_rank);
-      common::profiler::interval_end<prof_event_steal>(ibd, false);
+      common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
       return;
     }
 
@@ -250,7 +263,7 @@ private:
 
     wsq_.lock().unlock(target_rank);
 
-    common::profiler::interval_end<prof_event_steal>(ibd, true);
+    common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
 
     context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base);
     suspend([&](context_frame* cf) {
@@ -328,53 +341,6 @@ private:
     void*       frame_base;
     std::size_t frame_size;
   };
-
-  class prof_event_steal : public common::profiler::event {
-  public:
-    using common::profiler::event::event;
-    auto interval_begin(common::topology::rank_t target_rank [[maybe_unused]]) {
-      return common::profiler::event::interval_begin();
-    }
-    void interval_end(interval_begin_data ibd, bool success) {
-      if (state_.enabled) {
-        auto t = common::wallclock::gettime_ns();
-        auto t0 = ibd;
-        if (success) {
-          acc_time_success_ += t - t0;
-          count_success_++;
-        } else {
-          acc_time_fail_ += t - t0;
-          count_fail_++;
-        }
-      }
-    }
-    std::string str() const override {
-      return success_mode ? "steal_success" : "steal_fail";
-    }
-    void flush() override {
-      success_mode = true;
-      acc_time_ = acc_time_success_;
-      count_ = count_success_;
-      common::profiler::event::flush();
-      success_mode = false;
-      acc_time_ = acc_time_fail_;
-      count_ = count_fail_;
-      common::profiler::event::flush();
-    }
-    void clear() override {
-      acc_time_success_ = 0;
-      acc_time_fail_    = 0;
-      count_success_    = 0;
-      count_fail_       = 0;
-    }
-  private:
-    common::wallclock::wallclock_t acc_time_success_ = 0;
-    common::wallclock::wallclock_t acc_time_fail_    = 0;
-    counter_t                      count_success_    = 0;
-    counter_t                      count_fail_       = 0;
-    bool                           success_mode;
-  };
-  common::profiler::event_initializer<prof_event_steal> prof_event_steal_;
 
   const callstack&           stack_;
   wsqueue<wsqueue_entry>     wsq_;

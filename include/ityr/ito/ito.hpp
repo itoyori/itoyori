@@ -8,6 +8,7 @@
 #include "ityr/common/profiler.hpp"
 #include "ityr/ito/thread.hpp"
 #include "ityr/ito/worker.hpp"
+#include "ityr/ito/prof_events.hpp"
 
 namespace ityr::ito {
 
@@ -22,6 +23,7 @@ private:
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
   common::singleton_initializer<worker::instance>            worker_;
+  prof_events                                                prof_events_;
 };
 
 using instance = common::singleton<ito>;
