@@ -117,7 +117,7 @@ public:
   }
 
   std::optional<Entry> steal_nolock(common::topology::rank_t target_rank) {
-    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal);
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal, target_rank);
 
     ITYR_CHECK(queue_lock_.is_locked(target_rank));
 
@@ -161,7 +161,7 @@ public:
   }
 
   bool empty(common::topology::rank_t target_rank) const {
-    ITYR_PROFILER_RECORD(prof_event_wsqueue_empty);
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_empty, target_rank);
 
     auto remote_qs = common::mpi_get_value<queue_state>(target_rank, 0, queue_state_win_.win());
     return remote_qs.empty();

@@ -22,7 +22,7 @@ struct prof_phase_spmd : public common::profiler::event {
   std::string str() const override { return "phase_spmd"; }
 };
 
-struct prof_event_sched_steal : public common::profiler::event {
+struct prof_event_target_base : public common::profiler::event {
   using common::profiler::event::event;
 
   auto interval_begin(common::profiler::mode_stats,
@@ -31,18 +31,34 @@ struct prof_event_sched_steal : public common::profiler::event {
     return t;
   }
 
-  void interval_end(common::profiler::mode_stats,
-                    common::wallclock::wallclock_t                    t,
-                    common::profiler::mode_stats::interval_begin_data ibd,
-                    bool                                              success) {
-    do_acc(t - ibd, success);
-  }
-
   auto interval_begin(common::profiler::mode_trace,
                       common::wallclock::wallclock_t t,
                       common::topology::rank_t       target_rank) {
     auto ibd = MLOG_BEGIN(&state_.trace_md, 0, t, target_rank);
     return ibd;
+  }
+
+  void* trace_decoder(FILE* stream, void* buf0, void* buf1) override {
+    auto t0          = MLOG_READ_ARG(&buf0, common::wallclock::wallclock_t);
+    auto target_rank = MLOG_READ_ARG(&buf0, common::topology::rank_t);
+    auto t1          = MLOG_READ_ARG(&buf1, common::wallclock::wallclock_t);
+
+    do_acc(t1 - t0);
+
+    auto rank = common::topology::my_rank();
+    fprintf(stream, "%d,%lu,%d,%lu,%s,target=%d\n", rank, t0, rank, t1, str().c_str(), target_rank);
+    return buf1;
+  }
+};
+
+struct prof_event_sched_steal : public prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+
+  void interval_end(common::profiler::mode_stats,
+                    common::wallclock::wallclock_t                    t,
+                    common::profiler::mode_stats::interval_begin_data ibd,
+                    bool                                              success) {
+    do_acc(t - ibd, success);
   }
 
   void interval_end(common::profiler::mode_trace,
@@ -62,7 +78,7 @@ struct prof_event_sched_steal : public common::profiler::event {
 
     success_mode_ = success;
     auto rank = common::topology::my_rank();
-    fprintf(stream, "%d,%lu,%d,%lu,%s,%d\n", rank, t0, rank, t1, str().c_str(), target_rank);
+    fprintf(stream, "%d,%lu,%d,%lu,%s,target=%d\n", rank, t0, rank, t1, str().c_str(), target_rank);
     return buf1;
   }
 
@@ -116,13 +132,13 @@ struct prof_event_wsqueue_pop : public common::profiler::event {
   std::string str() const override { return "wsqueue_pop"; }
 };
 
-struct prof_event_wsqueue_steal : public common::profiler::event {
-  using common::profiler::event::event;
+struct prof_event_wsqueue_steal : public prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
   std::string str() const override { return "wsqueue_steal"; }
 };
 
-struct prof_event_wsqueue_empty : public common::profiler::event {
-  using common::profiler::event::event;
+struct prof_event_wsqueue_empty : public prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
   std::string str() const override { return "wsqueue_empty"; }
 };
 
