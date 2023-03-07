@@ -8,6 +8,8 @@
 
 namespace ityr::common::wallclock {
 
+using wallclock_t = uint64_t;
+
 class global_clock {
 public:
   global_clock()
@@ -16,15 +18,15 @@ public:
   }
 
   void sync() {
-    uint64_t t0 = clock_gettime_ns();
+    wallclock_t t0 = clock_gettime_ns();
     mpi_barrier(topology::mpicomm());
     do_sync();
     mpi_barrier(topology::mpicomm());
-    uint64_t t1 = clock_gettime_ns();
+    wallclock_t t1 = clock_gettime_ns();
     verbose("Global clock synchronized (offset = %ld ns); took %ld ns", offset_, t1 - t0);
   }
 
-  uint64_t gettime_ns() const {
+  wallclock_t gettime_ns() const {
     return clock_gettime_ns() - offset_;
   }
 
@@ -81,6 +83,6 @@ private:
 
 using instance = singleton<global_clock>;
 
-inline uint64_t gettime_ns() { return instance::get().gettime_ns(); }
+inline wallclock_t gettime_ns() { return instance::get().gettime_ns(); }
 
 }

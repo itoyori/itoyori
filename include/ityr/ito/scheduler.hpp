@@ -5,6 +5,7 @@
 #include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/allocator.hpp"
+#include "ityr/common/profiler.hpp"
 #include "ityr/ito/context.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/callstack.hpp"
@@ -223,17 +224,22 @@ private:
   void steal() {
     auto target_rank = get_random_rank();
 
+    auto ibd = common::profiler::interval_begin<prof_event_steal>();
+
     if (wsq_.empty(target_rank)) {
+      common::profiler::interval_end<prof_event_steal>(ibd);
       return;
     }
 
     if (!wsq_.lock().trylock(target_rank)) {
+      common::profiler::interval_end<prof_event_steal>(ibd);
       return;
     }
 
     auto we = wsq_.steal_nolock(target_rank);
     if (!we.has_value()) {
       wsq_.lock().unlock(target_rank);
+      common::profiler::interval_end<prof_event_steal>(ibd);
       return;
     }
 
@@ -243,6 +249,8 @@ private:
     stack_.direct_copy_from(we->frame_base, we->frame_size, target_rank);
 
     wsq_.lock().unlock(target_rank);
+
+    common::profiler::interval_end<prof_event_steal>(ibd);
 
     context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base);
     suspend([&](context_frame* cf) {
@@ -320,6 +328,12 @@ private:
     void*       frame_base;
     std::size_t frame_size;
   };
+
+  struct prof_event_steal : public common::profiler::event {
+    using common::profiler::event::event;
+    std::string str() const override { return "steal"; };
+  };
+  common::profiler::event_initializer<prof_event_steal> prof_event_steal_;
 
   const callstack&           stack_;
   wsqueue<wsqueue_entry>     wsq_;

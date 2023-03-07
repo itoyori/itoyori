@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
   }
 
   for (int r = 0; r < n_repeats; r++) {
-    ityr::barrier();
+    ityr::profiler_begin();
 
     auto t0 = ityr::common::clock_gettime_ns();
 
@@ -164,6 +164,8 @@ int main(int argc, char** argv) {
     });
 
     auto t1 = ityr::common::clock_gettime_ns();
+
+    ityr::profiler_end();
 
     if (ityr::is_master()) {
       printf("[%d] %ld ns\n", r, t1 - t0);
@@ -180,6 +182,8 @@ int main(int argc, char** argv) {
 
       fflush(stdout);
     }
+
+    ityr::profiler_flush();
   }
 
   ityr::fini();

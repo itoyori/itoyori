@@ -3,10 +3,9 @@
 #include <functional>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
-#include "ityr/common/virtual_mem.hpp"
-#include "ityr/common/physical_mem.hpp"
-#include "ityr/common/allocator.hpp"
+#include "ityr/common/profiler.hpp"
 #include "ityr/ito/thread.hpp"
 #include "ityr/ito/worker.hpp"
 
@@ -21,6 +20,7 @@ private:
   common::mpi_initializer                                    mi_;
   common::singleton_initializer<common::topology::instance>  topo_;
   common::singleton_initializer<common::wallclock::instance> clock_;
+  common::singleton_initializer<common::profiler::instance>  prof_;
   common::singleton_initializer<worker::instance>            worker_;
 };
 
