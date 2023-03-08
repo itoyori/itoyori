@@ -38,6 +38,8 @@ public:
   event(profiler_state& state)
     : state_(state) {}
 
+  virtual ~event() = default;
+
   mode_stats::interval_begin_data interval_begin(mode_disabled, wallclock::wallclock_t) { return {}; }
   void interval_end(mode_disabled, wallclock::wallclock_t, mode_disabled::interval_begin_data) {}
 
