@@ -217,7 +217,11 @@ private:
   std::unique_ptr<FILE, int (*)(FILE*)> trace_out_file_ = {nullptr, nullptr};
 };
 
-using mode = mode_disabled;
+#ifndef ITYR_PROFILER_MODE
+#define ITYR_PROFILER_MODE disabled
+#endif
+using mode = ITYR_CONCAT(mode_, ITYR_PROFILER_MODE);
+#undef ITYR_PROFILER_MODE
 
 using instance = singleton<profiler<mode>>;
 
