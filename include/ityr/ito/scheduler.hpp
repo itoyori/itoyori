@@ -7,13 +7,13 @@
 #include "ityr/common/allocator.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/ito/context.hpp"
-#include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/callstack.hpp"
+#include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/prof_events.hpp"
 
 namespace ityr::ito {
 
-class scheduler {
+class scheduler_ws_workfirst {
 public:
   struct no_retval_t {};
 
@@ -37,8 +37,8 @@ public:
     T                retval_ser; // return the result by value if the thread is serialized
   };
 
-  scheduler(const callstack& stack)
-    : stack_(stack),
+  scheduler_ws_workfirst()
+    : stack_(common::getenv_coll("ITYR_ITO_STACK_SIZE", std::size_t(2) * 1024 * 1024, common::topology::mpicomm())),
       wsq_(common::getenv_coll("ITYR_ITO_WSQUEUE_CAPACITY", 1024, common::topology::mpicomm())) {}
 
   template <typename T, typename Fn, typename... Args>
@@ -368,7 +368,7 @@ private:
     std::size_t frame_size;
   };
 
-  const callstack&           stack_;
+  callstack                  stack_;
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;
   common::remotable_resource suspended_thread_allocator_;
@@ -376,5 +376,52 @@ private:
   context_frame*             sched_cf_             = nullptr;
   MPI_Request                sched_loop_exit_req_  = MPI_REQUEST_NULL;
 };
+
+class scheduler_serial {
+public:
+  struct no_retval_t {};
+
+  template <typename T>
+  using thread_handler = T;
+
+  scheduler_serial() {}
+
+  template <typename T, typename Fn, typename... Args>
+  T root_exec(Fn&& fn, Args&&... args) {
+    return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  }
+
+  template <typename T, typename Fn, typename... Args>
+  thread_handler<T> fork(Fn&& fn, Args&&... args) {
+    return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  }
+
+  template <typename T>
+  T join(thread_handler<T>& th) {
+    return th;
+  }
+
+  template <typename CondFn>
+  void sched_loop(CondFn&&) {}
+
+private:
+  template <typename T, typename Fn, typename... Args>
+  T invoke_fn(Fn&& fn, Args&&... args) {
+    T retval;
+    if constexpr (!std::is_same_v<T, no_retval_t>) {
+      retval = fn(args...);
+    } else {
+      fn(args...);
+    }
+    return retval;
+  }
+};
+
+
+#ifndef ITYR_ITO_SCHEDULER
+#define ITYR_ITO_SCHEDULER ws_workfirst
+#endif
+using scheduler = ITYR_CONCAT(scheduler_, ITYR_ITO_SCHEDULER);
+#undef ITYR_ITO_SCHEDULER
 
 }

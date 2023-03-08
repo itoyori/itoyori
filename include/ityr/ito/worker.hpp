@@ -2,7 +2,6 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/topology.hpp"
-#include "ityr/ito/callstack.hpp"
 #include "ityr/ito/scheduler.hpp"
 
 namespace ityr::ito::worker {
@@ -10,8 +9,7 @@ namespace ityr::ito::worker {
 class worker {
 public:
   worker()
-    : stack_(common::getenv_coll("ITYR_ITO_STACK_SIZE", std::size_t(2) * 1024 * 1024, common::topology::mpicomm())),
-      sched_(stack_) {}
+    : sched_() {}
 
   template <typename Fn, typename... Args>
   auto root_exec(Fn&& fn, Args&&... args) {
@@ -53,7 +51,6 @@ public:
   scheduler& sched() { return sched_; }
 
 private:
-  callstack stack_;
   scheduler sched_;
   bool      is_spmd_ = true;
 };
