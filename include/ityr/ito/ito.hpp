@@ -7,6 +7,7 @@
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
+#include "ityr/ito/util.hpp"
 #include "ityr/ito/thread.hpp"
 #include "ityr/ito/worker.hpp"
 #include "ityr/ito/prof_events.hpp"
@@ -21,6 +22,7 @@ public:
 private:
   common::mpi_initializer                                    mi_;
   common::singleton_initializer<common::topology::instance>  topo_;
+  aslr_checker                                               aslr_checker_;
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
   common::singleton_initializer<worker::instance>            worker_;
