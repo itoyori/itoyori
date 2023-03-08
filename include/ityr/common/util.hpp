@@ -50,6 +50,10 @@
 
 #define ITYR_ANON_VAL ITYR_CONCAT(anon_, __LINE__)
 
+#define ITYR_STR_EXPAND(x) #x
+#define ITYR_STR(x) ITYR_STR_EXPAND(x)
+#define ITYR_PRINT_MACRO(x) printf(#x "=" ITYR_STR_EXPAND(x) "\n")
+
 namespace ityr::common {
 
 inline uint64_t clock_gettime_ns() {

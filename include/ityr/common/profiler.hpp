@@ -10,6 +10,7 @@
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
+#include "ityr/common/options.hpp"
 
 namespace ityr::common::profiler {
 
@@ -219,11 +220,7 @@ private:
   std::unique_ptr<FILE, int (*)(FILE*)> trace_out_file_ = {nullptr, nullptr};
 };
 
-#ifndef ITYR_PROFILER_MODE
-#define ITYR_PROFILER_MODE disabled
-#endif
 using mode = ITYR_CONCAT(mode_, ITYR_PROFILER_MODE);
-#undef ITYR_PROFILER_MODE
 
 using instance = singleton<profiler<mode>>;
 

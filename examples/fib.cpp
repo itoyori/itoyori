@@ -67,8 +67,12 @@ int main(int argc, char** argv) {
            "# of processes:               %d\n"
            "# of repeats:                 %d\n"
            "Verify result:                %d\n"
-           "=============================================================\n\n",
+           "-------------------------------------------------------------\n",
            n_input, ityr::n_ranks(), n_repeats, verify_result);
+
+    printf("[Compile Options]\n");
+    ityr::print_compile_options();
+    printf("=============================================================\n\n");
     fflush(stdout);
   }
 

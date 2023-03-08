@@ -10,6 +10,7 @@
 #include "ityr/ito/callstack.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/prof_events.hpp"
+#include "ityr/ito/options.hpp"
 
 namespace ityr::ito {
 
@@ -417,11 +418,6 @@ private:
   }
 };
 
-
-#ifndef ITYR_ITO_SCHEDULER
-#define ITYR_ITO_SCHEDULER ws_workfirst
-#endif
 using scheduler = ITYR_CONCAT(scheduler_, ITYR_ITO_SCHEDULER);
-#undef ITYR_ITO_SCHEDULER
 
 }

@@ -4,7 +4,9 @@
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/ito/ito.hpp"
+#include "ityr/ito/options.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 
@@ -59,6 +61,11 @@ inline void profiler_end() {
 
 inline void profiler_flush() {
   common::profiler::flush();
+}
+
+inline void print_compile_options() {
+  common::print_compile_options();
+  ito::print_compile_options();
 }
 
 }

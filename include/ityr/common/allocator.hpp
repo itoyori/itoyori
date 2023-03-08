@@ -25,14 +25,11 @@ namespace ityr::common { namespace pmr = boost::container::pmr; }
 #include "ityr/common/freelist.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
+#include "ityr/common/options.hpp"
 
 namespace ityr::common {
 
-#ifndef ITYR_ALLOCATOR_USE_DYNAMIC_WIN
-#define ITYR_ALLOCATOR_USE_DYNAMIC_WIN false
-#endif
 inline constexpr bool use_dynamic_win = ITYR_ALLOCATOR_USE_DYNAMIC_WIN;
-#undef ITYR_ALLOCATOR_USE_DYNAMIC_WIN
 
 class mpi_win_resource final : public pmr::memory_resource {
 public:
