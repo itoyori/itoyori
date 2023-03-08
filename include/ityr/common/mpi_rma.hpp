@@ -1,6 +1,6 @@
 #pragma once
 
-#include <mpi.h>
+#include <mutex>
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
@@ -254,11 +254,13 @@ public:
   mpi_win_manager() {}
   mpi_win_manager(MPI_Comm comm) {
     MPI_Win_create_dynamic(MPI_INFO_NULL, comm, &win_);
-    MPI_Win_lock_all(0, win_);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
+    wireup(comm);
   }
   mpi_win_manager(MPI_Comm comm, std::size_t size) {
     MPI_Win_allocate(size, 1, MPI_INFO_NULL, comm, &baseptr_, &win_);
-    MPI_Win_lock_all(0, win_);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
+    wireup(comm);
   }
   mpi_win_manager(MPI_Comm comm, void* baseptr, std::size_t size) : baseptr_(baseptr) {
     MPI_Win_create(baseptr,
@@ -267,7 +269,8 @@ public:
                    MPI_INFO_NULL,
                    comm,
                    &win_);
-    MPI_Win_lock_all(0, win_);
+    MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
+    wireup(comm);
   }
 
   ~mpi_win_manager() {
@@ -292,6 +295,20 @@ public:
   void* baseptr() const { return baseptr_; }
 
 private:
+  void wireup(MPI_Comm comm) {
+    static std::once_flag flag;
+    std::call_once(flag, [&]() {
+      // Invoke wireup routines in the internal of MPI, assuming that this is the first
+      // one-sided communication since MPI_Init. MPI_MODE_NOCHECK will not involve communication.
+      int my_rank = mpi_comm_rank(comm);
+      int n_ranks = mpi_comm_size(comm);
+      for (int i = 1; i <= n_ranks / 2; i++) {
+        int target_rank = (my_rank + i) % n_ranks;
+        mpi_get_value<char>(target_rank, 0, win_);
+      }
+    });
+  }
+
   MPI_Win win_     = MPI_WIN_NULL;
   void*   baseptr_ = nullptr;
 };
