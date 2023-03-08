@@ -296,15 +296,25 @@ private:
   void*   baseptr_ = nullptr;
 };
 
+// This value should be larger than a cacheline size, because otherwise
+// the buffers on different processes may be allocated to the same cacheline,
+// which can cause unintended cache misses (false sharing).
+inline constexpr std::size_t mpi_win_size_min = 1024;
+
 template <typename T>
 class mpi_win_manager {
 public:
   mpi_win_manager() {}
-  mpi_win_manager(MPI_Comm comm) : win_(comm), comm_(comm) {}
+  mpi_win_manager(MPI_Comm comm)
+    : win_(comm),
+      comm_(comm) {}
   mpi_win_manager(MPI_Comm comm, std::size_t count)
-    : win_(comm, sizeof(T) * count), comm_(comm), local_buf_(init_local_buf(count)) {}
+    : win_(comm, round_up_pow2(sizeof(T) * count, mpi_win_size_min)),
+      comm_(comm),
+      local_buf_(init_local_buf(count)) {}
   mpi_win_manager(MPI_Comm comm, T* baseptr, std::size_t count)
-    : win_(comm, baseptr, sizeof(T) * count), comm_(comm) {} // no initialization for local buf?
+    : win_(comm, baseptr, round_up_pow2(sizeof(T) * count, mpi_win_size_min)),
+      comm_(comm) {} // no initialization for local buf?
 
   ~mpi_win_manager() {
     if (win_.win() != MPI_WIN_NULL) {
