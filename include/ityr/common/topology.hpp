@@ -149,6 +149,8 @@ inline rank_t   inter_n_ranks() { return instance::get().inter_n_ranks(); }
 inline rank_t intra_rank(rank_t global_rank) { return instance::get().intra_rank(global_rank); };
 inline rank_t inter_rank(rank_t global_rank) { return instance::get().inter_rank(global_rank); };
 
+inline rank_t intra2global_rank(rank_t intra_rank) { return instance::get().intra2global_rank(intra_rank); }
+
 inline bool is_locally_accessible(rank_t target_global_rank) { return instance::get().is_locally_accessible(target_global_rank); };
 
 }

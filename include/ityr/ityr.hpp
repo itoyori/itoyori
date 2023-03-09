@@ -7,6 +7,7 @@
 #include "ityr/common/options.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ito/options.hpp"
+#include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 

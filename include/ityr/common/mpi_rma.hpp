@@ -331,7 +331,7 @@ public:
       local_buf_(init_local_buf(count)) {}
   mpi_win_manager(MPI_Comm comm, T* baseptr, std::size_t count)
     : win_(comm, baseptr, round_up_pow2(sizeof(T) * count, mpi_win_size_min)),
-      comm_(comm) {} // no initialization for local buf?
+      comm_(comm) {}
 
   ~mpi_win_manager() {
     if (win_.win() != MPI_WIN_NULL) {
@@ -342,8 +342,8 @@ public:
   mpi_win_manager(const mpi_win_manager&) = delete;
   mpi_win_manager& operator=(const mpi_win_manager&) = delete;
 
-  mpi_win_manager(mpi_win_manager&& wm) = default;
-  mpi_win_manager& operator=(mpi_win_manager&& wm) = default;
+  mpi_win_manager(mpi_win_manager&&) = default;
+  mpi_win_manager& operator=(mpi_win_manager&&) = default;
 
   MPI_Win win() const { return win_.win(); }
   T* baseptr() const { return reinterpret_cast<T*>(win_.baseptr()); }
@@ -367,9 +367,9 @@ private:
     }
   }
 
-  const mpi_win_manager<void> win_;
-  const MPI_Comm              comm_ = MPI_COMM_NULL;
-  const span<T>               local_buf_;
+  mpi_win_manager<void> win_;
+  MPI_Comm              comm_;
+  span<T>               local_buf_;
 };
 
 }
