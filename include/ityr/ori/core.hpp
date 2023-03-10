@@ -130,18 +130,20 @@ public:
 
   template <access_mode Mode>
   void checkout(void* addr, std::size_t size) {
-    common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes) (win=%p)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
-
-    checkout_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    if (noncoll_allocator_.has(addr)) {
+      checkout_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    } else {
+      checkout_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    }
   }
 
   template <access_mode Mode>
   void checkin(void* addr, std::size_t size) {
-    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (win=%p)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
-
-    checkin_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    if (noncoll_allocator_.has(addr)) {
+      checkin_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    } else {
+      checkin_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    }
   }
 
   void release() {
@@ -209,6 +211,9 @@ private:
   void checkout_coll(std::byte* addr, std::size_t size) {
     coll_mem& cm = coll_mem_get(addr);
 
+    common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
+                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
+
     bool fetched = false;
     std::vector<mmap_entry*> home_segments_to_map;
     std::vector<cache_block*> cache_blocks_to_map;
@@ -274,9 +279,77 @@ private:
     }
   }
 
+  template <access_mode Mode, bool IncrementRef>
+  void checkout_noncoll(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(noncoll_allocator_.has(addr));
+
+    common::verbose("Checkout request (noncoll, mode: %s) for [%p, %p) (%ld bytes) (noncoll, win=%p)",
+                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size,
+                    noncoll_allocator_.win());
+
+    auto target_rank = noncoll_allocator_.get_owner(addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      // There is no need to manage mmap entries for home blocks because
+      // the remotable allocator employs block distribution policy.
+      return;
+    }
+
+    bool fetched = false;
+    std::vector<cache_block*> cache_blocks_to_map;
+
+    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
+        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
+    std::byte* blk_addr_e = addr + size;
+
+    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+      cache_block& cb = cache_manager_.get_entry(blk_addr);
+
+      if (blk_addr != cb.mapped_addr) {
+        cb.addr      = blk_addr;
+        cb.win       = noncoll_allocator_.win();
+        cb.owner     = target_rank;
+        cb.pm_offset = noncoll_allocator_.get_disp(blk_addr);
+        cache_blocks_to_map.push_back(&cb);
+      }
+
+      block_region br = {std::max(addr, blk_addr) - blk_addr,
+                         std::min(addr + size, blk_addr + BlockSize) - blk_addr};
+
+      if constexpr (Mode == access_mode::write) {
+        cb.fresh_regions.add(br);
+
+      } else {
+        if (cache_manager_.fetch_begin(cb, br)) {
+          fetched = true;
+        }
+      }
+
+      if constexpr (IncrementRef) {
+        cb.ref_count++;
+      }
+
+      /* cache_tlb_.add(&cb); */
+    }
+
+    // Overlap communication and memory remapping
+    for (cache_block* cb : cache_blocks_to_map) {
+      cache_manager_.update_mapping(*cb);
+    }
+
+    if (fetched) {
+      cache_manager_.fetch_complete(noncoll_allocator_.win());
+    }
+  }
+
   template <access_mode Mode, bool DecrementRef>
   void checkin_coll(std::byte* addr, std::size_t size) {
     coll_mem& cm = coll_mem_get(addr);
+
+    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
+                    str(Mode).c_str(), addr, addr + size, size, cm.win());
 
     for_each_mem_block<BlockSize>(cm, addr, size,
       // home segment
@@ -300,6 +373,42 @@ private:
           cb.ref_count--;
         }
       });
+  }
+
+  template <access_mode Mode, bool DecrementRef>
+  void checkin_noncoll(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(noncoll_allocator_.has(addr));
+
+    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (noncoll, win=%p)",
+                    str(Mode).c_str(), addr, addr + size, size, noncoll_allocator_.win());
+
+    auto target_rank = noncoll_allocator_.get_owner(addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      // There is no need to manage mmap entries for home blocks because
+      // the remotable allocator employs block distribution policy.
+      return;
+    }
+
+    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
+        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
+    std::byte* blk_addr_e = addr + size;
+
+    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+      cache_block& cb = cache_manager_.template get_entry<false>(blk_addr);
+
+      if constexpr (Mode != access_mode::read) {
+        block_region br = {std::max(addr, blk_addr) - blk_addr,
+                           std::min(addr + size, blk_addr + BlockSize) - blk_addr};
+        cache_manager_.add_dirty_region(cb, br);
+      }
+
+      if constexpr (DecrementRef) {
+        cb.ref_count--;
+      }
+    }
   }
 
   template <block_size_t BS>
@@ -647,6 +756,93 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncontig)") {
 
   c.free_coll(ps[0]);
   c.free_coll(ps[1]);
+}
+
+ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
+  common::singleton_initializer<common::topology::instance> topo;
+  constexpr block_size_t bs = 65536;
+  int n_cb = 16;
+  core<bs> c(n_cb * bs, bs / 4);
+
+  auto my_rank = common::topology::my_rank();
+  auto n_ranks = common::topology::n_ranks();
+  auto mpicomm = common::topology::mpicomm();
+
+  ITYR_SUBCASE("list creation") {
+    int niter = 10000;
+    int n_alloc_iter = 100;
+
+    struct node_t {
+      node_t* next = nullptr;
+      int     value;
+    };
+
+    node_t* root_node = new (c.malloc(sizeof(node_t))) node_t;
+
+    c.checkout<access_mode::write>(root_node, sizeof(node_t));
+    root_node->next = nullptr;
+    root_node->value = my_rank;
+    c.checkin<access_mode::write>(root_node, sizeof(node_t));
+
+    node_t* node = root_node;
+    for (int i = 0; i < niter; i++) {
+      for (int j = 0; j < n_alloc_iter; j++) {
+        // append a new node
+        node_t* new_node = new (c.malloc(sizeof(node_t))) node_t;
+
+        c.checkout<access_mode::write>(&node->next, sizeof(node->next));
+        node->next = new_node;
+        c.checkin<access_mode::write>(&node->next, sizeof(node->next));
+
+        c.checkout<access_mode::read>(&node->value, sizeof(node->value));
+        int val = node->value;
+        c.checkin<access_mode::read>(&node->value, sizeof(node->value));
+
+        c.checkout<access_mode::write>(new_node, sizeof(node_t));
+        new_node->next = nullptr;
+        new_node->value = val + 1;
+        c.checkin<access_mode::write>(new_node, sizeof(node_t));
+
+        node = new_node;
+      }
+
+      c.release();
+
+      // exchange nodes across nodes
+      node_t* next_node;
+
+      auto req_send = common::mpi_isend(&node     , 1, (n_ranks + my_rank + 1) % n_ranks, i, mpicomm);
+      auto req_recv = common::mpi_irecv(&next_node, 1, (n_ranks + my_rank - 1) % n_ranks, i, mpicomm);
+      common::mpi_wait(req_send);
+      common::mpi_wait(req_recv);
+
+      node = next_node;
+
+      c.acquire();
+    }
+
+    c.release();
+    common::mpi_barrier(mpicomm);
+    c.acquire();
+
+    int count = 0;
+    node = root_node;
+    while (node != nullptr) {
+      c.checkout<access_mode::read>(node, sizeof(node_t));
+
+      ITYR_CHECK(node->value == my_rank + count);
+
+      node_t* prev_node = node;
+      node = node->next;
+
+      c.checkin<access_mode::read>(prev_node, sizeof(node_t));
+
+      std::destroy_at(prev_node);
+      c.free(prev_node, sizeof(node_t));
+
+      count++;
+    }
+  }
 }
 
 }

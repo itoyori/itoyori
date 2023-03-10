@@ -40,11 +40,14 @@ public:
       freelist_(reinterpret_cast<uintptr_t>(base_addr), max_size) {}
 
   void* do_allocate(std::size_t bytes, std::size_t alignment) override {
-    if (bytes % get_page_size() != 0 || alignment % get_page_size() != 0) {
+    if (alignment % get_page_size() != 0) {
       die("[ityr::common::allocator] Requests for mpi_win_resource must be page-aligned");
     }
 
-    auto s = freelist_.get(bytes, alignment);
+    // Align with page size
+    std::size_t real_bytes = round_up_pow2(bytes, get_page_size());
+
+    auto s = freelist_.get(real_bytes, alignment);
     if (!s.has_value()) {
       die("[ityr::common::allocator] Could not allocate memory for malloc_local()");
     }
@@ -52,27 +55,30 @@ public:
     void* ret = reinterpret_cast<void*>(*s);
 
     if constexpr (use_dynamic_win) {
-      MPI_Win_attach(win_, ret, bytes);
+      MPI_Win_attach(win_, ret, real_bytes);
     }
 
     return ret;
   }
 
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
-    if (bytes % get_page_size() != 0 || alignment % get_page_size() != 0) {
+    if (alignment % get_page_size() != 0) {
       die("[ityr::common::allocator] Requests for mpi_win_resource must be page-aligned");
     }
+
+    // Align with page size
+    std::size_t real_bytes = round_up_pow2(bytes, get_page_size());
 
     if constexpr (use_dynamic_win) {
       MPI_Win_detach(win_, p);
 
-      if (madvise(p, bytes, MADV_REMOVE) == -1) {
+      if (madvise(p, real_bytes, MADV_REMOVE) == -1) {
         perror("madvise");
         die("[ityr::common::allocator] madvise() failed");
       }
     }
 
-    freelist_.add(reinterpret_cast<uintptr_t>(p), bytes);
+    freelist_.add(reinterpret_cast<uintptr_t>(p), real_bytes);
   }
 
   bool do_is_equal(const pmr::memory_resource& other) const noexcept override {
@@ -95,7 +101,7 @@ public:
 
   void* do_allocate(std::size_t bytes, std::size_t alignment) override {
     if (bytes >= block_size_) {
-      return upstream_mr_->allocate(bytes, alignment);
+      return upstream_mr_->allocate(bytes, std::max(alignment, block_size_));
     }
 
     auto s = freelist_.get(bytes, alignment);
@@ -111,7 +117,7 @@ public:
 
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
     if (bytes >= block_size_) {
-      upstream_mr_->deallocate(p, bytes, alignment);
+      upstream_mr_->deallocate(p, bytes, std::max(alignment, block_size_));
     }
 
     freelist_.add(reinterpret_cast<uintptr_t>(p), bytes);
