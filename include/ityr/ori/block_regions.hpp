@@ -56,6 +56,16 @@ public:
   block_regions(std::initializer_list<block_region> regions)
     : regions_(regions) {}
 
+  auto& get() { return regions_; }
+
+  bool empty() const {
+    return regions_.empty();
+  }
+
+  void clear() {
+    regions_.clear();
+  }
+
   void add(block_region br) {
     auto it = regions_.before_begin();
 
@@ -80,14 +90,37 @@ public:
     }
   }
 
-  auto& get() { return regions_; }
+  void remove(block_region br) {
+    auto it = regions_.before_begin();
 
-  bool empty() const {
-    return regions_.empty();
-  }
+    while (std::next(it) != regions_.end()) {
+      if (br.end <= std::next(it)->begin) break;
 
-  void clear() {
-    regions_.clear();
+      if (std::next(it)->end <= br.begin) {
+        // no overlap
+        it++;
+      } else if (br.begin <= std::next(it)->begin && std::next(it)->end <= br.end) {
+        // br contains std::next(it)
+        regions_.erase_after(it);
+        // do not increment it
+      } else if (br.begin <= std::next(it)->begin && br.end <= std::next(it)->end) {
+        // the left end of std::next(it) is overlaped
+        std::next(it)->begin = br.end;
+        it++;
+      } else if (std::next(it)->begin <= br.begin && std::next(it)->end <= br.end) {
+        // the right end of std::next(it) is overlaped
+        std::next(it)->end = br.begin;
+        it++;
+      } else if (std::next(it)->begin <= br.begin && br.end <= std::next(it)->end) {
+        // std::next(it) contains br
+        block_region new_br = {std::next(it)->begin, br.begin};
+        std::next(it)->begin = br.end;
+        regions_.insert_after(it, new_br);
+        it++;
+      } else {
+        common::die("Something is wrong in block_regions::remove()\n");
+      }
+    }
   }
 
   bool include(block_region br) {
@@ -159,6 +192,27 @@ ITYR_TEST_CASE("[ityr::ori::block_regions] add") {
   check_equal({{0, 120}, {200, 700}});
   brs.add({50, 600});
   check_equal({{0, 700}});
+}
+
+ITYR_TEST_CASE("[ityr::ori::block_regions] remove") {
+  block_regions brs{{2, 5}, {6, 9}, {11, 20}, {50, 100}};
+  auto check_equal = [&](std::forward_list<block_region> ans) {
+    ITYR_CHECK(brs.get() == ans);
+  };
+  brs.remove({6, 9});
+  check_equal({{2, 5}, {11, 20}, {50, 100}});
+  brs.remove({4, 10});
+  check_equal({{2, 4}, {11, 20}, {50, 100}});
+  brs.remove({70, 80});
+  check_equal({{2, 4}, {11, 20}, {50, 70}, {80, 100}});
+  brs.remove({18, 55});
+  check_equal({{2, 4}, {11, 18}, {55, 70}, {80, 100}});
+  brs.remove({10, 110});
+  check_equal({{2, 4}});
+  brs.remove({2, 4});
+  check_equal({});
+  brs.remove({2, 4});
+  check_equal({});
 }
 
 ITYR_TEST_CASE("[ityr::ori::block_regions] include") {

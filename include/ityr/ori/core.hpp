@@ -5,6 +5,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/allocator.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/coll_mem.hpp"
@@ -54,7 +55,17 @@ public:
     return addr;
   }
 
-  void* malloc(std::size_t size);
+  void* malloc(std::size_t size) {
+    ITYR_CHECK_MESSAGE(size > 0, "Memory allocation size cannot be 0");
+
+    void* addr = noncoll_allocator_.allocate(size);
+
+    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes) (win=%p)",
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size,
+                    noncoll_allocator_.win());
+
+    return addr;
+  }
 
   void free_coll(void* addr) {
     if (!addr) {
@@ -83,7 +94,39 @@ public:
     coll_mem_destroy(cm);
   }
 
-  void* free(void* addr);
+  // TODO: remove size from parameters
+  void free(void* addr, std::size_t size) {
+    ITYR_CHECK_MESSAGE(addr, "Null pointer was passed to free()");
+    ITYR_CHECK(noncoll_allocator_.has(addr));
+
+    common::topology::rank_t target_rank = noncoll_allocator_.get_owner(addr);
+
+    if (target_rank == common::topology::my_rank()) {
+      noncoll_allocator_.local_deallocate(addr, size);
+
+    } else {
+      // ensure dirty data of this memory object are discarded
+      std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
+          common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
+      std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
+
+      for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+        if (cache_manager_.is_cached(blk_addr)) {
+          cache_block& cb = cache_manager_.get_entry(blk_addr);
+
+          if (cb.is_writing_back()) {
+            cache_manager_.writeback_complete();
+          }
+
+          block_region br = {std::max(reinterpret_cast<std::byte*>(addr), blk_addr) - blk_addr,
+                             std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize) - blk_addr};
+          cb.dirty_regions.remove(br);
+        }
+      }
+
+      noncoll_allocator_.remote_deallocate(addr, size, target_rank);
+    }
+  }
 
   template <access_mode Mode>
   void checkout(void* addr, std::size_t size) {
@@ -268,11 +311,13 @@ private:
   std::vector<std::optional<coll_mem>>                 coll_mems_;
   std::vector<std::tuple<void*, void*, coll_mem_id_t>> coll_mem_ids_;
 
+  common::remotable_resource                           noncoll_allocator_;
+
   home_manager<BlockSize>                              home_manager_;
   cache_manager<BlockSize>                             cache_manager_;
 };
 
-ITYR_TEST_CASE("[ityr::ori::core] malloc and free with block policy") {
+ITYR_TEST_CASE("[ityr::ori::core] malloc/free with block policy") {
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
@@ -297,7 +342,7 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc and free with block policy") {
   }
 }
 
-ITYR_TEST_CASE("[ityr::ori::core] malloc and free with cyclic policy") {
+ITYR_TEST_CASE("[ityr::ori::core] malloc/free with cyclic policy") {
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
@@ -318,6 +363,51 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc and free with cyclic policy") {
     }
     for (int i = 1; i < n; i++) {
       c.free_coll(ptrs[i]);
+    }
+  }
+}
+
+ITYR_TEST_CASE("[ityr::ori::core] malloc and free (noncollective)") {
+  common::singleton_initializer<common::topology::instance> topo;
+  constexpr block_size_t bs = 65536;
+  core<bs> c(16 * bs, bs / 4);
+
+  constexpr int n = 10;
+  ITYR_SUBCASE("free immediately") {
+    for (int i = 0; i < n; i++) {
+      void* p = c.malloc(std::size_t(1) << i);
+      c.free(p, std::size_t(1) << i);
+    }
+  }
+
+  ITYR_SUBCASE("free after accumulation") {
+    void* ptrs[n];
+    for (int i = 0; i < n; i++) {
+      ptrs[i] = c.malloc(std::size_t(1) << i);
+    }
+    for (int i = 0; i < n; i++) {
+      c.free(ptrs[i], std::size_t(1) << i);
+    }
+  }
+
+  ITYR_SUBCASE("remote free") {
+    void* ptrs_send[n];
+    void* ptrs_recv[n];
+    for (int i = 0; i < n; i++) {
+      ptrs_send[i] = c.malloc(std::size_t(1) << i);
+    }
+
+    auto my_rank = common::topology::my_rank();
+    auto n_ranks = common::topology::n_ranks();
+    auto mpicomm = common::topology::mpicomm();
+
+    auto req_send = common::mpi_isend(ptrs_send, n, (n_ranks + my_rank + 1) % n_ranks, 0, mpicomm);
+    auto req_recv = common::mpi_irecv(ptrs_recv, n, (n_ranks + my_rank - 1) % n_ranks, 0, mpicomm);
+    common::mpi_wait(req_send);
+    common::mpi_wait(req_recv);
+
+    for (int i = 0; i < n; i++) {
+      c.free(ptrs_recv[i], std::size_t(1) << i);
     }
   }
 }

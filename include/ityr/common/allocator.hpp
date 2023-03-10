@@ -147,7 +147,7 @@ public:
 
   MPI_Win win() const { return win_.win(); }
 
-  bool belongs_to(const void* p) {
+  bool has(const void* p) const {
     return vm_.addr() <= p && p < reinterpret_cast<std::byte*>(vm_.addr()) + global_max_size_;
   }
 

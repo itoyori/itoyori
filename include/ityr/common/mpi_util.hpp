@@ -53,6 +53,23 @@ inline void mpi_send(const T*    buf,
 }
 
 template <typename T>
+inline MPI_Request mpi_isend(const T*    buf,
+                             std::size_t count,
+                             int         target_rank,
+                             int         tag,
+                             MPI_Comm    comm) {
+  MPI_Request req;
+  MPI_Isend(buf,
+            sizeof(T) * count,
+            MPI_BYTE,
+            target_rank,
+            tag,
+            comm,
+            &req);
+  return req;
+}
+
+template <typename T>
 inline void mpi_send_value(const T& value,
                            int      target_rank,
                            int      tag,
@@ -73,6 +90,23 @@ inline void mpi_recv(T*          buf,
            tag,
            comm,
            MPI_STATUS_IGNORE);
+}
+
+template <typename T>
+inline MPI_Request mpi_irecv(T*          buf,
+                             std::size_t count,
+                             int         target_rank,
+                             int         tag,
+                             MPI_Comm    comm) {
+  MPI_Request req;
+  MPI_Irecv(buf,
+            sizeof(T) * count,
+            MPI_BYTE,
+            target_rank,
+            tag,
+            comm,
+            &req);
+  return req;
 }
 
 template <typename T>

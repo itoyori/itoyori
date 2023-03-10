@@ -49,8 +49,12 @@ public:
 
     cache_block(cache_manager* outer_p) : outer(outer_p) {}
 
+    bool is_writing_back() const {
+      return writeback_epoch > outer->writeback_epoch_;
+    }
+
     void invalidate() {
-      ITYR_CHECK(writeback_epoch <= outer->writeback_epoch_);
+      ITYR_CHECK(!is_writing_back());
       ITYR_CHECK(dirty_regions.empty());
       fresh_regions.clear();
       ITYR_CHECK(is_evictable());
@@ -64,7 +68,7 @@ public:
     bool is_evictable() const {
       return ref_count == 0 &&
              dirty_regions.empty() &&
-             writeback_epoch <= outer->writeback_epoch_;
+             !is_writing_back();
     }
 
     void on_evict() {
@@ -175,6 +179,59 @@ public:
     }
   }
 
+  void writeback_begin(cache_block& cb) {
+    if (cb.writeback_epoch > writeback_epoch_) {
+      // MPI_Put has been already started on this cache block.
+      // As overlapping MPI_Put calls for the same location will cause undefined behaviour,
+      // we need to insert MPI_Win_flush between overlapping MPI_Put calls here.
+      writeback_complete();
+      ITYR_CHECK(cb.writeback_epoch == writeback_epoch_);
+    }
+
+    std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
+
+    for (auto [blk_offset_b, blk_offset_e] : cb.dirty_regions.get()) {
+      ITYR_CHECK(cb.entry_idx < cs_.num_entries());
+
+      std::byte*  addr      = cache_begin + cb.entry_idx * BlockSize + blk_offset_b;
+      std::size_t size      = blk_offset_e - blk_offset_b;
+      std::size_t pm_offset = cb.pm_offset + blk_offset_b;
+
+      common::verbose("Writing back [%p, %p) (%ld bytes) to rank %d (win=%p, disp=%ld)",
+                      cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
+                      cb.owner, cb.win, pm_offset);
+
+      common::mpi_put_nb(addr, size, cb.owner, pm_offset, cb.win);
+    }
+
+    cb.dirty_regions.clear();
+
+    cb.writeback_epoch = writeback_epoch_ + 1;
+
+    writing_back_wins_.push_back(cb.win);
+  }
+
+  void writeback_complete() {
+    if (!writing_back_wins_.empty()) {
+      // sort | uniq
+      // FIXME: costly?
+      std::sort(writing_back_wins_.begin(), writing_back_wins_.end());
+      writing_back_wins_.erase(std::unique(writing_back_wins_.begin(), writing_back_wins_.end()), writing_back_wins_.end());
+
+      for (auto win : writing_back_wins_) {
+        MPI_Win_flush_all(win);
+        common::verbose("Writing back complete (win=%p)", win);
+      }
+      writing_back_wins_.clear();
+
+      writeback_epoch_++;
+    }
+  }
+
+  bool is_cached(void* addr) const {
+    return cs_.is_cached(cache_key(addr));
+  }
+
   void ensure_evicted(void* addr) {
     cs_.ensure_evicted(cache_key(addr));
   }
@@ -222,55 +279,6 @@ private:
       if (!cb->dirty_regions.empty()) {
         writeback_begin(*cb);
       }
-    }
-  }
-
-  void writeback_begin(cache_block& cb) {
-    if (cb.writeback_epoch > writeback_epoch_) {
-      // MPI_Put has been already started on this cache block.
-      // As overlapping MPI_Put calls for the same location will cause undefined behaviour,
-      // we need to insert MPI_Win_flush between overlapping MPI_Put calls here.
-      writeback_complete();
-      ITYR_CHECK(cb.writeback_epoch == writeback_epoch_);
-    }
-
-    std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
-
-    for (auto [blk_offset_b, blk_offset_e] : cb.dirty_regions.get()) {
-      ITYR_CHECK(cb.entry_idx < cs_.num_entries());
-
-      std::byte*  addr      = cache_begin + cb.entry_idx * BlockSize + blk_offset_b;
-      std::size_t size      = blk_offset_e - blk_offset_b;
-      std::size_t pm_offset = cb.pm_offset + blk_offset_b;
-
-      common::verbose("Writing back [%p, %p) (%ld bytes) to rank %d (win=%p, disp=%ld)",
-                      cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
-                      cb.owner, cb.win, pm_offset);
-
-      common::mpi_put_nb(addr, size, cb.owner, pm_offset, cb.win);
-    }
-
-    cb.dirty_regions.clear();
-
-    cb.writeback_epoch = writeback_epoch_ + 1;
-
-    writing_back_wins_.push_back(cb.win);
-  }
-
-  void writeback_complete() {
-    if (!writing_back_wins_.empty()) {
-      // sort | uniq
-      // FIXME: costly?
-      std::sort(writing_back_wins_.begin(), writing_back_wins_.end());
-      writing_back_wins_.erase(std::unique(writing_back_wins_.begin(), writing_back_wins_.end()), writing_back_wins_.end());
-
-      for (auto win : writing_back_wins_) {
-        MPI_Win_flush_all(win);
-        common::verbose("Writing back complete (win=%p)", win);
-      }
-      writing_back_wins_.clear();
-
-      writeback_epoch_++;
     }
   }
 

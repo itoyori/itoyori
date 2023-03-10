@@ -111,7 +111,7 @@ void for_each_mem_segment(const coll_mem& cm, void* addr, std::size_t size, Fn&&
   }
 }
 
-template <std::size_t BlockSize, typename HomeBlockFn, typename CacheBlockFn>
+template <block_size_t BlockSize, typename HomeBlockFn, typename CacheBlockFn>
 void for_each_mem_block(const coll_mem& cm, void* addr, std::size_t size,
                         HomeBlockFn&& home_block_fn, CacheBlockFn&& cache_block_fn) {
   for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
@@ -124,8 +124,8 @@ void for_each_mem_block(const coll_mem& cm, void* addr, std::size_t size,
 
     } else {
       // iterate over memory blocks within the memory segment for cache blocks
-      std::byte* blk_addr_b = std::max(seg_addr,
-          reinterpret_cast<std::byte*>(common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), BlockSize)));
+      std::byte* blk_addr_b = std::max(seg_addr, reinterpret_cast<std::byte*>(
+            common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize))));
       std::byte* blk_addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
       for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
         std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
