@@ -24,7 +24,7 @@ public:
       pm_(init_cache_pm()),
       cs_(cache_size / BlockSize, cache_block(this)),
       win_(common::topology::mpicomm(), reinterpret_cast<std::byte*>(vm_.addr()), vm_.size()),
-      max_dirty_cache_blocks_(common::getenv_coll("ITYR_ORI_MAX_DIRTY_CACHE_SIZE", cache_size, common::topology::mpicomm()) / BlockSize) {
+      max_dirty_cache_blocks_(common::getenv_coll("ITYR_ORI_MAX_DIRTY_CACHE_SIZE", cache_size / 2, common::topology::mpicomm()) / BlockSize) {
     ITYR_CHECK(cache_size_ > 0);
     ITYR_CHECK(common::is_pow2(cache_size_));
     ITYR_CHECK(cache_size_ % BlockSize == 0);
