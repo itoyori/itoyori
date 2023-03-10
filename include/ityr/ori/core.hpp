@@ -103,15 +103,11 @@ public:
 
     } else {
       // ensure dirty data of this memory object are discarded
-      std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
-          common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
-      std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
-
-      for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-        cache_manager_.discard_dirty(blk_addr,
-                                     std::max(reinterpret_cast<std::byte*>(addr), blk_addr),
-                                     std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize));
-      }
+      for_each_block(addr, size, [&](std::byte* blk_addr,
+                                     std::byte* req_addr_b,
+                                     std::byte* req_addr_e) {
+        cache_manager_.discard_dirty(blk_addr, req_addr_b, req_addr_e);
+      });
 
       noncoll_allocator_.remote_deallocate(addr, size, target_rank);
     }
@@ -196,6 +192,45 @@ private:
     coll_mems_[cm.id()].reset();
   }
 
+  template <typename Fn>
+  void for_each_block(void* addr, std::size_t size, Fn&& fn) {
+    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
+        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
+    std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
+
+    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+      std::byte* req_addr_b = std::max(reinterpret_cast<std::byte*>(addr), blk_addr);
+      std::byte* req_addr_e = std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize);
+      std::forward<Fn>(fn)(blk_addr, req_addr_b, req_addr_e);
+    }
+  }
+
+  template <typename HomeSegFn, typename CacheBlkFn>
+  void for_each_seg(const coll_mem& cm, void* addr, std::size_t size,
+                    HomeSegFn&& home_seg_fn, CacheBlkFn&& cache_blk_fn) {
+    for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
+      std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
+      std::size_t seg_size = seg.offset_e - seg.offset_b;
+
+      if (common::topology::is_locally_accessible(seg.owner)) {
+        // no need to iterate over memory blocks (of BlockSize) for home segments
+        std::forward<HomeSegFn>(home_seg_fn)(seg_addr, seg_size, seg.owner, seg.pm_offset);
+
+      } else {
+        // iterate over memory blocks within the memory segment for cache blocks
+        std::byte* addr_b = std::max(seg_addr, reinterpret_cast<std::byte*>(addr));
+        std::byte* addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
+        for_each_block(addr_b, addr_e - addr_b, [&](std::byte* blk_addr,
+                                                    std::byte* req_addr_b,
+                                                    std::byte* req_addr_e) {
+          std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
+          ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
+          std::forward<CacheBlkFn>(cache_blk_fn)(blk_addr, req_addr_b, req_addr_e, seg.owner, pm_offset);
+        });
+      }
+    });
+  }
+
   template <access_mode Mode, bool IncrementRef>
   void checkout_coll(std::byte* addr, std::size_t size) {
     coll_mem& cm = coll_mem_get(addr);
@@ -203,21 +238,19 @@ private:
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
                     str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
 
-    for_each_mem_block<BlockSize>(cm, addr, size,
+    for_each_seg(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         home_manager_.template checkout_seg<IncrementRef>(
-            seg_addr,
-            seg_size,
+            seg_addr, seg_size,
             cm.intra_home_pm(common::topology::intra_rank(owner)),
             pm_offset);
       },
       // cache block
-      [&](std::byte* blk_addr, common::topology::rank_t owner, std::size_t pm_offset) {
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t owner, std::size_t pm_offset) {
         cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
-            blk_addr,
-            std::max(addr, blk_addr),
-            std::min(addr + size, blk_addr + BlockSize),
+            blk_addr, req_addr_b, req_addr_e,
             cm.win(),
             owner,
             pm_offset);
@@ -245,19 +278,15 @@ private:
       return;
     }
 
-    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
-        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
-    std::byte* blk_addr_e = addr + size;
-
-    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+    for_each_block(addr, size, [&](std::byte* blk_addr,
+                                   std::byte* req_addr_b,
+                                   std::byte* req_addr_e) {
       cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
-          blk_addr,
-          std::max(addr, blk_addr),
-          std::min(addr + size, blk_addr + BlockSize),
+          blk_addr, req_addr_b, req_addr_e,
           noncoll_allocator_.win(),
           target_rank,
           noncoll_allocator_.get_disp(blk_addr));
-    }
+    });
 
     cache_manager_.checkout_complete(noncoll_allocator_.win());
   }
@@ -269,17 +298,16 @@ private:
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
                     str(Mode).c_str(), addr, addr + size, size, cm.win());
 
-    for_each_mem_block<BlockSize>(cm, addr, size,
+    for_each_seg(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t, common::topology::rank_t, std::size_t) {
         home_manager_.template checkin_seg<DecrementRef>(seg_addr);
       },
       // cache block
-      [&](std::byte* blk_addr, common::topology::rank_t, std::size_t) {
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t, std::size_t) {
         cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
-            blk_addr,
-            std::max(addr, blk_addr),
-            std::min(addr + size, blk_addr + BlockSize));
+            blk_addr, req_addr_b, req_addr_e);
       });
   }
 
@@ -300,16 +328,12 @@ private:
       return;
     }
 
-    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
-        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
-    std::byte* blk_addr_e = addr + size;
-
-    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+    for_each_block(addr, size, [&](std::byte* blk_addr,
+                                   std::byte* req_addr_b,
+                                   std::byte* req_addr_e) {
       cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
-          blk_addr,
-          std::max(addr, blk_addr),
-          std::min(addr + size, blk_addr + BlockSize));
-    }
+          blk_addr, req_addr_b, req_addr_e);
+    });
   }
 
   template <block_size_t BS>

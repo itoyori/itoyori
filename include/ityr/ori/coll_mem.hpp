@@ -111,29 +111,4 @@ void for_each_mem_segment(const coll_mem& cm, void* addr, std::size_t size, Fn&&
   }
 }
 
-template <block_size_t BlockSize, typename HomeBlockFn, typename CacheBlockFn>
-void for_each_mem_block(const coll_mem& cm, void* addr, std::size_t size,
-                        HomeBlockFn&& home_block_fn, CacheBlockFn&& cache_block_fn) {
-  for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
-    std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
-    std::size_t seg_size = seg.offset_e - seg.offset_b;
-
-    if (common::topology::is_locally_accessible(seg.owner)) {
-      // no need to iterate over memory blocks (of BlockSize) for home segments
-      std::forward<HomeBlockFn>(home_block_fn)(seg_addr, seg_size, seg.owner, seg.pm_offset);
-
-    } else {
-      // iterate over memory blocks within the memory segment for cache blocks
-      std::byte* blk_addr_b = std::max(seg_addr, reinterpret_cast<std::byte*>(
-            common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize))));
-      std::byte* blk_addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
-      for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-        std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
-        ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
-        std::forward<CacheBlockFn>(cache_block_fn)(blk_addr, seg.owner, pm_offset);
-      }
-    }
-  });
-}
-
 }
