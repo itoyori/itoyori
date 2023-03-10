@@ -32,6 +32,127 @@ public:
     ITYR_CHECK(sub_block_size_ <= BlockSize);
   }
 
+  template <bool SkipFetch, bool IncrementRef>
+  void checkout_blk(std::byte*               blk_addr,
+                    std::byte*               req_addr_b,
+                    std::byte*               req_addr_e,
+                    MPI_Win                  win,
+                    common::topology::rank_t owner,
+                    std::size_t              pm_offset) {
+    ITYR_CHECK(blk_addr <= req_addr_b);
+    ITYR_CHECK(blk_addr <= req_addr_e);
+    ITYR_CHECK(req_addr_b <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_e <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_b < req_addr_e);
+
+    cache_block& cb = get_entry(blk_addr);
+
+    if (blk_addr != cb.mapped_addr) {
+      cb.addr      = blk_addr;
+      cb.win       = win;
+      cb.owner     = owner;
+      cb.pm_offset = pm_offset;
+      cache_blocks_to_map_.push_back(&cb);
+    }
+
+    block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
+
+    if constexpr (SkipFetch) {
+      cb.fresh_regions.add(br);
+    } else {
+      if (fetch_begin(cb, br)) {
+        fetching_ = true;
+      }
+    }
+
+    if constexpr (IncrementRef) {
+      cb.ref_count++;
+    }
+  }
+
+  void checkout_complete(MPI_Win win) {
+    // Overlap communication and memory remapping
+    if (!cache_blocks_to_map_.empty()) {
+      for (cache_block* cb : cache_blocks_to_map_) {
+        update_mapping(*cb);
+      }
+      cache_blocks_to_map_.clear();
+    }
+
+    if (fetching_) {
+      fetch_complete(win);
+      fetching_ = false;
+    }
+  }
+
+  template <bool Dirty, bool DecrementRef>
+  void checkin_blk(std::byte* blk_addr,
+                   std::byte* req_addr_b,
+                   std::byte* req_addr_e) {
+    ITYR_CHECK(blk_addr <= req_addr_b);
+    ITYR_CHECK(blk_addr <= req_addr_e);
+    ITYR_CHECK(req_addr_b <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_e <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_b < req_addr_e);
+
+    cache_block& cb = get_entry<false>(blk_addr);
+
+    if constexpr (Dirty) {
+      block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
+      add_dirty_region(cb, br);
+    }
+
+    if constexpr (DecrementRef) {
+      cb.ref_count--;
+    }
+  }
+
+  void release() {
+    ensure_all_cache_clean();
+  }
+
+  void acquire() {
+    invalidate_all();
+  }
+
+  void ensure_all_cache_clean() {
+    writeback_begin();
+    writeback_complete();
+
+    if (cache_dirty_) {
+      cache_dirty_ = false;
+      /* rm_.increment_epoch(); */
+    }
+  }
+
+  void ensure_evicted(void* addr) {
+    cs_.ensure_evicted(cache_key(addr));
+  }
+
+  void discard_dirty(std::byte* blk_addr,
+                     std::byte* req_addr_b,
+                     std::byte* req_addr_e) {
+    ITYR_CHECK(blk_addr <= req_addr_b);
+    ITYR_CHECK(blk_addr <= req_addr_e);
+    ITYR_CHECK(req_addr_b <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_e <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_b < req_addr_e);
+
+    if (is_cached(blk_addr)) {
+      cache_block& cb = get_entry(blk_addr);
+
+      if (cb.is_writing_back()) {
+        writeback_complete();
+      }
+
+      block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
+      cb.dirty_regions.remove(br);
+    }
+  }
+
+private:
+  static constexpr bool enable_write_through = false;
+
   using epoch_t = uint64_t;
 
   struct cache_block {
@@ -83,6 +204,31 @@ public:
       entry_idx = idx;
     }
   };
+
+  static std::string cache_shmem_name(int global_rank) {
+    std::stringstream ss;
+    ss << "/ityr_ori_cache_" << global_rank;
+    return ss.str();
+  }
+
+  common::physical_mem init_cache_pm() {
+    common::physical_mem pm(cache_shmem_name(common::topology::my_rank()), vm_.size(), true);
+    pm.map_to_vm(vm_.addr(), vm_.size(), 0);
+    return pm;
+  }
+
+  using cache_key_t = uintptr_t;
+
+  cache_key_t cache_key(void* addr) const {
+    ITYR_CHECK(addr);
+    ITYR_CHECK(reinterpret_cast<uintptr_t>(addr) % BlockSize == 0);
+    return reinterpret_cast<uintptr_t>(addr) / BlockSize;
+  }
+
+  block_region pad_fetch_region(block_region br) const {
+    return {common::round_down_pow2(br.begin, sub_block_size_),
+            common::round_up_pow2(br.end, sub_block_size_)};
+  }
 
   template <bool UpdateLRU = true>
   cache_block& get_entry(void* addr) {
@@ -169,16 +315,6 @@ public:
     }
   }
 
-  void ensure_all_cache_clean() {
-    writeback_begin();
-    writeback_complete();
-
-    if (cache_dirty_) {
-      cache_dirty_ = false;
-      /* rm_.increment_epoch(); */
-    }
-  }
-
   void writeback_begin(cache_block& cb) {
     if (cb.writeback_epoch > writeback_epoch_) {
       // MPI_Put has been already started on this cache block.
@@ -211,6 +347,14 @@ public:
     writing_back_wins_.push_back(cb.win);
   }
 
+  void writeback_begin() {
+    for (auto& cb : dirty_cache_blocks_) {
+      if (!cb->dirty_regions.empty()) {
+        writeback_begin(*cb);
+      }
+    }
+  }
+
   void writeback_complete() {
     if (!writing_back_wins_.empty()) {
       // sort | uniq
@@ -232,10 +376,6 @@ public:
     return cs_.is_cached(cache_key(addr));
   }
 
-  void ensure_evicted(void* addr) {
-    cs_.ensure_evicted(cache_key(addr));
-  }
-
   void invalidate_all() {
     ensure_all_cache_clean();
 
@@ -243,43 +383,6 @@ public:
       // FIXME: this check is for prefetching
       cb.invalidate();
     });
-    /* cache_tlb_.clear(); */
-  }
-
-private:
-  static constexpr bool enable_write_through = false;
-
-  static std::string cache_shmem_name(int global_rank) {
-    std::stringstream ss;
-    ss << "/ityr_ori_cache_" << global_rank;
-    return ss.str();
-  }
-
-  common::physical_mem init_cache_pm() {
-    common::physical_mem pm(cache_shmem_name(common::topology::my_rank()), vm_.size(), true);
-    pm.map_to_vm(vm_.addr(), vm_.size(), 0);
-    return pm;
-  }
-
-  using cache_key_t = uintptr_t;
-
-  cache_key_t cache_key(void* addr) const {
-    ITYR_CHECK(addr);
-    ITYR_CHECK(reinterpret_cast<uintptr_t>(addr) % BlockSize == 0);
-    return reinterpret_cast<uintptr_t>(addr) / BlockSize;
-  }
-
-  block_region pad_fetch_region(block_region br) const {
-    return {common::round_down_pow2(br.begin, sub_block_size_),
-            common::round_up_pow2(br.end, sub_block_size_)};
-  }
-
-  void writeback_begin() {
-    for (auto& cb : dirty_cache_blocks_) {
-      if (!cb->dirty_regions.empty()) {
-        writeback_begin(*cb);
-      }
-    }
   }
 
   std::size_t                            cache_size_;
@@ -293,6 +396,9 @@ private:
   // The cache region is not remotely accessible, but we make an MPI window here because
   // it will pre-register the memory region for RDMA and MPI_Get to the cache will speedup.
   common::mpi_win_manager<std::byte>     win_;
+
+  bool                                   fetching_ = false;
+  std::vector<cache_block*>              cache_blocks_to_map_;
 
   std::vector<cache_block*>              dirty_cache_blocks_;
   std::size_t                            max_dirty_cache_blocks_;

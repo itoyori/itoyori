@@ -19,7 +19,52 @@ public:
     : mmap_entry_limit_(mmap_entry_limit),
       cs_(mmap_entry_limit_, mmap_entry(this)) {}
 
-  using epoch_t = uint64_t;
+  template <bool IncrementRef>
+  void checkout_seg(std::byte*                  seg_addr,
+                    std::size_t                 seg_size,
+                    const common::physical_mem& pm,
+                    std::size_t                 pm_offset) {
+    ITYR_CHECK(seg_addr);
+    ITYR_CHECK(seg_size > 0);
+
+    mmap_entry& me = get_entry(seg_addr);
+
+    if (seg_addr != me.mapped_addr) {
+      me.addr      = seg_addr;
+      me.size      = seg_size;
+      me.pm        = &pm;
+      me.pm_offset = pm_offset;
+      home_segments_to_map_.push_back(&me);
+    }
+
+    if constexpr (IncrementRef) {
+      me.ref_count++;
+    }
+  }
+
+  template <bool DecrementRef>
+  void checkin_seg(std::byte* seg_addr) {
+    if constexpr (DecrementRef) {
+      mmap_entry& me = get_entry<false>(seg_addr);
+      me.ref_count--;
+    }
+  }
+
+  void checkout_complete() {
+    if (!home_segments_to_map_.empty()) {
+      for (mmap_entry* me : home_segments_to_map_) {
+        update_mapping(*me);
+      }
+      home_segments_to_map_.clear();
+    }
+  }
+
+  void ensure_evicted(void* addr) {
+    cs_.ensure_evicted(cache_key(addr));
+  }
+
+private:
+  using cache_key_t = uintptr_t;
 
   struct mmap_entry {
     cache_entry_idx_t           entry_idx   = std::numeric_limits<cache_entry_idx_t>::max();
@@ -77,13 +122,6 @@ public:
     me.mapped_size = me.size;
   }
 
-  void ensure_evicted(void* addr) {
-    cs_.ensure_evicted(cache_key(addr));
-  }
-
-private:
-  using cache_key_t = uintptr_t;
-
   cache_key_t cache_key(void* addr) const {
     ITYR_CHECK(addr);
     ITYR_CHECK(reinterpret_cast<uintptr_t>(addr) % BlockSize == 0);
@@ -92,6 +130,7 @@ private:
 
   std::size_t                           mmap_entry_limit_;
   cache_system<cache_key_t, mmap_entry> cs_;
+  std::vector<mmap_entry*>              home_segments_to_map_;
 };
 
 }

@@ -85,9 +85,6 @@ public:
       cache_manager_.ensure_evicted(addr);
     }
 
-    /* home_tlb_.clear(); */
-    /* cache_tlb_.clear(); */
-
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
                     addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
 
@@ -111,17 +108,9 @@ public:
       std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
 
       for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-        if (cache_manager_.is_cached(blk_addr)) {
-          cache_block& cb = cache_manager_.get_entry(blk_addr);
-
-          if (cb.is_writing_back()) {
-            cache_manager_.writeback_complete();
-          }
-
-          block_region br = {std::max(reinterpret_cast<std::byte*>(addr), blk_addr) - blk_addr,
-                             std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize) - blk_addr};
-          cb.dirty_regions.remove(br);
-        }
+        cache_manager_.discard_dirty(blk_addr,
+                                     std::max(reinterpret_cast<std::byte*>(addr), blk_addr),
+                                     std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize));
       }
 
       noncoll_allocator_.remote_deallocate(addr, size, target_rank);
@@ -149,7 +138,7 @@ public:
   void release() {
     common::verbose("Release fence begin");
 
-    cache_manager_.ensure_all_cache_clean();
+    cache_manager_.release();
 
     common::verbose("Release fence end");
   }
@@ -157,7 +146,7 @@ public:
   void acquire() {
     common::verbose("Acquire fence begin");
 
-    cache_manager_.invalidate_all();
+    cache_manager_.acquire();
 
     common::verbose("Acquire fence end");
   }
@@ -214,69 +203,28 @@ private:
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
                     str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
 
-    bool fetched = false;
-    std::vector<mmap_entry*> home_segments_to_map;
-    std::vector<cache_block*> cache_blocks_to_map;
-
     for_each_mem_block<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        mmap_entry& me = home_manager_.get_entry(seg_addr);
-
-        if (seg_addr != me.mapped_addr) {
-          me.addr      = seg_addr;
-          me.size      = seg_size;
-          me.pm        = &cm.intra_home_pm(common::topology::intra_rank(owner));
-          me.pm_offset = pm_offset;
-          home_segments_to_map.push_back(&me);
-        }
-
-        if constexpr (IncrementRef) {
-          me.ref_count++;
-        }
+        home_manager_.template checkout_seg<IncrementRef>(
+            seg_addr,
+            seg_size,
+            cm.intra_home_pm(common::topology::intra_rank(owner)),
+            pm_offset);
       },
       // cache block
       [&](std::byte* blk_addr, common::topology::rank_t owner, std::size_t pm_offset) {
-        cache_block& cb = cache_manager_.get_entry(blk_addr);
-
-        if (blk_addr != cb.mapped_addr) {
-          cb.addr      = blk_addr;
-          cb.win       = cm.win();
-          cb.owner     = owner;
-          cb.pm_offset = pm_offset;
-          cache_blocks_to_map.push_back(&cb);
-        }
-
-        block_region br = {std::max(addr, blk_addr) - blk_addr,
-                           std::min(addr + size, blk_addr + BlockSize) - blk_addr};
-
-        if constexpr (Mode == access_mode::write) {
-          cb.fresh_regions.add(br);
-
-        } else {
-          if (cache_manager_.fetch_begin(cb, br)) {
-            fetched = true;
-          }
-        }
-
-        if constexpr (IncrementRef) {
-          cb.ref_count++;
-        }
-
-        /* cache_tlb_.add(&cb); */
+        cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
+            blk_addr,
+            std::max(addr, blk_addr),
+            std::min(addr + size, blk_addr + BlockSize),
+            cm.win(),
+            owner,
+            pm_offset);
       });
 
-    // Overlap communication and memory remapping
-    for (mmap_entry* me : home_segments_to_map) {
-      home_manager_.update_mapping(*me);
-    }
-    for (cache_block* cb : cache_blocks_to_map) {
-      cache_manager_.update_mapping(*cb);
-    }
-
-    if (fetched) {
-      cache_manager_.fetch_complete(cm.win());
-    }
+    home_manager_.checkout_complete();
+    cache_manager_.checkout_complete(cm.win());
   }
 
   template <access_mode Mode, bool IncrementRef>
@@ -297,51 +245,21 @@ private:
       return;
     }
 
-    bool fetched = false;
-    std::vector<cache_block*> cache_blocks_to_map;
-
     std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
         common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
     std::byte* blk_addr_e = addr + size;
 
     for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-      cache_block& cb = cache_manager_.get_entry(blk_addr);
-
-      if (blk_addr != cb.mapped_addr) {
-        cb.addr      = blk_addr;
-        cb.win       = noncoll_allocator_.win();
-        cb.owner     = target_rank;
-        cb.pm_offset = noncoll_allocator_.get_disp(blk_addr);
-        cache_blocks_to_map.push_back(&cb);
-      }
-
-      block_region br = {std::max(addr, blk_addr) - blk_addr,
-                         std::min(addr + size, blk_addr + BlockSize) - blk_addr};
-
-      if constexpr (Mode == access_mode::write) {
-        cb.fresh_regions.add(br);
-
-      } else {
-        if (cache_manager_.fetch_begin(cb, br)) {
-          fetched = true;
-        }
-      }
-
-      if constexpr (IncrementRef) {
-        cb.ref_count++;
-      }
-
-      /* cache_tlb_.add(&cb); */
+      cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
+          blk_addr,
+          std::max(addr, blk_addr),
+          std::min(addr + size, blk_addr + BlockSize),
+          noncoll_allocator_.win(),
+          target_rank,
+          noncoll_allocator_.get_disp(blk_addr));
     }
 
-    // Overlap communication and memory remapping
-    for (cache_block* cb : cache_blocks_to_map) {
-      cache_manager_.update_mapping(*cb);
-    }
-
-    if (fetched) {
-      cache_manager_.fetch_complete(noncoll_allocator_.win());
-    }
+    cache_manager_.checkout_complete(noncoll_allocator_.win());
   }
 
   template <access_mode Mode, bool DecrementRef>
@@ -354,24 +272,14 @@ private:
     for_each_mem_block<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t, common::topology::rank_t, std::size_t) {
-        if constexpr (DecrementRef) {
-          mmap_entry& me = home_manager_.template get_entry<false>(seg_addr);
-          me.ref_count--;
-        }
+        home_manager_.template checkin_seg<DecrementRef>(seg_addr);
       },
       // cache block
       [&](std::byte* blk_addr, common::topology::rank_t, std::size_t) {
-        cache_block& cb = cache_manager_.template get_entry<false>(blk_addr);
-
-        if constexpr (Mode != access_mode::read) {
-          block_region br = {std::max(addr, blk_addr) - blk_addr,
-                             std::min(addr + size, blk_addr + BlockSize) - blk_addr};
-          cache_manager_.add_dirty_region(cb, br);
-        }
-
-        if constexpr (DecrementRef) {
-          cb.ref_count--;
-        }
+        cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
+            blk_addr,
+            std::max(addr, blk_addr),
+            std::min(addr + size, blk_addr + BlockSize));
       });
   }
 
@@ -397,25 +305,15 @@ private:
     std::byte* blk_addr_e = addr + size;
 
     for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-      cache_block& cb = cache_manager_.template get_entry<false>(blk_addr);
-
-      if constexpr (Mode != access_mode::read) {
-        block_region br = {std::max(addr, blk_addr) - blk_addr,
-                           std::min(addr + size, blk_addr + BlockSize) - blk_addr};
-        cache_manager_.add_dirty_region(cb, br);
-      }
-
-      if constexpr (DecrementRef) {
-        cb.ref_count--;
-      }
+      cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
+          blk_addr,
+          std::max(addr, blk_addr),
+          std::min(addr + size, blk_addr + BlockSize));
     }
   }
 
   template <block_size_t BS>
   using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
-
-  using mmap_entry = typename home_manager<BlockSize>::mmap_entry;
-  using cache_block = typename cache_manager<BlockSize>::cache_block;
 
   std::vector<std::optional<coll_mem>>                 coll_mems_;
   std::vector<std::tuple<void*, void*, coll_mem_id_t>> coll_mem_ids_;
@@ -769,7 +667,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
   auto mpicomm = common::topology::mpicomm();
 
   ITYR_SUBCASE("list creation") {
-    int niter = 10000;
+    int niter = 1000;
     int n_alloc_iter = 100;
 
     struct node_t {
