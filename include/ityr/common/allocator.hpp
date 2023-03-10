@@ -145,7 +145,6 @@ public:
       allocated_size_(0),
       allocated_size_threshold_(std::size_t(2) * 1024 * 1024) {}
 
-
   MPI_Win win() const { return win_.win(); }
 
   bool belongs_to(const void* p) {

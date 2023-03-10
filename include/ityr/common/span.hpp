@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <optional>
 
 #include "ityr/common/util.hpp"
 
@@ -70,6 +71,21 @@ inline constexpr auto begin(const span<T>& s) noexcept {
 template <typename T>
 inline constexpr auto end(const span<T>& s) noexcept {
   return s.end();
+}
+
+template <typename T>
+inline std::optional<span<T>> intersection(const span<T>& s1, const span<T>& s2) {
+  T* b1 = s1.data();
+  T* b2 = s2.data();
+  T* e1 = s1.data() + s1.size();
+  T* e2 = s2.data() + s2.size();
+  T* b  = std::max(b1, b2);
+  T* e  = std::min(e1, e2);
+  if (b < e) {
+    return span<T>{b, e - b};
+  } else {
+    return std::nullopt;
+  }
 }
 
 }

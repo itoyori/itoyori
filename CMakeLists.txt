@@ -15,7 +15,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG -g")
 
 find_package(MPI REQUIRED)
 include_directories(${MPI_CXX_INCLUDE_PATH})
@@ -47,6 +47,9 @@ endif()
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+option(MAX_VERBOSE_LEVEL "Max verbose level for logging output" 0)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DITYR_MAX_VERBOSE_LEVEL=${MAX_VERBOSE_LEVEL}")
 
 include(CTest)
 if(BUILD_TESTING)

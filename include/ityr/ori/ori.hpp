@@ -5,10 +5,14 @@
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
+#include "ityr/ori/util.hpp"
+#include "ityr/ori/options.hpp"
 #include "ityr/ori/core.hpp"
 #include "ityr/ori/global_ptr.hpp"
 
 namespace ityr::ori {
+
+inline constexpr block_size_t block_size = ITYR_ORI_BLOCK_SIZE;
 
 class ori {
 public:

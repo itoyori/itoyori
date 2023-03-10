@@ -10,6 +10,8 @@
 #include <sstream>
 #include <optional>
 
+#include "ityr/common/options.hpp"
+
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)
 
@@ -50,10 +52,6 @@
 
 #define ITYR_ANON_VAL ITYR_CONCAT(anon_, __LINE__)
 
-#define ITYR_STR_EXPAND(x) #x
-#define ITYR_STR(x) ITYR_STR_EXPAND(x)
-#define ITYR_PRINT_MACRO(x) printf(#x "=" ITYR_STR_EXPAND(x) "\n")
-
 namespace ityr::common {
 
 inline uint64_t clock_gettime_ns() {
@@ -62,11 +60,11 @@ inline uint64_t clock_gettime_ns() {
   return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
 }
 
-inline constexpr int max_verbose_level = 0;
+inline constexpr int max_verbose_level = ITYR_MAX_VERBOSE_LEVEL;
 
-template <int LEVEL = 1>
+template <int Level = 1>
 inline void verbose(const char* fmt, ...) {
-  if (LEVEL <= max_verbose_level) {
+  if (Level <= max_verbose_level) {
     constexpr int slen = 256;
     static char msg[slen];
 

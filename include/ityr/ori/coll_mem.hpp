@@ -40,6 +40,8 @@ public:
 
   const common::virtual_mem& vm() const { return vm_; }
 
+  const common::virtual_mem& local_home_vm() const { return local_home_vm_; }
+
   const common::physical_mem& intra_home_pm() const {
     return intra_home_pm(common::topology::intra_my_rank());
   }
@@ -90,5 +92,48 @@ private:
   std::vector<common::physical_mem>  intra_home_pms_; // intra-rank -> pm
   common::mpi_win_manager<std::byte> win_;
 };
+
+template <typename Fn>
+void for_each_mem_segment(const coll_mem& cm, void* addr, std::size_t size, Fn&& fn) {
+  ITYR_CHECK(addr >= cm.vm().addr());
+
+  std::size_t offset_b = reinterpret_cast<uintptr_t>(addr) -
+                         reinterpret_cast<uintptr_t>(cm.vm().addr());
+  std::size_t offset_e = offset_b + size;
+
+  ITYR_CHECK(offset_e <= cm.size());
+
+  std::size_t offset = offset_b;
+  while (offset < offset_e) {
+    auto seg = cm.mem_mapper().get_segment(offset);
+    std::forward<Fn>(fn)(seg);
+    offset = seg.offset_e;
+  }
+}
+
+template <std::size_t BlockSize, typename HomeBlockFn, typename CacheBlockFn>
+void for_each_mem_block(const coll_mem& cm, void* addr, std::size_t size,
+                        HomeBlockFn&& home_block_fn, CacheBlockFn&& cache_block_fn) {
+  for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
+    std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
+    std::size_t seg_size = seg.offset_e - seg.offset_b;
+
+    if (common::topology::is_locally_accessible(seg.owner)) {
+      // no need to iterate over memory blocks (of BlockSize) for home segments
+      std::forward<HomeBlockFn>(home_block_fn)(seg_addr, seg_size, seg.owner, seg.pm_offset);
+
+    } else {
+      // iterate over memory blocks within the memory segment for cache blocks
+      std::byte* blk_addr_b = std::max(seg_addr,
+          reinterpret_cast<std::byte*>(common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), BlockSize)));
+      std::byte* blk_addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
+      for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+        std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
+        ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
+        std::forward<CacheBlockFn>(cache_block_fn)(blk_addr, seg.owner, pm_offset);
+      }
+    }
+  });
+}
 
 }

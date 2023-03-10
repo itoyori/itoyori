@@ -14,22 +14,22 @@
 
 namespace ityr::ori {
 
-using cache_entry_num_t = uint64_t;
+using cache_entry_idx_t = int;
 
 class cache_full_exception : public std::exception {};
 
 template <typename Key, typename Entry>
 class cache_system {
 public:
-  cache_system(cache_entry_num_t nentries) : cache_system(nentries, Entry{}) {}
-  cache_system(cache_entry_num_t nentries, const Entry& e)
+  cache_system(cache_entry_idx_t nentries) : cache_system(nentries, Entry{}) {}
+  cache_system(cache_entry_idx_t nentries, const Entry& e)
     : nentries_(nentries),
       entry_initial_state_(e),
       entries_(init_entries()),
       lru_(init_lru()),
       table_(init_table()) {}
 
-  cache_entry_num_t num_entries() const { return nentries_; }
+  cache_entry_idx_t num_entries() const { return nentries_; }
 
   bool is_cached(Key key) const {
     return table_.find(key) != table_.end();
@@ -39,7 +39,7 @@ public:
   Entry& ensure_cached(Key key) {
     auto it = table_.find(key);
     if (it == table_.end()) {
-      cache_entry_num_t idx = get_empty_slot();
+      cache_entry_idx_t idx = get_empty_slot();
       cache_entry& ce = entries_[idx];
 
       ce.entry.on_cache_map(idx);
@@ -52,7 +52,7 @@ public:
       }
       return ce.entry;
     } else {
-      cache_entry_num_t idx = it->second;
+      cache_entry_idx_t idx = it->second;
       cache_entry& ce = entries_[idx];
       if (UpdateLRU) {
         move_to_back_lru(ce);
@@ -64,7 +64,7 @@ public:
   void ensure_evicted(Key key) {
     auto it = table_.find(key);
     if (it != table_.end()) {
-      cache_entry_num_t idx = it->second;
+      cache_entry_idx_t idx = it->second;
       cache_entry& ce = entries_[idx];
       ITYR_CHECK(ce.entry.is_evictable());
       ce.entry.on_evict();
@@ -89,34 +89,34 @@ private:
     bool                                            allocated;
     Key                                             key;
     Entry                                           entry;
-    cache_entry_num_t                               entry_num = std::numeric_limits<cache_entry_num_t>::max();
-    typename std::list<cache_entry_num_t>::iterator lru_it;
+    cache_entry_idx_t                               idx = std::numeric_limits<cache_entry_idx_t>::max();
+    typename std::list<cache_entry_idx_t>::iterator lru_it;
 
     cache_entry(const Entry& e) : entry(e) {}
   };
 
   std::vector<cache_entry> init_entries() {
     std::vector<cache_entry> entries;
-    for (cache_entry_num_t idx = 0; idx < nentries_; idx++) {
+    for (cache_entry_idx_t idx = 0; idx < nentries_; idx++) {
       cache_entry& ce = entries.emplace_back(entry_initial_state_);
       ce.allocated = false;
-      ce.entry_num = idx;
+      ce.idx = idx;
     }
     return entries;
   }
 
-  std::list<cache_entry_num_t> init_lru() {
-    std::list<cache_entry_num_t> lru;
+  std::list<cache_entry_idx_t> init_lru() {
+    std::list<cache_entry_idx_t> lru;
     for (auto& ce : entries_) {
-      lru.push_back(ce.entry_num);
+      lru.push_back(ce.idx);
       ce.lru_it = std::prev(lru.end());
-      ITYR_CHECK(*ce.lru_it == ce.entry_num);
+      ITYR_CHECK(*ce.lru_it == ce.idx);
     }
     return lru;
   }
 
-  std::unordered_map<Key, cache_entry_num_t> init_table() {
-    std::unordered_map<Key, cache_entry_num_t> table;
+  std::unordered_map<Key, cache_entry_idx_t> init_table() {
+    std::unordered_map<Key, cache_entry_idx_t> table;
     // To improve performance of the hash table
     table.reserve(nentries_);
     return table;
@@ -125,43 +125,43 @@ private:
   void move_to_back_lru(cache_entry& ce) {
     lru_.splice(lru_.end(), lru_, ce.lru_it);
     ITYR_CHECK(std::prev(lru_.end()) == ce.lru_it);
-    ITYR_CHECK(*ce.lru_it == ce.entry_num);
+    ITYR_CHECK(*ce.lru_it == ce.idx);
   }
 
-  cache_entry_num_t get_empty_slot() {
+  cache_entry_idx_t get_empty_slot() {
     // FIXME: Performance issue?
     for (const auto& idx : lru_) {
       cache_entry& ce = entries_[idx];
       if (!ce.allocated) {
-        return ce.entry_num;
+        return ce.idx;
       }
       if (ce.entry.is_evictable()) {
         Key prev_key = ce.key;
         table_.erase(prev_key);
         ce.entry.on_evict();
         ce.allocated = false;
-        return ce.entry_num;
+        return ce.idx;
       }
     }
     throw cache_full_exception{};
   }
 
-  cache_entry_num_t                          nentries_;
+  cache_entry_idx_t                          nentries_;
   Entry                                      entry_initial_state_;
-  std::vector<cache_entry>                   entries_; // index (cache_entry_num_t) -> entry (cache_entry)
-  std::list<cache_entry_num_t>               lru_; // front (oldest) <----> back (newest)
-  std::unordered_map<Key, cache_entry_num_t> table_; // hash table (Key -> cache_entry_num_t)
+  std::vector<cache_entry>                   entries_; // index (cache_entry_idx_t) -> entry (cache_entry)
+  std::list<cache_entry_idx_t>               lru_; // front (oldest) <----> back (newest)
+  std::unordered_map<Key, cache_entry_idx_t> table_; // hash table (Key -> cache_entry_idx_t)
 };
 
 ITYR_TEST_CASE("[ityr::ori::cache_system] testing cache system") {
   using key_t = int;
   struct test_entry {
     bool              evictable = true;
-    cache_entry_num_t entry_num = std::numeric_limits<cache_entry_num_t>::max();
+    cache_entry_idx_t entry_idx = std::numeric_limits<cache_entry_idx_t>::max();
 
     bool is_evictable() const { return evictable; }
-    void on_cache_map(cache_entry_num_t idx) { entry_num = idx; }
     void on_evict() {}
+    void on_cache_map(cache_entry_idx_t idx) { entry_idx = idx; }
   };
 
   int nelems = 100;
@@ -179,7 +179,7 @@ ITYR_TEST_CASE("[ityr::ori::cache_system] testing cache system") {
       ITYR_CHECK(cs.is_cached(k));
       for (int i = 0; i < 10; i++) {
         test_entry& e2 = cs.ensure_cached(k);
-        ITYR_CHECK(e.entry_num == e2.entry_num);
+        ITYR_CHECK(e.entry_idx == e2.entry_idx);
       }
     }
   }
