@@ -60,9 +60,8 @@ public:
 
     void* addr = noncoll_allocator_.allocate(size);
 
-    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes) (win=%p)",
-                    addr, reinterpret_cast<std::byte*>(addr) + size, size,
-                    noncoll_allocator_.win());
+    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes)",
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     return addr;
   }
@@ -101,6 +100,9 @@ public:
     if (target_rank == common::topology::my_rank()) {
       noncoll_allocator_.local_deallocate(addr, size);
 
+      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
+                      addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
     } else {
       // ensure dirty data of this memory object are discarded
       for_each_block(addr, size, [&](std::byte* blk_addr,
@@ -110,11 +112,17 @@ public:
       });
 
       noncoll_allocator_.remote_deallocate(addr, size, target_rank);
+
+      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
+                      addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
     }
   }
 
   template <access_mode Mode>
   void checkout(void* addr, std::size_t size) {
+    common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
+                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
     if (noncoll_allocator_.has(addr)) {
       checkout_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
     } else {
@@ -124,6 +132,9 @@ public:
 
   template <access_mode Mode>
   void checkin(void* addr, std::size_t size) {
+    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
+                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
     if (noncoll_allocator_.has(addr)) {
       checkin_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
     } else {
@@ -194,8 +205,7 @@ private:
 
   template <typename Fn>
   void for_each_block(void* addr, std::size_t size, Fn&& fn) {
-    std::byte* blk_addr_b = reinterpret_cast<std::byte*>(
-        common::round_down_pow2(reinterpret_cast<uintptr_t>(addr), static_cast<uintptr_t>(BlockSize)));
+    std::byte* blk_addr_b = common::round_down_pow2(reinterpret_cast<std::byte*>(addr), BlockSize);
     std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
 
     for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
@@ -233,10 +243,15 @@ private:
 
   template <access_mode Mode, bool IncrementRef>
   void checkout_coll(std::byte* addr, std::size_t size) {
-    coll_mem& cm = coll_mem_get(addr);
+    if (home_manager_.template checkout_fast<IncrementRef>(addr, size)) {
+      return;
+    }
 
-    common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
+    if (cache_manager_.template checkout_fast<Mode == access_mode::write, IncrementRef>(addr, size)) {
+      return;
+    }
+
+    coll_mem& cm = coll_mem_get(addr);
 
     for_each_seg(cm, addr, size,
       // home segment
@@ -264,10 +279,6 @@ private:
   void checkout_noncoll(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_allocator_.has(addr));
 
-    common::verbose("Checkout request (noncoll, mode: %s) for [%p, %p) (%ld bytes) (noncoll, win=%p)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size,
-                    noncoll_allocator_.win());
-
     auto target_rank = noncoll_allocator_.get_owner(addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
@@ -275,6 +286,10 @@ private:
     if (common::topology::is_locally_accessible(target_rank)) {
       // There is no need to manage mmap entries for home blocks because
       // the remotable allocator employs block distribution policy.
+      return;
+    }
+
+    if (cache_manager_.template checkout_fast<Mode == access_mode::write, IncrementRef>(addr, size)) {
       return;
     }
 
@@ -293,10 +308,15 @@ private:
 
   template <access_mode Mode, bool DecrementRef>
   void checkin_coll(std::byte* addr, std::size_t size) {
-    coll_mem& cm = coll_mem_get(addr);
+    if (home_manager_.template checkin_fast<DecrementRef>(addr, size)) {
+      return;
+    }
 
-    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (coll, win=%p)",
-                    str(Mode).c_str(), addr, addr + size, size, cm.win());
+    if (cache_manager_.template checkin_fast<Mode != access_mode::read, DecrementRef>(addr, size)) {
+      return;
+    }
+
+    coll_mem& cm = coll_mem_get(addr);
 
     for_each_seg(cm, addr, size,
       // home segment
@@ -315,9 +335,6 @@ private:
   void checkin_noncoll(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_allocator_.has(addr));
 
-    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes) (noncoll, win=%p)",
-                    str(Mode).c_str(), addr, addr + size, size, noncoll_allocator_.win());
-
     auto target_rank = noncoll_allocator_.get_owner(addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
@@ -325,6 +342,10 @@ private:
     if (common::topology::is_locally_accessible(target_rank)) {
       // There is no need to manage mmap entries for home blocks because
       // the remotable allocator employs block distribution policy.
+      return;
+    }
+
+    if (cache_manager_.template checkin_fast<Mode != access_mode::read, DecrementRef>(addr, size)) {
       return;
     }
 

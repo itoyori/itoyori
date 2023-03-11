@@ -11,6 +11,7 @@
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
+#include "ityr/ori/tlb.hpp"
 
 namespace ityr::ori {
 
@@ -30,6 +31,40 @@ public:
     ITYR_CHECK(cache_size_ % BlockSize == 0);
     ITYR_CHECK(common::is_pow2(sub_block_size_));
     ITYR_CHECK(sub_block_size_ <= BlockSize);
+  }
+
+  template <bool SkipFetch, bool IncrementRef>
+  bool checkout_fast(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
+
+    std::byte* blk_addr = common::round_down_pow2(addr, BlockSize);
+    if (blk_addr + BlockSize < addr + size) {
+      // Fast path requires the requested region be within a single cache block
+      return false;
+    }
+
+    auto cbo = cache_tlb_.get(blk_addr);
+    if (!cbo.has_value()) {
+      return false;
+    }
+    cache_block& cb = **cbo;
+
+    block_region br = {addr - blk_addr, addr + size - blk_addr};
+
+    if constexpr (SkipFetch) {
+      cb.fresh_regions.add(br);
+    } else {
+      if (fetch_begin(cb, br)) {
+        fetch_complete(cb.win);
+      }
+    }
+
+    if constexpr (IncrementRef) {
+      cb.ref_count++;
+    }
+
+    return true;
   }
 
   template <bool SkipFetch, bool IncrementRef>
@@ -68,6 +103,8 @@ public:
     if constexpr (IncrementRef) {
       cb.ref_count++;
     }
+
+    cache_tlb_.add(blk_addr, &cb);
   }
 
   void checkout_complete(MPI_Win win) {
@@ -83,6 +120,35 @@ public:
       fetch_complete(win);
       fetching_ = false;
     }
+  }
+
+  template <bool Dirty, bool DecrementRef>
+  bool checkin_fast(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
+
+    std::byte* blk_addr = common::round_down_pow2(addr, BlockSize);
+    if (blk_addr + BlockSize < addr + size) {
+      // Fast path requires the requested region be within a single cache block
+      return false;
+    }
+
+    auto cbo = cache_tlb_.get(blk_addr);
+    if (!cbo.has_value()) {
+      return false;
+    }
+    cache_block& cb = **cbo;
+
+    if constexpr (Dirty) {
+      block_region br = {addr - blk_addr, addr + size - blk_addr};
+      add_dirty_region(cb, br);
+    }
+
+    if constexpr (DecrementRef) {
+      cb.ref_count--;
+    }
+
+    return true;
   }
 
   template <bool Dirty, bool DecrementRef>
@@ -197,7 +263,7 @@ private:
       invalidate();
       entry_idx = std::numeric_limits<cache_entry_idx_t>::max();
       // for safety
-      /* outer->cache_tlb_.clear(); */
+      outer->cache_tlb_.clear();
     }
 
     void on_cache_map(cache_entry_idx_t idx) {
@@ -396,6 +462,8 @@ private:
   // The cache region is not remotely accessible, but we make an MPI window here because
   // it will pre-register the memory region for RDMA and MPI_Get to the cache will speedup.
   common::mpi_win_manager<std::byte>     win_;
+
+  tlb<std::byte*, cache_block*>          cache_tlb_;
 
   bool                                   fetching_ = false;
   std::vector<cache_block*>              cache_blocks_to_map_;

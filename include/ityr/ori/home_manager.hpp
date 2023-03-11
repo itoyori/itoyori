@@ -3,12 +3,14 @@
 #include <algorithm>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/span.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
+#include "ityr/ori/tlb.hpp"
 
 namespace ityr::ori {
 
@@ -18,6 +20,26 @@ public:
   home_manager(std::size_t mmap_entry_limit)
     : mmap_entry_limit_(mmap_entry_limit),
       cs_(mmap_entry_limit_, mmap_entry(this)) {}
+
+  template <bool IncrementRef>
+  bool checkout_fast(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
+
+    auto meo = home_tlb_.get([&](const common::span<std::byte>& seg) {
+      return seg.data() <= addr && addr + size <= seg.data() + seg.size();
+    });
+    if (!meo.has_value()) {
+      return false;
+    }
+    mmap_entry& me = **meo;
+
+    if constexpr (IncrementRef) {
+      me.ref_count++;
+    }
+
+    return true;
+  }
 
   template <bool IncrementRef>
   void checkout_seg(std::byte*                  seg_addr,
@@ -40,6 +62,30 @@ public:
     if constexpr (IncrementRef) {
       me.ref_count++;
     }
+
+    home_tlb_.add({seg_addr, seg_size}, &me);
+  }
+
+  template <bool DecrementRef>
+  bool checkin_fast(std::byte* addr, std::size_t size) {
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
+
+    if constexpr (!DecrementRef) {
+      return false;
+    }
+
+    auto meo = home_tlb_.get([&](const common::span<std::byte>& seg) {
+      return seg.data() <= addr && addr + size <= seg.data() + seg.size();
+    });
+    if (!meo.has_value()) {
+      return false;
+    }
+    mmap_entry& me = **meo;
+
+    me.ref_count--;
+
+    return true;
   }
 
   template <bool DecrementRef>
@@ -90,7 +136,7 @@ private:
       ITYR_CHECK(mapped_addr == addr);
       entry_idx = std::numeric_limits<cache_entry_idx_t>::max();
       // for safety
-      /* outer->home_tlb_.clear(); */
+      outer->home_tlb_.clear();
     }
 
     void on_cache_map(cache_entry_idx_t idx) {
@@ -128,9 +174,10 @@ private:
     return reinterpret_cast<uintptr_t>(addr) / BlockSize;
   }
 
-  std::size_t                           mmap_entry_limit_;
-  cache_system<cache_key_t, mmap_entry> cs_;
-  std::vector<mmap_entry*>              home_segments_to_map_;
+  std::size_t                               mmap_entry_limit_;
+  cache_system<cache_key_t, mmap_entry>     cs_;
+  tlb<common::span<std::byte>, mmap_entry*> home_tlb_;
+  std::vector<mmap_entry*>                  home_segments_to_map_;
 };
 
 }

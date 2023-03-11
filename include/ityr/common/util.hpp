@@ -142,9 +142,21 @@ inline T round_down_pow2(T x, T alignment) {
 }
 
 template <typename T>
+inline T* round_down_pow2(T* x, uintptr_t alignment) {
+  ITYR_CHECK(is_pow2(alignment));
+  return reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(x) & ~(alignment - 1));
+}
+
+template <typename T>
 inline T round_up_pow2(T x, T alignment) {
   ITYR_CHECK(is_pow2(alignment));
   return (x + alignment - 1) & ~(alignment - 1);
+}
+
+template <typename T>
+inline T* round_up_pow2(T* x, uintptr_t alignment) {
+  ITYR_CHECK(is_pow2(alignment));
+  return reinterpret_cast<T*>((reinterpret_cast<uintptr_t>(x) + alignment - 1) & ~(alignment - 1));
 }
 
 ITYR_TEST_CASE("[ityr::common::util] round up/down for integers") {
