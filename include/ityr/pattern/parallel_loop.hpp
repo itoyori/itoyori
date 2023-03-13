@@ -30,12 +30,12 @@ inline void serial_for_each(const serial_loop_options&,
   }
 }
 
-template <typename T, typename Mode, bool AutoCheckout, typename Fn>
-inline void serial_for_each(const serial_loop_options&             opts,
-                            global_iterator<T, Mode, AutoCheckout> first,
-                            global_iterator<T, Mode, AutoCheckout> last,
-                            Fn                                     fn) {
-  if constexpr (AutoCheckout) {
+template <typename T, typename Mode, typename Fn>
+inline void serial_for_each(const serial_loop_options& opts,
+                            global_iterator<T, Mode>   first,
+                            global_iterator<T, Mode>   last,
+                            Fn                         fn) {
+  if constexpr (global_iterator<T, Mode>::auto_checkout) {
     auto n = std::distance(first, last);
     for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
       auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
@@ -97,7 +97,8 @@ inline T parallel_reduce(parallel_loop_options opts,
   parallel_loop_options_assert(opts);
 
   if constexpr (is_global_iterator_v<ForwardIterator>) {
-    static_assert(std::is_same_v<typename ForwardIterator::mode, ori::mode::read_t>);
+    static_assert(std::is_same_v<typename ForwardIterator::mode, ori::mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator::mode, ori::mode::no_access_t>);
     return parallel_reduce_aux(opts, first, last, init, reduce, transform);
 
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
@@ -233,8 +234,8 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   ITYR_SUBCASE("without auto checkout") {
     int r = ito::root_exec([=] {
       return parallel_reduce(
-        make_global_iterator(p    , ori::mode::read, auto_checkout<false>{}),
-        make_global_iterator(p + n, ori::mode::read, auto_checkout<false>{}),
+        make_global_iterator(p    , ori::mode::no_access),
+        make_global_iterator(p + n, ori::mode::no_access),
         0,
         std::plus<int>{},
         [](ori::global_ref<int> gref) {

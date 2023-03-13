@@ -106,6 +106,8 @@ public:
 
   template <typename Mode>
   void checkout(void* addr, std::size_t size, Mode) {
+    static_assert(!std::is_same_v<Mode, mode::no_access_t>);
+
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
@@ -119,6 +121,8 @@ public:
 
   template <typename Mode>
   void checkin(void* addr, std::size_t size, Mode) {
+    static_assert(!std::is_same_v<Mode, mode::no_access_t>);
+
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
