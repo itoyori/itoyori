@@ -24,8 +24,6 @@ public:
   using reference         = global_ref<T>;
   using iterator_category = std::random_access_iterator_tag;
 
-  static constexpr bool is_global_ptr_v = true;
-
   global_ptr() {}
   explicit global_ptr(T* ptr) : raw_ptr_(ptr) {}
 
@@ -162,11 +160,11 @@ operator->*(global_ptr<T> ptr, MemberT T::* mp) {
   return global_ptr<member_t>(member_ptr);
 }
 
-template <typename, typename = void>
+template <typename>
 struct is_global_ptr : public std::false_type {};
 
-template <typename GPtrT>
-struct is_global_ptr<GPtrT, std::enable_if_t<GPtrT::is_global_ptr_v>> : public std::true_type {};
+template <typename T>
+struct is_global_ptr<global_ptr<T>> : public std::true_type {};
 
 template <typename T>
 inline constexpr bool is_global_ptr_v = is_global_ptr<T>::value;
