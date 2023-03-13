@@ -200,6 +200,11 @@ public:
     common::verbose("Exit scheduling loop");
   }
 
+  template <typename T>
+  static bool is_serialized(thread_handler<T> th) {
+    return th.serialized;
+  }
+
 private:
   template <typename T, typename Fn, typename... Args>
   T invoke_fn(Fn&& fn, Args&&... args) {
@@ -404,6 +409,11 @@ public:
 
   template <typename CondFn>
   void sched_loop(CondFn&&) {}
+
+  template <typename T>
+  static bool is_serialized(thread_handler<T>) {
+    return true;
+  }
 
 private:
   template <typename T, typename Fn, typename... Args>

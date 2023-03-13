@@ -47,6 +47,10 @@ public:
     }
   }
 
+  bool serialized() {
+    return scheduler::is_serialized(handler_);
+  }
+
 private:
   scheduler::thread_handler<sched_retval_t> handler_;
 };

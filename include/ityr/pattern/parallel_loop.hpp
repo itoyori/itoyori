@@ -118,31 +118,74 @@ inline T parallel_reduce_aux(parallel_loop_options opts,
                              T                     identity,
                              ReduceOp              reduce,
                              TransformOp           transform) {
-  auto d = std::distance(first, last);
-  if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
-    ori::acquire();
-
+  auto serial_fn = [=](const serial_loop_options& opts_,
+                       ForwardIterator            first_,
+                       ForwardIterator            last_) {
     T acc = identity;
-    serial_for_each(serial_loop_options{.checkout_count = opts.checkout_count},
-                    first, last, [&](const auto& v) {
+    serial_for_each(opts_, first_, last_, [&](const auto& v) {
       acc = reduce(acc, transform(v));
     });
-
-    ori::release();
-
     return acc;
+  };
+  return parallel_loop_generic(opts, serial_fn, reduce, first, last);
+}
+
+template <typename SerialFn, typename CombineFn,
+          typename ForwardIterator, typename... ForwardIterators>
+inline auto parallel_loop_generic(parallel_loop_options opts,
+                                  SerialFn              serial_fn,
+                                  CombineFn             combine_fn,
+                                  ForwardIterator       first,
+                                  ForwardIterator       last,
+                                  ForwardIterators...   firsts) {
+  auto d = std::distance(first, last);
+  if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
+    auto serial_fn_call = [&]() {
+      return serial_fn(serial_loop_options{.checkout_count = opts.checkout_count},
+                       first, last, firsts...);
+    };
+    using retval_t = std::invoke_result_t<decltype(serial_fn_call)>;
+    if constexpr (std::is_void_v<retval_t>) {
+      serial_fn_call();
+      ori::release();
+    } else {
+      auto ret = serial_fn_call();
+      ori::release();
+      return ret;
+    }
   } else {
     ori::release();
 
     auto mid = std::next(first, d / 2);
-    ito::thread<T> th(parallel_reduce_aux<ForwardIterator, T, ReduceOp, TransformOp>,
-                      opts, first, mid, identity, reduce, transform);
-    T acc2 = parallel_reduce_aux(opts, mid, last, identity, reduce, transform);
-    auto acc1 = th.join();
+    auto recur_fn_left = [=]() {
+      return parallel_loop_generic(opts, serial_fn, combine_fn,
+                                   first, mid, firsts...);
+    };
+    using retval_t = std::invoke_result_t<decltype(recur_fn_left)>;
 
-    ori::acquire();
+    auto recur_fn_right = [&]() {
+      return parallel_loop_generic(opts, serial_fn, combine_fn,
+                                   mid, last, std::next(firsts, d / 2)...);
+    };
 
-    return reduce(acc1, acc2);
+    ito::thread<retval_t> th(recur_fn_left);
+    if (!th.serialized()) {
+      ori::acquire();
+    }
+
+    if constexpr(std::is_void_v<retval_t>) {
+      recur_fn_right();
+      th.join();
+
+      ori::acquire();
+    } else {
+      auto ret2 = recur_fn_right();
+      auto ret1 = th.join();
+
+      ori::acquire();
+
+      return combine_fn(ret1, ret2);
+    }
   }
 }
 
@@ -222,7 +265,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   ITYR_SUBCASE("custom cutoff and checkout count") {
     int r = ito::root_exec([=] {
       return parallel_reduce(
-        {.cutoff_count = 100, .checkout_count=50},
+        {.cutoff_count = 100, .checkout_count = 50},
         p,
         p + n,
         0,
