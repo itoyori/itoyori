@@ -63,35 +63,35 @@ inline void parallel_loop_options_assert(const parallel_loop_options& opts) {
 template <typename ForwardIterator, typename T, typename ReduceOp>
 inline T parallel_reduce(ForwardIterator       first,
                          ForwardIterator       last,
-                         T                     init,
+                         T                     identity,
                          ReduceOp              reduce) {
-  return parallel_reduce(parallel_loop_options{}, first, last, init, reduce);
+  return parallel_reduce(parallel_loop_options{}, first, last, identity, reduce);
 }
 
 template <typename ForwardIterator, typename T, typename ReduceOp>
 inline T parallel_reduce(parallel_loop_options opts,
                          ForwardIterator       first,
                          ForwardIterator       last,
-                         T                     init,
+                         T                     identity,
                          ReduceOp              reduce) {
   auto transform = [](auto&& v) { return std::forward<decltype(v)>(v); };
-  return parallel_reduce(opts, first, last, init, reduce, transform);
+  return parallel_reduce(opts, first, last, identity, reduce, transform);
 }
 
 template <typename ForwardIterator, typename T, typename ReduceOp, typename TransformOp>
 inline T parallel_reduce(ForwardIterator       first,
                          ForwardIterator       last,
-                         T                     init,
+                         T                     identity,
                          ReduceOp              reduce,
                          TransformOp           transform) {
-  return parallel_reduce(parallel_loop_options{}, first, last, init, reduce, transform);
+  return parallel_reduce(parallel_loop_options{}, first, last, identity, reduce, transform);
 }
 
 template <typename ForwardIterator, typename T, typename ReduceOp, typename TransformOp>
 inline T parallel_reduce(parallel_loop_options opts,
                          ForwardIterator       first,
                          ForwardIterator       last,
-                         T                     init,
+                         T                     identity,
                          ReduceOp              reduce,
                          TransformOp           transform) {
   parallel_loop_options_assert(opts);
@@ -99,15 +99,15 @@ inline T parallel_reduce(parallel_loop_options opts,
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     static_assert(std::is_same_v<typename ForwardIterator::mode, ori::mode::read_t> ||
                   std::is_same_v<typename ForwardIterator::mode, ori::mode::no_access_t>);
-    return parallel_reduce_aux(opts, first, last, init, reduce, transform);
+    return parallel_reduce_aux(opts, first, last, identity, reduce, transform);
 
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
     auto first_ = make_global_iterator(first, ori::mode::read);
     auto last_  = make_global_iterator(last , ori::mode::read);
-    return parallel_reduce_aux(opts, first_, last_, init, reduce, transform);
+    return parallel_reduce_aux(opts, first_, last_, identity, reduce, transform);
 
   } else {
-    return parallel_reduce_aux(opts, first, last, init, reduce, transform);
+    return parallel_reduce_aux(opts, first, last, identity, reduce, transform);
   }
 }
 
@@ -115,14 +115,14 @@ template <typename ForwardIterator, typename T, typename ReduceOp, typename Tran
 inline T parallel_reduce_aux(parallel_loop_options opts,
                              ForwardIterator       first,
                              ForwardIterator       last,
-                             T                     init,
+                             T                     identity,
                              ReduceOp              reduce,
                              TransformOp           transform) {
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
     ori::acquire();
 
-    T acc = init;
+    T acc = identity;
     serial_for_each(serial_loop_options{.checkout_count = opts.checkout_count},
                     first, last, [&](const auto& v) {
       acc = reduce(acc, transform(v));
@@ -136,8 +136,8 @@ inline T parallel_reduce_aux(parallel_loop_options opts,
 
     auto mid = std::next(first, d / 2);
     ito::thread<T> th(parallel_reduce_aux<ForwardIterator, T, ReduceOp, TransformOp>,
-                      opts, first, mid, init, reduce, transform);
-    T acc2 = parallel_reduce_aux(opts, mid, last, init, reduce, transform);
+                      opts, first, mid, identity, reduce, transform);
+    T acc2 = parallel_reduce_aux(opts, mid, last, identity, reduce, transform);
     auto acc1 = th.join();
 
     ori::acquire();
