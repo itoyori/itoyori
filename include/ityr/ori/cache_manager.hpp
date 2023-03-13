@@ -122,7 +122,7 @@ public:
     }
   }
 
-  template <bool Dirty, bool DecrementRef>
+  template <bool RegisterDirty, bool DecrementRef>
   bool checkin_fast(std::byte* addr, std::size_t size) {
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
@@ -139,7 +139,7 @@ public:
     }
     cache_block& cb = **cbo;
 
-    if constexpr (Dirty) {
+    if constexpr (RegisterDirty) {
       block_region br = {addr - blk_addr, addr + size - blk_addr};
       add_dirty_region(cb, br);
     }
@@ -151,7 +151,7 @@ public:
     return true;
   }
 
-  template <bool Dirty, bool DecrementRef>
+  template <bool RegisterDirty, bool DecrementRef>
   void checkin_blk(std::byte* blk_addr,
                    std::byte* req_addr_b,
                    std::byte* req_addr_e) {
@@ -163,7 +163,7 @@ public:
 
     cache_block& cb = get_entry<false>(blk_addr);
 
-    if constexpr (Dirty) {
+    if constexpr (RegisterDirty) {
       block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
       add_dirty_region(cb, br);
     }

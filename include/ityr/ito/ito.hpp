@@ -32,8 +32,13 @@ private:
 
 using instance = common::singleton<ito>;
 
-inline void init(MPI_Comm comm = MPI_COMM_WORLD) { instance::init(comm); }
-inline void fini()                               { instance::fini();     }
+inline void init(MPI_Comm comm = MPI_COMM_WORLD) {
+  instance::init(comm);
+}
+
+inline void fini() {
+  instance::fini();
+}
 
 template <typename Fn, typename... Args>
 inline auto root_exec(Fn&& fn, Args&&... args) {

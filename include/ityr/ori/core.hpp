@@ -13,39 +13,25 @@
 #include "ityr/ori/cache_manager.hpp"
 #include "ityr/ori/options.hpp"
 
-namespace ityr::ori {
-
-enum class access_mode {
-  read,
-  write,
-  read_write,
-};
-
-inline std::string str(access_mode mode) {
-  switch (mode) {
-    case access_mode::read:       return "read";
-    case access_mode::write:      return "write";
-    case access_mode::read_write: return "read_write";
-  }
-  return "UNKNOWN";
-}
+namespace ityr::ori::core {
 
 template <block_size_t BlockSize>
 class core {
 public:
-  core(std::size_t cache_size, std::size_t sub_BlockSize)
+  core(std::size_t cache_size, std::size_t sub_block_size)
     : home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
-      cache_manager_(cache_size, sub_BlockSize) {}
+      cache_manager_(cache_size, sub_block_size) {}
 
   void* malloc_coll(std::size_t size) { return malloc_coll<default_mem_mapper>(size); }
 
   template <template <block_size_t> typename MemMapper, typename... MemMapperArgs>
-  void* malloc_coll(std::size_t size, MemMapperArgs... mmargs) {
+  void* malloc_coll(std::size_t size, MemMapperArgs&&... mmargs) {
     if (size == 0) {
       common::die("Memory allocation size cannot be 0");
     }
 
-    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(), mmargs...);
+    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
+                                                          std::forward<MemMapperArgs>(mmargs)...);
     coll_mem& cm = coll_mem_create(size, std::move(mmapper));
     void* addr = cm.vm().addr();
 
@@ -118,27 +104,29 @@ public:
     }
   }
 
-  template <access_mode Mode>
-  void checkout(void* addr, std::size_t size) {
+  template <typename Mode>
+  void checkout(void* addr, std::size_t size, Mode) {
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+                    str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
+    constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
     if (noncoll_allocator_.has(addr)) {
-      checkout_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+      checkout_noncoll<skip_fetch, true>(reinterpret_cast<std::byte*>(addr), size);
     } else {
-      checkout_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+      checkout_coll<skip_fetch, true>(reinterpret_cast<std::byte*>(addr), size);
     }
   }
 
-  template <access_mode Mode>
-  void checkin(void* addr, std::size_t size) {
+  template <typename Mode>
+  void checkin(void* addr, std::size_t size, Mode) {
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
-                    str(Mode).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+                    str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
+    constexpr bool register_dirty = !std::is_same_v<Mode, mode::read_t>;
     if (noncoll_allocator_.has(addr)) {
-      checkin_noncoll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+      checkin_noncoll<register_dirty, true>(reinterpret_cast<std::byte*>(addr), size);
     } else {
-      checkin_coll<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+      checkin_coll<register_dirty, true>(reinterpret_cast<std::byte*>(addr), size);
     }
   }
 
@@ -241,13 +229,13 @@ private:
     });
   }
 
-  template <access_mode Mode, bool IncrementRef>
+  template <bool SkipFetch, bool IncrementRef>
   void checkout_coll(std::byte* addr, std::size_t size) {
     if (home_manager_.template checkout_fast<IncrementRef>(addr, size)) {
       return;
     }
 
-    if (cache_manager_.template checkout_fast<Mode == access_mode::write, IncrementRef>(addr, size)) {
+    if (cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size)) {
       return;
     }
 
@@ -264,7 +252,7 @@ private:
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
-        cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
+        cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
             blk_addr, req_addr_b, req_addr_e,
             cm.win(),
             owner,
@@ -275,7 +263,7 @@ private:
     cache_manager_.checkout_complete(cm.win());
   }
 
-  template <access_mode Mode, bool IncrementRef>
+  template <bool SkipFetch, bool IncrementRef>
   void checkout_noncoll(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_allocator_.has(addr));
 
@@ -289,14 +277,14 @@ private:
       return;
     }
 
-    if (cache_manager_.template checkout_fast<Mode == access_mode::write, IncrementRef>(addr, size)) {
+    if (cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size)) {
       return;
     }
 
     for_each_block(addr, size, [&](std::byte* blk_addr,
                                    std::byte* req_addr_b,
                                    std::byte* req_addr_e) {
-      cache_manager_.template checkout_blk<Mode == access_mode::write, IncrementRef>(
+      cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
           blk_addr, req_addr_b, req_addr_e,
           noncoll_allocator_.win(),
           target_rank,
@@ -306,13 +294,13 @@ private:
     cache_manager_.checkout_complete(noncoll_allocator_.win());
   }
 
-  template <access_mode Mode, bool DecrementRef>
+  template <bool RegisterDirty, bool DecrementRef>
   void checkin_coll(std::byte* addr, std::size_t size) {
     if (home_manager_.template checkin_fast<DecrementRef>(addr, size)) {
       return;
     }
 
-    if (cache_manager_.template checkin_fast<Mode != access_mode::read, DecrementRef>(addr, size)) {
+    if (cache_manager_.template checkin_fast<RegisterDirty, DecrementRef>(addr, size)) {
       return;
     }
 
@@ -326,12 +314,12 @@ private:
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t, std::size_t) {
-        cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
+        cache_manager_.template checkin_blk<RegisterDirty, DecrementRef>(
             blk_addr, req_addr_b, req_addr_e);
       });
   }
 
-  template <access_mode Mode, bool DecrementRef>
+  template <bool RegisterDirty, bool DecrementRef>
   void checkin_noncoll(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_allocator_.has(addr));
 
@@ -345,14 +333,14 @@ private:
       return;
     }
 
-    if (cache_manager_.template checkin_fast<Mode != access_mode::read, DecrementRef>(addr, size)) {
+    if (cache_manager_.template checkin_fast<RegisterDirty, DecrementRef>(addr, size)) {
       return;
     }
 
     for_each_block(addr, size, [&](std::byte* blk_addr,
                                    std::byte* req_addr_b,
                                    std::byte* req_addr_e) {
-      cache_manager_.template checkin_blk<Mode != access_mode::read, DecrementRef>(
+      cache_manager_.template checkin_blk<RegisterDirty, DecrementRef>(
           blk_addr, req_addr_b, req_addr_e);
     });
   }
@@ -368,6 +356,8 @@ private:
   home_manager<BlockSize>                              home_manager_;
   cache_manager<BlockSize>                             cache_manager_;
 };
+
+using instance = common::singleton<core<ITYR_ORI_BLOCK_SIZE>>;
 
 ITYR_TEST_CASE("[ityr::ori::core] malloc/free with block policy") {
   common::singleton_initializer<common::topology::instance> topo;
@@ -493,31 +483,31 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
     barrier();
 
     ITYR_SUBCASE("read the entire array") {
-      c.checkout<access_mode::read>(p, n);
+      c.checkout(p, n, mode::read);
       for (int i = 0; i < n; i++) {
         ITYR_CHECK_MESSAGE(p[i] == i / bs, "rank: ", my_rank, ", i: ", i);
       }
-      c.checkin<access_mode::read>(p, n);
+      c.checkin(p, n, mode::read);
     }
 
     ITYR_SUBCASE("read and write the entire array") {
       for (int iter = 0; iter < n_ranks; iter++) {
         if (iter == my_rank) {
-          c.checkout<access_mode::read_write>(p, n);
+          c.checkout(p, n, mode::read_write);
           for (int i = 0; i < n; i++) {
             ITYR_CHECK_MESSAGE(p[i] == i / bs + iter, "iter: ", iter, ", rank: ", my_rank, ", i: ", i);
             p[i]++;
           }
-          c.checkin<access_mode::read_write>(p, n);
+          c.checkin(p, n, mode::read_write);
         }
 
         barrier();
 
-        c.checkout<access_mode::read>(p, n);
+        c.checkout(p, n, mode::read);
         for (int i = 0; i < n; i++) {
           ITYR_CHECK_MESSAGE(p[i] == i / bs + iter + 1, "iter: ", iter, ", rank: ", my_rank, ", i: ", i);
         }
-        c.checkin<access_mode::read>(p, n);
+        c.checkin(p, n, mode::read);
 
         barrier();
       }
@@ -528,11 +518,11 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
       int ie = n / 5 * 4;
       int s = ie - ib;
 
-      c.checkout<access_mode::read>(p + ib, s);
+      c.checkout(p + ib, s, mode::read);
       for (int i = 0; i < s; i++) {
         ITYR_CHECK_MESSAGE(p[ib + i] == (i + ib) / bs, "rank: ", my_rank, ", i: ", i);
       }
-      c.checkin<access_mode::read>(p + ib, s);
+      c.checkin(p + ib, s, mode::read);
     }
   }
 
@@ -567,11 +557,11 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
     if (my_rank == 0) {
       for (std::size_t i = 0; i < n; i += max_checkout_size) {
         std::size_t m = std::min(max_checkout_size, n - i);
-        c.checkout<access_mode::write>(p + i, m * sizeof(std::size_t));
+        c.checkout(p + i, m * sizeof(std::size_t), mode::write);
         for (std::size_t j = i; j < i + m; j++) {
           p[j] = j;
         }
-        c.checkin<access_mode::write>(p + i, m * sizeof(std::size_t));
+        c.checkin(p + i, m * sizeof(std::size_t), mode::write);
       }
     }
 
@@ -580,11 +570,11 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
     ITYR_SUBCASE("read the entire array") {
       for (std::size_t i = 0; i < n; i += max_checkout_size) {
         std::size_t m = std::min(max_checkout_size, n - i);
-        c.checkout<access_mode::read>(p + i, m * sizeof(std::size_t));
+        c.checkout(p + i, m * sizeof(std::size_t), mode::read);
         for (std::size_t j = i; j < i + m; j++) {
           ITYR_CHECK(p[j] == j);
         }
-        c.checkin<access_mode::read>(p + i, m * sizeof(std::size_t));
+        c.checkin(p + i, m * sizeof(std::size_t), mode::read);
       }
     }
 
@@ -595,11 +585,11 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
 
       for (std::size_t i = 0; i < s; i += max_checkout_size) {
         std::size_t m = std::min(max_checkout_size, s - i);
-        c.checkout<access_mode::read>(p + ib + i, m * sizeof(std::size_t));
+        c.checkout(p + ib + i, m * sizeof(std::size_t), mode::read);
         for (std::size_t j = ib + i; j < ib + i + m; j++) {
           ITYR_CHECK(p[j] == j);
         }
-        c.checkin<access_mode::read>(p + ib + i, m * sizeof(std::size_t));
+        c.checkin(p + ib + i, m * sizeof(std::size_t), mode::read);
       }
     }
 
@@ -608,23 +598,23 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
       ITYR_REQUIRE(stride <= max_checkout_size);
       for (std::size_t i = my_rank * stride; i < n; i += n_ranks * stride) {
         std::size_t s = std::min(stride, n - i);
-        c.checkout<access_mode::read_write>(p + i, s * sizeof(std::size_t));
+        c.checkout(p + i, s * sizeof(std::size_t), mode::read_write);
         for (std::size_t j = i; j < i + s; j++) {
           ITYR_CHECK(p[j] == j);
           p[j] *= 2;
         }
-        c.checkin<access_mode::read_write>(p + i, s * sizeof(std::size_t));
+        c.checkin(p + i, s * sizeof(std::size_t), mode::read_write);
       }
 
       barrier();
 
       for (std::size_t i = 0; i < n; i += max_checkout_size) {
         std::size_t m = std::min(max_checkout_size, n - i);
-        c.checkout<access_mode::read>(p + i, m * sizeof(std::size_t));
+        c.checkout(p + i, m * sizeof(std::size_t), mode::read);
         for (std::size_t j = i; j < i + m; j++) {
           ITYR_CHECK(p[j] == j * 2);
         }
-        c.checkin<access_mode::read>(p + i, m * sizeof(std::size_t));
+        c.checkin(p + i, m * sizeof(std::size_t), mode::read);
       }
     }
   }
@@ -656,44 +646,44 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncontig)") {
 
   for (auto p : ps) {
     for (std::size_t i = my_rank; i < n; i += n_ranks) {
-      c.checkout<access_mode::write>(p + i, sizeof(std::size_t));
+      c.checkout(p + i, sizeof(std::size_t), mode::write);
       p[i] = i;
-      c.checkin<access_mode::write>(p + i, sizeof(std::size_t));
+      c.checkin(p + i, sizeof(std::size_t), mode::write);
     }
 
     barrier();
 
     for (std::size_t i = (my_rank + 1) % n_ranks; i < n; i += n_ranks) {
-      c.checkout<access_mode::read_write>(p + i, sizeof(std::size_t));
+      c.checkout(p + i, sizeof(std::size_t), mode::read_write);
       ITYR_CHECK(p[i] == i);
       p[i] *= 2;
-      c.checkin<access_mode::read_write>(p + i, sizeof(std::size_t));
+      c.checkin(p + i, sizeof(std::size_t), mode::read_write);
     }
 
     barrier();
 
     for (std::size_t i = (my_rank + 2) % n_ranks; i < n; i += n_ranks) {
       if (i % 3 == 0) {
-        c.checkout<access_mode::write>(p + i, sizeof(std::size_t));
+        c.checkout(p + i, sizeof(std::size_t), mode::write);
         p[i] = i * 10;
-        c.checkin<access_mode::write>(p + i, sizeof(std::size_t));
+        c.checkin(p + i, sizeof(std::size_t), mode::write);
       } else {
-        c.checkout<access_mode::read>(p + i, sizeof(std::size_t));
+        c.checkout(p + i, sizeof(std::size_t), mode::read);
         ITYR_CHECK(p[i] == i * 2);
-        c.checkin<access_mode::read>(p + i, sizeof(std::size_t));
+        c.checkin(p + i, sizeof(std::size_t), mode::read);
       }
     }
 
     barrier();
 
     for (std::size_t i = (my_rank + 3) % n_ranks; i < n; i += n_ranks) {
-      c.checkout<access_mode::read>(p + i, sizeof(std::size_t));
+      c.checkout(p + i, sizeof(std::size_t), mode::read);
       if (i % 3 == 0) {
         ITYR_CHECK(p[i] == i * 10);
       } else {
         ITYR_CHECK(p[i] == i * 2);
       }
-      c.checkin<access_mode::read>(p + i, sizeof(std::size_t));
+      c.checkin(p + i, sizeof(std::size_t), mode::read);
     }
   }
 
@@ -722,10 +712,10 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
 
     node_t* root_node = new (c.malloc(sizeof(node_t))) node_t;
 
-    c.checkout<access_mode::write>(root_node, sizeof(node_t));
+    c.checkout(root_node, sizeof(node_t), mode::write);
     root_node->next = nullptr;
     root_node->value = my_rank;
-    c.checkin<access_mode::write>(root_node, sizeof(node_t));
+    c.checkin(root_node, sizeof(node_t), mode::write);
 
     node_t* node = root_node;
     for (int i = 0; i < niter; i++) {
@@ -733,18 +723,18 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
         // append a new node
         node_t* new_node = new (c.malloc(sizeof(node_t))) node_t;
 
-        c.checkout<access_mode::write>(&node->next, sizeof(node->next));
+        c.checkout(&node->next, sizeof(node->next), mode::write);
         node->next = new_node;
-        c.checkin<access_mode::write>(&node->next, sizeof(node->next));
+        c.checkin(&node->next, sizeof(node->next), mode::write);
 
-        c.checkout<access_mode::read>(&node->value, sizeof(node->value));
+        c.checkout(&node->value, sizeof(node->value), mode::read);
         int val = node->value;
-        c.checkin<access_mode::read>(&node->value, sizeof(node->value));
+        c.checkin(&node->value, sizeof(node->value), mode::read);
 
-        c.checkout<access_mode::write>(new_node, sizeof(node_t));
+        c.checkout(new_node, sizeof(node_t), mode::write);
         new_node->next = nullptr;
         new_node->value = val + 1;
-        c.checkin<access_mode::write>(new_node, sizeof(node_t));
+        c.checkin(new_node, sizeof(node_t), mode::write);
 
         node = new_node;
       }
@@ -771,14 +761,14 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
     int count = 0;
     node = root_node;
     while (node != nullptr) {
-      c.checkout<access_mode::read>(node, sizeof(node_t));
+      c.checkout(node, sizeof(node_t), mode::read);
 
       ITYR_CHECK(node->value == my_rank + count);
 
       node_t* prev_node = node;
       node = node->next;
 
-      c.checkin<access_mode::read>(prev_node, sizeof(node_t));
+      c.checkin(prev_node, sizeof(node_t), mode::read);
 
       std::destroy_at(prev_node);
       c.free(prev_node, sizeof(node_t));

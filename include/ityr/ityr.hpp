@@ -15,9 +15,10 @@ namespace ityr {
 
 class ityr {
 public:
-  ityr(MPI_Comm comm)
+  ityr(std::size_t cache_size, std::size_t sub_block_size, MPI_Comm comm)
     : topo_(comm),
-      ito_(comm) {}
+      ito_(comm),
+      ori_(cache_size, sub_block_size, comm) {}
 
 private:
   common::mpi_initializer                                    mi_;
@@ -25,12 +26,20 @@ private:
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
   common::singleton_initializer<ito::instance>               ito_;
+  common::singleton_initializer<ori::instance>               ori_;
 };
 
 using instance = common::singleton<ityr>;
 
-inline void init(MPI_Comm comm = MPI_COMM_WORLD) { instance::init(comm); }
-inline void fini()                               { instance::fini();     }
+inline void init(std::size_t cache_size     = std::size_t(16) * 1024 * 1024,
+                 std::size_t sub_block_size = std::size_t(4) * 1024,
+                 MPI_Comm comm              = MPI_COMM_WORLD) {
+  instance::init(cache_size, sub_block_size, comm);
+}
+
+inline void fini() {
+  instance::fini();
+}
 
 inline common::topology::rank_t my_rank() {
   return common::topology::my_rank();
