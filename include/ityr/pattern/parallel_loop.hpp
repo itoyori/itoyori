@@ -6,49 +6,9 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
+#include "ityr/pattern/serial_loop.hpp"
 
 namespace ityr {
-
-struct serial_loop_options {
-  std::size_t checkout_count = 1;
-};
-
-template <typename ForwardIterator, typename Fn>
-inline void serial_for_each(ForwardIterator first,
-                            ForwardIterator last,
-                            Fn              fn) {
-  serial_for_each(serial_loop_options{}, first, last, fn);
-}
-
-template <typename ForwardIterator, typename Fn>
-inline void serial_for_each(const serial_loop_options&,
-                            ForwardIterator first,
-                            ForwardIterator last,
-                            Fn              fn) {
-  for (; first != last; ++first) {
-    fn(*first);
-  }
-}
-
-template <typename T, typename Mode, typename Fn>
-inline void serial_for_each(const serial_loop_options& opts,
-                            global_iterator<T, Mode>   first,
-                            global_iterator<T, Mode>   last,
-                            Fn                         fn) {
-  if constexpr (global_iterator<T, Mode>::auto_checkout) {
-    auto n = std::distance(first, last);
-    for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-      auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-      ori::with_checkout(&*std::next(first, d), n_, Mode{}, [&](auto&& it) {
-        serial_for_each(opts, it, std::next(it, n_), fn);
-      });
-    }
-  } else {
-    for (; first != last; ++first) {
-      fn(*first);
-    }
-  }
-}
 
 struct parallel_loop_options {
   std::size_t cutoff_count   = 1;
@@ -58,6 +18,101 @@ struct parallel_loop_options {
 inline void parallel_loop_options_assert(const parallel_loop_options& opts) {
   ITYR_CHECK(0 < opts.checkout_count);
   ITYR_CHECK(opts.checkout_count <= opts.cutoff_count);
+}
+
+template <typename ForwardIterator, typename Op>
+inline void parallel_for_each(ForwardIterator       first,
+                              ForwardIterator       last,
+                              Op                    op) {
+  parallel_for_each(parallel_loop_options{}, first, last, op);
+}
+
+template <typename ForwardIterator, typename Op>
+inline void parallel_for_each(parallel_loop_options opts,
+                              ForwardIterator       first,
+                              ForwardIterator       last,
+                              Op                    op) {
+  auto serial_fn = [=](const serial_loop_options& opts_,
+                       ForwardIterator            first_,
+                       ForwardIterator            last_) {
+    serial_for_each(opts_, first_, last_, op);
+  };
+  parallel_loop_generic(opts, serial_fn, []{}, first, last);
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename Op>
+inline void parallel_for_each(ForwardIterator1      first1,
+                              ForwardIterator1      last1,
+                              ForwardIterator2      first2,
+                              Op                    op) {
+  parallel_for_each(parallel_loop_options{}, first1, last1, first2, op);
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename Op>
+inline void parallel_for_each(parallel_loop_options opts,
+                              ForwardIterator1      first1,
+                              ForwardIterator1      last1,
+                              ForwardIterator2      first2,
+                              Op                    op) {
+  auto serial_fn = [=](const serial_loop_options& opts_,
+                       ForwardIterator1           first1_,
+                       ForwardIterator1           last1_,
+                       ForwardIterator2           first2_) {
+    serial_for_each(opts_, first1_, last1_, first2_, op);
+  };
+  parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first2);
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
+  ito::init();
+  ori::init();
+
+  int n = 100000;
+  ori::global_ptr<int> p1 = ori::malloc_coll<int>(n);
+  ori::global_ptr<int> p2 = ori::malloc_coll<int>(n);
+
+  ito::root_exec([=] {
+    int count = 0;
+    serial_for_each({.checkout_count = 100},
+                    make_global_iterator(p1    , ori::mode::write),
+                    make_global_iterator(p1 + n, ori::mode::write),
+                    [&](int& v) { v = count++; });;
+
+    parallel_for_each(
+      make_global_iterator(p1    , ori::mode::read),
+      make_global_iterator(p1 + n, ori::mode::read),
+      ityr::count_iterator<int>(0),
+      [=](int x, int i) { ITYR_CHECK(x == i); });
+
+    parallel_for_each(
+      ityr::count_iterator<int>(0),
+      ityr::count_iterator<int>(n),
+      make_global_iterator(p1, ori::mode::read),
+      [=](int i, int x) { ITYR_CHECK(x == i); });
+
+    parallel_for_each(
+      make_global_iterator(p1    , ori::mode::read),
+      make_global_iterator(p1 + n, ori::mode::read),
+      make_global_iterator(p2    , ori::mode::write),
+      [=](int x, int& y) { y = x * 2; });
+
+    parallel_for_each(
+      make_global_iterator(p2    , ori::mode::read_write),
+      make_global_iterator(p2 + n, ori::mode::read_write),
+      [=](int& y) { y *= 2; });
+
+    parallel_for_each(
+      ityr::count_iterator<int>(0),
+      ityr::count_iterator<int>(n),
+      make_global_iterator(p2, ori::mode::read),
+      [=](int i, int y) { ITYR_CHECK(y == i * 4); });
+  });
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
 }
 
 template <typename ForwardIterator, typename T, typename ReduceOp>
@@ -132,19 +187,23 @@ inline T parallel_reduce_aux(parallel_loop_options opts,
 
 template <typename SerialFn, typename CombineFn,
           typename ForwardIterator, typename... ForwardIterators>
-inline auto parallel_loop_generic(parallel_loop_options opts,
-                                  SerialFn              serial_fn,
-                                  CombineFn             combine_fn,
-                                  ForwardIterator       first,
-                                  ForwardIterator       last,
-                                  ForwardIterators...   firsts) {
+inline std::invoke_result_t<SerialFn, serial_loop_options,
+                            ForwardIterator, ForwardIterator, ForwardIterators...>
+parallel_loop_generic(parallel_loop_options opts,
+                      SerialFn              serial_fn,
+                      CombineFn             combine_fn,
+                      ForwardIterator       first,
+                      ForwardIterator       last,
+                      ForwardIterators...   firsts) {
+  using retval_t = std::invoke_result_t<SerialFn, serial_loop_options,
+                                        ForwardIterator, ForwardIterator, ForwardIterators...>;
+
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
-    auto serial_fn_call = [&]() {
+    auto serial_fn_call = [&]() -> retval_t {
       return serial_fn(serial_loop_options{.checkout_count = opts.checkout_count},
                        first, last, firsts...);
     };
-    using retval_t = std::invoke_result_t<decltype(serial_fn_call)>;
     if constexpr (std::is_void_v<retval_t>) {
       serial_fn_call();
       ori::release();
@@ -157,13 +216,12 @@ inline auto parallel_loop_generic(parallel_loop_options opts,
     ori::release();
 
     auto mid = std::next(first, d / 2);
-    auto recur_fn_left = [=]() {
+    auto recur_fn_left = [=]() -> retval_t {
       return parallel_loop_generic(opts, serial_fn, combine_fn,
                                    first, mid, firsts...);
     };
-    using retval_t = std::invoke_result_t<decltype(recur_fn_left)>;
 
-    auto recur_fn_right = [&]() {
+    auto recur_fn_right = [&]() -> retval_t {
       return parallel_loop_generic(opts, serial_fn, combine_fn,
                                    mid, last, std::next(firsts, d / 2)...);
     };
@@ -287,6 +345,8 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
+
+  ori::free_coll(p);
 
   ori::fini();
   ito::fini();
