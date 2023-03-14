@@ -187,60 +187,77 @@ inline T parallel_reduce_aux(parallel_loop_options opts,
 
 template <typename SerialFn, typename CombineFn,
           typename ForwardIterator, typename... ForwardIterators>
+inline auto parallel_loop_generic(parallel_loop_options opts,
+                                  SerialFn              serial_fn,
+                                  CombineFn             combine_fn,
+                                  ForwardIterator       first,
+                                  ForwardIterator       last,
+                                  ForwardIterators...   firsts) {
+  ori::release();
+  return parallel_loop_generic_aux(opts, serial_fn, combine_fn, first, last, firsts...);
+}
+
+template <typename SerialFn, typename CombineFn,
+          typename ForwardIterator, typename... ForwardIterators>
 inline std::invoke_result_t<SerialFn, serial_loop_options,
                             ForwardIterator, ForwardIterator, ForwardIterators...>
-parallel_loop_generic(parallel_loop_options opts,
-                      SerialFn              serial_fn,
-                      CombineFn             combine_fn,
-                      ForwardIterator       first,
-                      ForwardIterator       last,
-                      ForwardIterators...   firsts) {
+parallel_loop_generic_aux(parallel_loop_options opts,
+                          SerialFn              serial_fn,
+                          CombineFn             combine_fn,
+                          ForwardIterator       first,
+                          ForwardIterator       last,
+                          ForwardIterators...   firsts) {
   using retval_t = std::invoke_result_t<SerialFn, serial_loop_options,
                                         ForwardIterator, ForwardIterator, ForwardIterators...>;
 
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
-    auto serial_fn_call = [&]() -> retval_t {
-      return serial_fn(serial_loop_options{.checkout_count = opts.checkout_count},
-                       first, last, firsts...);
-    };
-    if constexpr (std::is_void_v<retval_t>) {
-      serial_fn_call();
-      ori::release();
-    } else {
-      auto ret = serial_fn_call();
-      ori::release();
-      return ret;
-    }
-  } else {
-    ori::release();
+    return serial_fn(serial_loop_options{.checkout_count = opts.checkout_count},
+                     first, last, firsts...);
 
+  } else {
     auto mid = std::next(first, d / 2);
     auto recur_fn_left = [=]() -> retval_t {
-      return parallel_loop_generic(opts, serial_fn, combine_fn,
-                                   first, mid, firsts...);
+      return parallel_loop_generic_aux(opts, serial_fn, combine_fn,
+                                       first, mid, firsts...);
     };
 
     auto recur_fn_right = [&]() -> retval_t {
-      return parallel_loop_generic(opts, serial_fn, combine_fn,
-                                   mid, last, std::next(firsts, d / 2)...);
+      return parallel_loop_generic_aux(opts, serial_fn, combine_fn,
+                                       mid, last, std::next(firsts, d / 2)...);
     };
 
-    ito::thread<retval_t> th(recur_fn_left);
+    ito::thread<retval_t> th(ito::with_callback,
+                             [](bool serialized) { if (!serialized) ori::release(); },
+                             recur_fn_left);
     if (!th.serialized()) {
       ori::acquire();
     }
 
     if constexpr(std::is_void_v<retval_t>) {
       recur_fn_right();
+
+      if (!th.serialized()) {
+        ori::release();
+      }
+
       th.join();
 
-      ori::acquire();
+      if (!th.serialized()) {
+        ori::acquire();
+      }
     } else {
       auto ret2 = recur_fn_right();
+
+      if (!th.serialized()) {
+        ori::release();
+      }
+
       auto ret1 = th.join();
 
-      ori::acquire();
+      if (!th.serialized()) {
+        ori::acquire();
+      }
 
       return combine_fn(ret1, ret2);
     }

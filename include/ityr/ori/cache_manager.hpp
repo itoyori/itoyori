@@ -381,6 +381,14 @@ private:
     }
   }
 
+  void writeback_begin() {
+    for (auto& cb : dirty_cache_blocks_) {
+      if (!cb->dirty_regions.empty()) {
+        writeback_begin(*cb);
+      }
+    }
+  }
+
   void writeback_begin(cache_block& cb) {
     if (cb.writeback_epoch > writeback_epoch_) {
       // MPI_Put has been already started on this cache block.
@@ -411,14 +419,6 @@ private:
     cb.writeback_epoch = writeback_epoch_ + 1;
 
     writing_back_wins_.push_back(cb.win);
-  }
-
-  void writeback_begin() {
-    for (auto& cb : dirty_cache_blocks_) {
-      if (!cb->dirty_regions.empty()) {
-        writeback_begin(*cb);
-      }
-    }
   }
 
   void writeback_complete() {

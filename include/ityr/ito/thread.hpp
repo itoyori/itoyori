@@ -7,6 +7,9 @@
 
 namespace ityr::ito {
 
+struct with_callback_t {};
+inline constexpr with_callback_t with_callback;
+
 template <typename T>
 class thread {
   // If the return value is void, set `no_retval_t` as the return type for the internal of the scheduler
@@ -17,6 +20,10 @@ public:
   template <typename Fn, typename... Args>
   thread(Fn&& fn, Args&&... args) {
     fork(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  }
+  template <typename OnDieCallback, typename Fn, typename... Args>
+  thread(with_callback_t, OnDieCallback&& on_die_cb, Fn&& fn, Args&&... args) {
+    fork(with_callback, std::forward<OnDieCallback>(on_die_cb), std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   thread(const thread&) = delete;
@@ -34,16 +41,25 @@ public:
   void fork(Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
-    handler_ = w.sched().template fork<sched_retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    w.sched().fork(handler_, [](bool){},
+                   std::forward<Fn>(fn), std::forward<Args>(args)...);
+  }
+
+  template <typename OnDieCallback, typename Fn, typename... Args>
+  void fork(with_callback_t, OnDieCallback&& on_die_cb, Fn&& fn, Args&&... args) {
+    auto& w = worker::instance::get();
+    ITYR_CHECK(!w.is_spmd());
+    w.sched().fork(handler_, std::forward<OnDieCallback>(on_die_cb),
+                   std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   T join() {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     if constexpr (std::is_void_v<T>) {
-      w.sched().template join(handler_);
+      w.sched().join(handler_);
     } else {
-      return w.sched().template join(handler_);
+      return w.sched().join(handler_);
     }
   }
 

@@ -77,13 +77,13 @@ public:
     return retval;
   }
 
-  template <typename T, typename Fn, typename... Args>
-  thread_handler<T> fork(Fn&& fn, Args&&... args) {
+  template <typename T, typename OnDieCallback, typename Fn, typename... Args>
+  void fork(thread_handler<T>& th, OnDieCallback&& on_die_cb, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
-    thread_handler<T> th;
     th.state = ts;
+    th.serialized = false;
 
     suspend([&, ts, fn, args...](context_frame* cf) {
       common::verbose("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
@@ -99,7 +99,7 @@ public:
       common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
       common::verbose("Thread %p is completed", ts);
 
-      on_die(ts, retval);
+      on_die(ts, retval, std::forward<OnDieCallback>(on_die_cb));
 
       common::verbose("Thread %p is serialized (fast path)", ts);
 
@@ -120,7 +120,6 @@ public:
     } else {
       common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
     }
-    return th;
   }
 
   template <typename T>
@@ -217,10 +216,14 @@ private:
     return retval;
   }
 
-  template <typename T>
-  void on_die(thread_state<T>* ts, const T& retval) {
+  template <typename T, typename OnDieCallback>
+  void on_die(thread_state<T>* ts, const T& retval, OnDieCallback&& on_die_cb) {
     auto qe = wsq_.pop();
-    if (!qe.has_value()) {
+    bool serialized = qe.has_value();
+
+    std::forward<OnDieCallback>(on_die_cb)(serialized);
+
+    if (!serialized) {
       if constexpr (!std::is_same_v<T, no_retval_t>) {
         remote_put_value(thread_state_allocator_, retval, &ts->retval);
       }
@@ -397,9 +400,10 @@ public:
     return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
-  template <typename T, typename Fn, typename... Args>
-  thread_handler<T> fork(Fn&& fn, Args&&... args) {
-    return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  template <typename T, typename OnDieCallback, typename Fn, typename... Args>
+  void fork(thread_handler<T>& th, OnDieCallback&& on_die_cb, Fn&& fn, Args&&... args) {
+    th = invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    std::forward<OnDieCallback>(on_die_cb)(true);
   }
 
   template <typename T>
