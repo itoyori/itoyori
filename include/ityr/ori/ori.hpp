@@ -62,6 +62,20 @@ inline void free(global_ptr<T> ptr, std::size_t count) {
   core::instance::get().free(ptr.raw_ptr(), count * sizeof(T));
 }
 
+template <typename ConstT, typename T>
+inline void get(global_ptr<ConstT> from_ptr, T* to_ptr, std::size_t count) {
+  static_assert(std::is_same_v<std::remove_const_t<ConstT>, T>,
+                "from_ptr must be of the same type as to_ptr ignoring const");
+  static_assert(std::is_trivially_copyable_v<T>, "GET requires trivially copyable types");
+  core::instance::get().get(from_ptr.raw_ptr(), to_ptr, count * sizeof(T));
+}
+
+template <typename T>
+inline void put(const T* from_ptr, global_ptr<T> to_ptr, std::size_t count) {
+  static_assert(std::is_trivially_copyable_v<T>, "PUT requires trivially copyable types");
+  core::instance::get().put(from_ptr, to_ptr.raw_ptr(), count * sizeof(T));
+}
+
 template <typename T>
 inline const T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_t) {
   core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::read);
@@ -130,7 +144,7 @@ template <typename T1, typename Mode1,
           typename T3, typename Mode3, typename Fn>
 inline auto with_checkout(global_ptr<T1> ptr1, std::size_t count1, Mode1,
                           global_ptr<T2> ptr2, std::size_t count2, Mode2,
-                          global_ptr<T2> ptr3, std::size_t count3, Mode3, Fn&& f) {
+                          global_ptr<T3> ptr3, std::size_t count3, Mode3, Fn&& f) {
   return with_checkout(ptr1, count1, Mode1{}, [&](auto&& p1) {
     return with_checkout(ptr2, count2, Mode2{}, [&](auto&& p2) {
       return with_checkout(ptr3, count3, Mode3{}, [&](auto&& p3) {

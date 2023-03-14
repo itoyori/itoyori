@@ -104,6 +104,32 @@ public:
     }
   }
 
+  void get(const void* from_addr, void* to_addr, std::size_t size) {
+    // TODO: support get/put for data larger than the cache size
+    if (size <= BlockSize) {
+      // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
+      checkout_impl<mode::read_t, false>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
+      std::memcpy(to_addr, from_addr, size);
+    } else {
+      checkout_impl<mode::read_t, true>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
+      std::memcpy(to_addr, from_addr, size);
+      checkin_impl<mode::read_t, true>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
+    }
+  }
+
+  void put(const void* from_addr, void* to_addr, std::size_t size) {
+    if (size <= BlockSize) {
+      // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
+      checkout_impl<mode::write_t, false>(reinterpret_cast<std::byte*>(to_addr), size);
+      std::memcpy(to_addr, from_addr, size);
+      checkin_impl<mode::write_t, false>(reinterpret_cast<std::byte*>(to_addr), size);
+    } else {
+      checkout_impl<mode::write_t, true>(reinterpret_cast<std::byte*>(to_addr), size);
+      std::memcpy(to_addr, from_addr, size);
+      checkin_impl<mode::write_t, true>(reinterpret_cast<std::byte*>(to_addr), size);
+    }
+  }
+
   template <typename Mode>
   void checkout(void* addr, std::size_t size, Mode) {
     static_assert(!std::is_same_v<Mode, mode::no_access_t>);
@@ -111,12 +137,7 @@ public:
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
-    constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
-    if (noncoll_allocator_.has(addr)) {
-      checkout_noncoll<skip_fetch, true>(reinterpret_cast<std::byte*>(addr), size);
-    } else {
-      checkout_coll<skip_fetch, true>(reinterpret_cast<std::byte*>(addr), size);
-    }
+    checkout_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
 
   template <typename Mode>
@@ -126,12 +147,7 @@ public:
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
-    constexpr bool register_dirty = !std::is_same_v<Mode, mode::read_t>;
-    if (noncoll_allocator_.has(addr)) {
-      checkin_noncoll<register_dirty, true>(reinterpret_cast<std::byte*>(addr), size);
-    } else {
-      checkin_coll<register_dirty, true>(reinterpret_cast<std::byte*>(addr), size);
-    }
+    checkin_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
 
   void release() {
@@ -233,6 +249,16 @@ private:
     });
   }
 
+  template <typename Mode, bool IncrementRef>
+  void checkout_impl(std::byte* addr, std::size_t size) {
+    constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
+    if (noncoll_allocator_.has(addr)) {
+      checkout_noncoll<skip_fetch, IncrementRef>(addr, size);
+    } else {
+      checkout_coll<skip_fetch, IncrementRef>(addr, size);
+    }
+  }
+
   template <bool SkipFetch, bool IncrementRef>
   void checkout_coll(std::byte* addr, std::size_t size) {
     if (home_manager_.template checkout_fast<IncrementRef>(addr, size)) {
@@ -296,6 +322,16 @@ private:
     });
 
     cache_manager_.checkout_complete(noncoll_allocator_.win());
+  }
+
+  template <typename Mode, bool DecrementRef>
+  void checkin_impl(std::byte* addr, std::size_t size) {
+    constexpr bool register_dirty = !std::is_same_v<Mode, mode::read_t>;
+    if (noncoll_allocator_.has(addr)) {
+      checkin_noncoll<register_dirty, true>(addr, size);
+    } else {
+      checkin_coll<register_dirty, true>(addr, size);
+    }
   }
 
   template <bool RegisterDirty, bool DecrementRef>
@@ -456,6 +492,86 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc and free (noncollective)") {
       c.free(ptrs_recv[i], std::size_t(1) << i);
     }
   }
+}
+
+ITYR_TEST_CASE("[ityr::ori::core] get/put") {
+  common::singleton_initializer<common::topology::instance> topo;
+  constexpr block_size_t bs = 65536;
+  int n_cb = 16;
+  core<bs> c(n_cb * bs, bs / 4);
+
+  auto my_rank = common::topology::my_rank();
+
+  std::size_t n = n_cb * bs / sizeof(std::size_t);
+
+  std::size_t* ps[2];
+  ps[0] = reinterpret_cast<std::size_t*>(c.malloc_coll<mem_mapper::block >(n * sizeof(std::size_t)));
+  ps[1] = reinterpret_cast<std::size_t*>(c.malloc_coll<mem_mapper::cyclic>(n * sizeof(std::size_t)));
+
+  std::size_t* buf = new std::size_t[n + 2];
+
+  auto barrier = [&]() {
+    c.release();
+    common::mpi_barrier(common::topology::mpicomm());
+    c.acquire();
+  };
+
+  for (auto p : ps) {
+    if (my_rank == 0) {
+      for (std::size_t i = 0; i < n; i++) {
+        buf[i] = i;
+      }
+      c.put(buf, p, n * sizeof(std::size_t));
+    }
+
+    barrier();
+
+    ITYR_SUBCASE("get the entire array") {
+      std::size_t special = 417;
+      buf[0] = buf[n + 1] = special;
+
+      c.get(p, buf + 1, n * sizeof(std::size_t));
+
+      for (std::size_t i = 0; i < n; i++) {
+        ITYR_CHECK(buf[i + 1] == i);
+      }
+      ITYR_CHECK(buf[0]     == special);
+      ITYR_CHECK(buf[n + 1] == special);
+    }
+
+    ITYR_SUBCASE("get the partial array") {
+      std::size_t ib = n / 5 * 2;
+      std::size_t ie = n / 5 * 4;
+      std::size_t s = ie - ib;
+
+      std::size_t special = 417;
+      buf[0] = buf[s + 1] = special;
+
+      c.get(p + ib, buf + 1, s * sizeof(std::size_t));
+
+      for (std::size_t i = 0; i < s; i++) {
+        ITYR_CHECK(buf[i + 1] == i + ib);
+      }
+      ITYR_CHECK(buf[0]     == special);
+      ITYR_CHECK(buf[s + 1] == special);
+    }
+
+    ITYR_SUBCASE("get each element") {
+      for (std::size_t i = 0; i < n; i++) {
+        std::size_t special = 417;
+        buf[0] = buf[2] = special;
+        c.get(p + i, &buf[1], sizeof(std::size_t));
+        ITYR_CHECK(buf[0] == special);
+        ITYR_CHECK(buf[1] == i);
+        ITYR_CHECK(buf[2] == special);
+      }
+    }
+  }
+
+  delete[] buf;
+
+  c.free_coll(ps[0]);
+  c.free_coll(ps[1]);
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
