@@ -19,53 +19,86 @@ inline bool operator!=(no_retval_t, no_retval_t) noexcept {
   return false;
 }
 
-template <typename Fn, typename... Args, typename... Rest>
-inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest);
-
-inline auto parallel_invoke_aux() {
-  return std::make_tuple();
-}
-
-template <typename Fn>
-inline auto parallel_invoke_aux(Fn&& fn) {
-  // insert an empty arg tuple
-  return parallel_invoke_aux(std::forward<Fn>(fn),
-                             std::make_tuple());
-}
-
-template <typename Fn1, typename Fn2, typename... Rest>
-inline auto parallel_invoke_aux(Fn1&& fn1, Fn2&& fn2, Rest&&... rest) {
-  // insert an empty arg tuple
-  return parallel_invoke_aux(std::forward<Fn1>(fn1),
-                             std::make_tuple(),
-                             std::forward<Fn2>(fn2),
-                             std::forward<Rest>(rest)...);
-}
-
-template <typename Fn, typename... Args, typename... Rest>
-inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest) {
-  using retval_t = std::invoke_result_t<Fn, Args...>;
-
-  ito::thread<retval_t> th(std::apply<const Fn&, const std::tuple<Args...>&>,
-                           std::forward<Fn>(fn),
-                           std::forward<std::tuple<Args...>>(args));
-
-  auto ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
-
-  if constexpr (std::is_void_v<retval_t>) {
-    th.join();
-    return std::tuple_cat(std::make_tuple(no_retval), ret_rest);
-  } else {
-    auto ret = th.join();
-    return std::tuple_cat(std::make_tuple(ret), ret_rest);
+struct parallel_invoke_state {
+  inline auto parallel_invoke_aux() {
+    return std::make_tuple();
   }
-}
+
+  template <typename Fn>
+  inline auto parallel_invoke_aux(Fn&& fn) {
+    // insert an empty arg tuple
+    return parallel_invoke_aux(std::forward<Fn>(fn),
+                               std::make_tuple());
+  }
+
+  template <typename Fn1, typename Fn2, typename... Rest>
+  inline auto parallel_invoke_aux(Fn1&& fn1, Fn2&& fn2, Rest&&... rest) {
+    // insert an empty arg tuple
+    return parallel_invoke_aux(std::forward<Fn1>(fn1),
+                               std::make_tuple(),
+                               std::forward<Fn2>(fn2),
+                               std::forward<Rest>(rest)...);
+  }
+
+  template <typename Fn, typename... Args, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args) {
+    using retval_t = std::invoke_result_t<Fn, Args...>;
+
+    if constexpr (std::is_void_v<retval_t>) {
+      std::apply(std::forward<Fn>(fn),
+                 std::forward<std::tuple<Args...>>(args));
+      return std::make_tuple(no_retval);
+    } else {
+      auto ret = std::apply(std::forward<Fn>(fn),
+                            std::forward<std::tuple<Args...>>(args));
+      return std::make_tuple(ret);
+    }
+  }
+
+  template <typename Fn, typename... Args, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest) {
+    using retval_t = std::invoke_result_t<Fn, Args...>;
+
+    ito::thread<retval_t> th(ito::with_callback,
+                             [](bool serialized) { if (!serialized) ori::release(); },
+                             std::apply<const Fn&, const std::tuple<Args...>&>,
+                             std::forward<Fn>(fn),
+                             std::forward<std::tuple<Args...>>(args));
+    if (!th.serialized()) {
+      ori::acquire();
+    }
+    all_serialized &= th.serialized();
+
+    auto ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
+
+    if constexpr (std::is_void_v<retval_t>) {
+      if (!th.serialized()) {
+        ori::release();
+      }
+
+      th.join();
+      return std::tuple_cat(std::make_tuple(no_retval), ret_rest);
+    } else {
+      if (!th.serialized()) {
+        ori::release();
+      }
+
+      auto ret = th.join();
+      return std::tuple_cat(std::make_tuple(ret), ret_rest);
+    }
+  }
+
+  bool all_serialized = true;
+};
 
 template <typename... Args>
 inline auto parallel_invoke(Args&&... args) {
+  parallel_invoke_state s;
   ori::release();
-  auto ret = parallel_invoke_aux(std::forward<Args>(args)...);
-  ori::acquire();
+  auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
+  if (!s.all_serialized) {
+    ori::acquire();
+  }
   return ret;
 }
 
