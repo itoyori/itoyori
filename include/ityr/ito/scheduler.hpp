@@ -210,9 +210,9 @@ private:
   T invoke_fn(Fn&& fn, Args&&... args) {
     T retval;
     if constexpr (!std::is_same_v<T, no_retval_t>) {
-      retval = fn(args...);
+      retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
     } else {
-      fn(args...);
+      std::forward<Fn>(fn)(std::forward<Args>(args)...);
     }
     return retval;
   }
@@ -420,7 +420,7 @@ private:
   T invoke_fn(Fn&& fn, Args&&... args) {
     T retval;
     if constexpr (!std::is_same_v<T, no_retval_t>) {
-      retval = fn(args...);
+      retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
     } else {
       fn(args...);
     }

@@ -10,6 +10,7 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
+#include "ityr/pattern/parallel_invoke.hpp"
 
 namespace ityr {
 

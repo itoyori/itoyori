@@ -9,6 +9,7 @@
 #include <iostream>
 #include <sstream>
 #include <optional>
+#include <tuple>
 
 #include "ityr/common/options.hpp"
 

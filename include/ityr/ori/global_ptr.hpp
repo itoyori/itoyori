@@ -88,57 +88,57 @@ private:
 };
 
 template <typename T>
-bool operator==(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator==(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() == p2.raw_ptr();
 }
 
 template <typename T>
-bool operator==(const global_ptr<T>& p, std::nullptr_t) noexcept {
+inline bool operator==(const global_ptr<T>& p, std::nullptr_t) noexcept {
   return !p;
 }
 
 template <typename T>
-bool operator==(std::nullptr_t, const global_ptr<T>& p) noexcept {
+inline bool operator==(std::nullptr_t, const global_ptr<T>& p) noexcept {
   return !p;
 }
 
 template <typename T>
-bool operator!=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator!=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() != p2.raw_ptr();
 }
 
 template <typename T>
-bool operator!=(const global_ptr<T>& p, std::nullptr_t) noexcept {
+inline bool operator!=(const global_ptr<T>& p, std::nullptr_t) noexcept {
   return bool(p);
 }
 
 template <typename T>
-bool operator!=(std::nullptr_t, const global_ptr<T>& p) noexcept {
+inline bool operator!=(std::nullptr_t, const global_ptr<T>& p) noexcept {
   return bool(p);
 }
 
 template <typename T>
-bool operator<(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator<(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() < p2.raw_ptr();
 }
 
 template <typename T>
-bool operator>(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator>(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() > p2.raw_ptr();
 }
 
 template <typename T>
-bool operator<=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator<=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() <= p2.raw_ptr();
 }
 
 template <typename T>
-bool operator>=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline bool operator>=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() >= p2.raw_ptr();
 }
 
 template <typename T>
-void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
+inline void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
   p1.swap(p2);
 }
 
