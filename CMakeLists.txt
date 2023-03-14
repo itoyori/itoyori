@@ -48,7 +48,7 @@ include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
-option(MAX_VERBOSE_LEVEL "Max verbose level for logging output" 0)
+set(MAX_VERBOSE_LEVEL 0 CACHE STRING "Max verbose level for logging output")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DITYR_MAX_VERBOSE_LEVEL=${MAX_VERBOSE_LEVEL}")
 
 include(CTest)
