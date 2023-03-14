@@ -34,7 +34,7 @@ inline void parallel_for_each(parallel_loop_options opts,
                               Op                    op) {
   auto serial_fn = [=](const serial_loop_options& opts_,
                        ForwardIterator            first_,
-                       ForwardIterator            last_) {
+                       ForwardIterator            last_) mutable {
     serial_for_each(opts_, first_, last_, op);
   };
   parallel_loop_generic(opts, serial_fn, []{}, first, last);
@@ -57,7 +57,7 @@ inline void parallel_for_each(parallel_loop_options opts,
   auto serial_fn = [=](const serial_loop_options& opts_,
                        ForwardIterator1           first1_,
                        ForwardIterator1           last1_,
-                       ForwardIterator2           first2_) {
+                       ForwardIterator2           first2_) mutable {
     serial_for_each(opts_, first1_, last1_, first2_, op);
   };
   parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first2);
@@ -175,7 +175,7 @@ inline T parallel_reduce_aux(parallel_loop_options opts,
                              TransformOp           transform) {
   auto serial_fn = [=](const serial_loop_options& opts_,
                        ForwardIterator            first_,
-                       ForwardIterator            last_) {
+                       ForwardIterator            last_) mutable {
     T acc = identity;
     serial_for_each(opts_, first_, last_, [&](const auto& v) {
       acc = reduce(acc, transform(v));
