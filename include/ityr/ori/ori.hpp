@@ -53,6 +53,11 @@ inline global_ptr<T> malloc_coll(std::size_t count, MemMapperArgs&&... mmargs) {
 }
 
 template <typename T>
+inline global_ptr<T> malloc(std::size_t count) {
+  return global_ptr<T>(reinterpret_cast<T*>(core::instance::get().malloc(count * sizeof(T))));
+}
+
+template <typename T>
 inline void free_coll(global_ptr<T> ptr) {
   core::instance::get().free_coll(ptr.raw_ptr());
 }

@@ -7,6 +7,22 @@
 
 namespace ityr {
 
+template <typename T, typename Mode, typename Fn>
+void with_checkout_iter(global_iterator<T, Mode> begin,
+                        std::size_t              count,
+                        Fn&&                     fn) {
+  ori::with_checkout(&*begin, count, Mode{}, std::forward<Fn>(fn));
+}
+
+template <typename T, typename Fn>
+void with_checkout_iter(global_move_iterator<T> begin,
+                        std::size_t             count,
+                        Fn&&                    fn) {
+  ori::with_checkout(&*begin, count, ori::mode::read_write, [&](auto&& p) {
+    std::forward<Fn>(fn)(std::make_move_iterator(std::forward<decltype(p)>(p)));
+  });
+}
+
 struct serial_loop_options {
   std::size_t checkout_count = 1;
 };
@@ -19,86 +35,207 @@ inline void serial_for_each(ForwardIterator first,
 }
 
 template <typename ForwardIterator, typename Fn>
-inline void serial_for_each(const serial_loop_options&,
-                            ForwardIterator first,
-                            ForwardIterator last,
-                            Fn              fn) {
-  for (; first != last; ++first) {
-    fn(*first);
-  }
-}
-
-template <typename T, typename Mode, typename Fn>
 inline void serial_for_each(const serial_loop_options& opts,
-                            global_iterator<T, Mode>   first,
-                            global_iterator<T, Mode>   last,
+                            ForwardIterator            first,
+                            ForwardIterator            last,
                             Fn                         fn) {
-  if constexpr (global_iterator<T, Mode>::auto_checkout) {
-    auto n = std::distance(first, last);
-    for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-      auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-      ori::with_checkout(&*std::next(first, d), n_, Mode{}, [&](auto&& it) {
-        serial_for_each(opts, it, std::next(it, n_), fn);
-      });
+  if constexpr (is_global_iterator_v<ForwardIterator>) {
+    if constexpr (ForwardIterator::auto_checkout) {
+      auto n = std::distance(first, last);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first, d), n_, [&](auto&& it) {
+          serial_for_each(opts, it, std::next(it, n_), fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, &*first, &*last, fn);
     }
   } else {
-    // &*: convert global_iterator -> global_ref -> global_ptr
-    serial_for_each(opts, &*first, &*last, fn);
+    for (; first != last; ++first) {
+      fn(*first);
+    }
   }
 }
 
 template <typename ForwardIterator1, typename ForwardIterator2, typename Fn>
-inline void serial_for_each(const serial_loop_options&,
-                            ForwardIterator1 first1,
+inline void serial_for_each(ForwardIterator1 first1,
                             ForwardIterator1 last1,
                             ForwardIterator2 first2,
                             Fn               fn) {
-  for (; first1 != last1; ++first1, ++first2) {
-    fn(*first1, *first2);
-  }
+  serial_for_each(serial_loop_options{}, first1, last1, first2, fn);
 }
 
-template <typename T1, typename Mode1, typename ForwardIterator2, typename Fn>
-inline void serial_for_each(const serial_loop_options& opts,
-                            global_iterator<T1, Mode1> first1,
-                            global_iterator<T1, Mode1> last1,
-                            ForwardIterator2           first2,
-                            Fn                         fn) {
-  if constexpr (global_iterator<T1, Mode1>::auto_checkout) {
-    auto n = std::distance(first1, last1);
-    for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-      auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-      ori::with_checkout(&*std::next(first1, d), n_, Mode1{}, [&](auto&& it1) {
-        auto it2 = std::next(first2, d);
-        serial_for_each(opts, it1, std::next(it1, n_), it2, fn);
-      });
-    }
-  } else {
-    // &*: convert global_iterator -> global_ref -> global_ptr
-    serial_for_each(opts, &*first1, &*last1, first2, fn);
-  }
-}
-
-template <typename ForwardIterator1, typename T2, typename Mode2, typename Fn,
-          std::enable_if_t<not is_global_iterator_v<ForwardIterator1>, std::nullptr_t> = nullptr>
+template <typename ForwardIterator1, typename ForwardIterator2, typename Fn>
 inline void serial_for_each(const serial_loop_options& opts,
                             ForwardIterator1           first1,
                             ForwardIterator1           last1,
-                            global_iterator<T2, Mode2> first2,
+                            ForwardIterator2           first2,
                             Fn                         fn) {
-  if constexpr (global_iterator<T2, Mode2>::auto_checkout) {
-    auto n = std::distance(first1, last1);
-    for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-      auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-      ori::with_checkout(&*std::next(first2, d), n_, Mode2{}, [&](auto&& it2) {
-        auto it1 = std::next(first1, d);
-        serial_for_each(opts, it1, std::next(it1, n_), it2, fn);
-      });
+  if constexpr (is_global_iterator_v<ForwardIterator1>) {
+    if constexpr (ForwardIterator1::auto_checkout) {
+      auto n = std::distance(first1, last1);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first1, d), n_, [&](auto&& it1) {
+          auto it2 = std::next(first2, d);
+          serial_for_each(opts, it1, std::next(it1, n_), it2, fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, &*first1, &*last1, first2, fn);
+    }
+  } else if constexpr (is_global_iterator_v<ForwardIterator2>) {
+    if constexpr (ForwardIterator2::auto_checkout) {
+      auto n = std::distance(first1, last1);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first2, d), n_, [&](auto&& it2) {
+          auto it1 = std::next(first1, d);
+          serial_for_each(opts, it1, std::next(it1, n_), it2, fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, first1, last1, &*first2, fn);
     }
   } else {
-    // &*: convert global_iterator -> global_ref -> global_ptr
-    serial_for_each(opts, first1, last1, &*first2, fn);
+    for (; first1 != last1; ++first1, ++first2) {
+      fn(*first1, *first2);
+    }
   }
+}
+
+ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
+  class move_only_t {
+  public:
+    move_only_t() {}
+    move_only_t(const int v) : value_(v) {}
+
+    int value() const { return value_; }
+
+    move_only_t(const move_only_t&) = delete;
+    move_only_t& operator=(const move_only_t&) = delete;
+
+    move_only_t(move_only_t&& mo) : value_(mo.value_) {
+      mo.value_ = -1;
+    }
+    move_only_t& operator=(move_only_t&& mo) {
+      value_ = mo.value_;
+      mo.value_ = -1;
+      return *this;
+    }
+
+  private:
+    int value_ = -1;
+  };
+
+  ori::init();
+
+  int n = 100000;
+
+  ITYR_SUBCASE("without global_ptr") {
+    ITYR_SUBCASE("count iterator") {
+      int count = 0;
+      serial_for_each(count_iterator<int>(0),
+                      count_iterator<int>(n),
+                      [&](int i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("vector copy") {
+      std::vector<int> mos1(count_iterator<int>(0),
+                            count_iterator<int>(n));
+
+      std::vector<int> mos2;
+      serial_for_each(mos1.begin(), mos1.end(),
+                      std::back_inserter(mos2),
+                      [&](int i, auto&& out) { out = i; });
+
+      int count = 0;
+      serial_for_each(mos2.begin(), mos2.end(),
+                      [&](int i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("move iterator with vector") {
+      std::vector<move_only_t> mos1(count_iterator<int>(0),
+                                    count_iterator<int>(n));
+
+      std::vector<move_only_t> mos2;
+      serial_for_each(std::make_move_iterator(mos1.begin()),
+                      std::make_move_iterator(mos1.end()),
+                      std::back_inserter(mos2),
+                      [&](move_only_t&& in, auto&& out) { out = std::move(in); });
+
+      int count = 0;
+      serial_for_each(mos2.begin(), mos2.end(),
+                      [&](move_only_t& mo) { count += mo.value(); });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+
+      serial_for_each(mos1.begin(), mos1.end(),
+                      [&](move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+    }
+  }
+
+  ITYR_SUBCASE("with global_ptr") {
+    ori::global_ptr<int> gp = ori::malloc<int>(n);
+
+    serial_for_each(count_iterator<int>(0),
+                    count_iterator<int>(n),
+                    make_global_iterator(gp, ori::mode::write),
+                    [&](int i, int& out) { new (&out) int(i); });
+
+    ITYR_SUBCASE("read array without global_iterator") {
+      int count = 0;
+      serial_for_each(gp,
+                      gp + n,
+                      [&](ori::global_ref<int> gr) { count += gr; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("read array with global_iterator") {
+      int count = 0;
+      serial_for_each(make_global_iterator(gp    , ori::mode::read),
+                      make_global_iterator(gp + n, ori::mode::read),
+                      [&](int i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("move iterator") {
+      ori::global_ptr<move_only_t> mos1 = ori::malloc<move_only_t>(n);
+      ori::global_ptr<move_only_t> mos2 = ori::malloc<move_only_t>(n);
+
+      serial_for_each(make_global_iterator(gp    , ori::mode::read),
+                      make_global_iterator(gp + n, ori::mode::read),
+                      make_global_iterator(mos1  , ori::mode::write),
+                      [&](int i, move_only_t& out) { new (&out) move_only_t(i); });
+
+      serial_for_each(make_move_iterator(mos1),
+                      make_move_iterator(mos1 + n),
+                      make_global_iterator(mos2, ori::mode::write),
+                      [&](move_only_t&& in, move_only_t& out) { new (&out) move_only_t(std::move(in)); });
+
+      int count = 0;
+      serial_for_each(make_global_iterator(mos2    , ori::mode::read),
+                      make_global_iterator(mos2 + n, ori::mode::read),
+                      [&](const move_only_t& mo) { count += mo.value(); });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+
+      serial_for_each(make_global_iterator(mos1    , ori::mode::read),
+                      make_global_iterator(mos1 + n, ori::mode::read),
+                      [&](const move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+
+      ori::free(mos1, n);
+      ori::free(mos2, n);
+    }
+
+    ori::free(gp, n);
+  }
+
+  ori::fini();
 }
 
 }
