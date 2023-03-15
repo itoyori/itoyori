@@ -22,6 +22,8 @@ public:
     : home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
       cache_manager_(cache_size, sub_block_size) {}
 
+  static constexpr block_size_t block_size = BlockSize;
+
   void* malloc_coll(std::size_t size) { return malloc_coll<default_mem_mapper>(size); }
 
   template <template <block_size_t> typename MemMapper, typename... MemMapperArgs>

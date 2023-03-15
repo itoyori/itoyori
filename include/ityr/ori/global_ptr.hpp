@@ -6,6 +6,9 @@
 #include <unistd.h>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/topology.hpp"
+#include "ityr/ori/util.hpp"
+#include "ityr/ori/core.hpp"
 
 namespace ityr::ori {
 
@@ -144,13 +147,96 @@ inline void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
 
 template <typename T>
 class global_ref {
+  using this_t = global_ref<T>;
+
 public:
   global_ref(const global_ptr<T>& p) : ptr_(p) {}
+  global_ref(const this_t& r) : ptr_(r.ptr_) {}
+
   global_ptr<T> operator&() const noexcept { return ptr_; }
 
+  operator T() const {
+    std::remove_const_t<T> ret;
+    core::instance::get().get(ptr_.raw_ptr(), &ret, sizeof(T));
+    return ret;
+  }
+
+  this_t& operator=(const T& v) {
+    with_read_write([&](T& this_v) { this_v = v; });
+    return *this;
+  }
+
+  this_t& operator=(T&& v) {
+    with_read_write([&](T& this_v) { this_v = std::move(v); });
+    return *this;
+  }
+
+  this_t& operator=(const this_t& r) {
+    T v = r;
+    return (*this = v);
+  }
+
+  this_t& operator=(this_t&& r) {
+    return (*this = T(r));
+  }
+
+  this_t& operator+=(const T& v) {
+    with_read_write([&](T& this_v) { this_v += v; });
+    return *this;
+  }
+
+  this_t& operator-=(const T& v) {
+    with_read_write([&](T& this_v) { this_v -= v; });
+    return *this;
+  }
+
+  this_t& operator++() {
+    with_read_write([&](T& this_v) { ++this_v; });
+    return *this;
+  }
+
+  this_t& operator--() {
+    with_read_write([&](T& this_v) { --this_v; });
+    return *this;
+  }
+
+  T operator++(int) {
+    T ret;
+    with_read_write([&](T& this_v) { ret = this_v++; });
+    return ret;
+  }
+
+  T operator--(int) {
+    T ret;
+    with_read_write([&](T& this_v) { ret = this_v--; });
+    return ret;
+  }
+
+  void swap(this_t r) {
+    PCAS_CHECK(&r != ptr_);
+    with_read_write([&](T& this_v) {
+      r.with_read_write([&](T& v) {
+        using std::swap;
+        swap(this_v, v);
+      });
+    });
+  }
+
 private:
+  template <typename Fn>
+  void with_read_write(Fn&& f) {
+    core::instance::get().checkout(ptr_.raw_ptr(), sizeof(T), mode::read_write);
+    std::forward<Fn>(f)(*ptr_.raw_ptr());
+    core::instance::get().checkin(ptr_.raw_ptr(), sizeof(T), mode::read_write);
+  }
+
   global_ptr<T> ptr_;
 };
+
+template <typename T>
+inline void swap(global_ref<T> r1, global_ref<T> r2) {
+  r1.swap(r2);
+}
 
 template <typename T, typename MemberT>
 inline global_ref<std::remove_extent_t<MemberT>>
@@ -288,6 +374,55 @@ ITYR_TEST_CASE("[ityr::ori::global_ptr] global pointer manipulation") {
     ITYR_CHECK(p1 == p1_copy);
     ITYR_CHECK(p2 == p2_copy);
   }
+}
+
+ITYR_TEST_CASE("[ityr::ori::global_ptr] global reference") {
+  common::singleton_initializer<common::topology::instance> topo_;
+  constexpr block_size_t bs = core::instance::instance_type::block_size;
+  int n_cb = 16;
+  common::singleton_initializer<core::instance> core_(n_cb * bs, bs / 4);
+
+  auto my_rank = common::topology::my_rank();
+  auto n_ranks = common::topology::n_ranks();
+  auto mpicomm = common::topology::mpicomm();
+
+  void* p_local = core::instance::get().malloc(sizeof(int));
+  global_ptr<int> gp_local(reinterpret_cast<int*>(p_local));
+  *gp_local = 0;
+
+  core::instance::get().release();
+  common::mpi_barrier(mpicomm);
+  core::instance::get().acquire();
+
+  void* p = p_local;
+  for (int i = 0; i < n_ranks; i++) {
+    core::instance::get().release();
+
+    auto req_send = common::mpi_isend(&p, 1, (n_ranks + my_rank + 1) % n_ranks, i, mpicomm);
+    auto req_recv = common::mpi_irecv(&p, 1, (n_ranks + my_rank - 1) % n_ranks, i, mpicomm);
+    common::mpi_wait(req_send);
+    common::mpi_wait(req_recv);
+
+    core::instance::get().acquire();
+
+    global_ptr<int> gp(reinterpret_cast<int*>(p));
+    ITYR_CHECK(*gp == i);
+    gp++;
+    gp--;
+    gp += 2;
+    gp -= 2;
+    *gp = *gp + 3;
+    *gp = *gp - 3;
+    *gp = (*gp * 2) / 2 - 1 + 2;
+  }
+
+  core::instance::get().release();
+  common::mpi_barrier(mpicomm);
+  core::instance::get().acquire();
+
+  ITYR_CHECK(*gp_local == n_ranks);
+
+  core::instance::get().free(p_local, sizeof(int));
 }
 
 }

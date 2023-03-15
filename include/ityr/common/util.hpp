@@ -185,6 +185,8 @@ inline std::size_t get_page_size() {
 template <typename T>
 class singleton {
 public:
+  using instance_type = T;
+
   static auto& get() {
     ITYR_CHECK(initialized());
     return *get_optional();
