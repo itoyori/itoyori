@@ -85,7 +85,7 @@ public:
     th.state = ts;
     th.serialized = false;
 
-    suspend([&, ts, fn, args...](context_frame* cf) {
+    suspend([&, ts, fn, args...](context_frame* cf) mutable {
       common::verbose("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
       std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 
-set(examples fib nqueens)
+set(examples fib nqueens cilksort)
 
 foreach(example IN LISTS examples)
   add_executable(${example}.out ${example}.cpp)

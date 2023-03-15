@@ -3,31 +3,31 @@
 #include <cassert>
 
 #include "ityr/common/util.hpp"
+#include "ityr/ori/ori.hpp"
 
-namespace ityr::common {
+namespace ityr {
 
-// TODO: remove it and use std::span in C++20
 template <typename T>
-class span {
-  using this_t = span<T>;
+class global_span {
+  using this_t = global_span<T>;
 
 public:
   using element_type = T;
   using value_type   = std::remove_cv_t<T>;
   using size_type    = std::size_t;
-  using pointer      = T*;
+  using pointer      = ori::global_ptr<T>;
   using iterator     = pointer;
-  using reference    = T&;
+  using reference    = typename std::iterator_traits<pointer>::reference;
 
-  span() {}
+  global_span() {}
   template <typename ContiguousIterator>
-  span(ContiguousIterator first, size_type n)
+  global_span(ContiguousIterator first, size_type n)
     : ptr_(&(*first)), n_(n) {}
   template <typename ContiguousIterator>
-  span(ContiguousIterator first, ContiguousIterator last)
+  global_span(ContiguousIterator first, ContiguousIterator last)
     : ptr_(&(*first)), n_(last - first) {}
   template <typename U>
-  span(span<U> s) : ptr_(s.data()), n_(s.size() * sizeof(U) / sizeof(T)) {}
+  global_span(global_span<U> s) : ptr_(s.data()), n_(s.size() * sizeof(U) / sizeof(T)) {}
 
   constexpr pointer data() const noexcept { return ptr_; }
   constexpr size_type size() const noexcept { return n_; }
@@ -53,22 +53,22 @@ private:
 };
 
 template <typename T>
-inline constexpr auto data(const span<T>& s) noexcept {
+inline constexpr auto data(const global_span<T>& s) noexcept {
   return s.data();
 }
 
 template <typename T>
-inline constexpr auto size(const span<T>& s) noexcept {
+inline constexpr auto size(const global_span<T>& s) noexcept {
   return s.size();
 }
 
 template <typename T>
-inline constexpr auto begin(const span<T>& s) noexcept {
+inline constexpr auto begin(const global_span<T>& s) noexcept {
   return s.begin();
 }
 
 template <typename T>
-inline constexpr auto end(const span<T>& s) noexcept {
+inline constexpr auto end(const global_span<T>& s) noexcept {
   return s.end();
 }
 

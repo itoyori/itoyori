@@ -39,6 +39,8 @@ void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
 }
 
 int main(int argc, char** argv) {
+  ityr::init();
+
   int opt;
   while ((opt = getopt(argc, argv, "n:r:v:h")) != EOF) {
     switch (opt) {
@@ -56,8 +58,6 @@ int main(int argc, char** argv) {
         show_help_and_exit(argc, argv);
     }
   }
-
-  ityr::init();
 
   if (ityr::is_master()) {
     setlocale(LC_NUMERIC, "en_US.UTF-8");
