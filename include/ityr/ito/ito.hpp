@@ -46,6 +46,11 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
   return w.root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
 }
 
+inline bool is_spmd() {
+  auto& w = worker::instance::get();
+  return w.is_spmd();
+}
+
 ITYR_TEST_CASE("[ityr::ito] fib") {
   init();
 

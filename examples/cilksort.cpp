@@ -77,7 +77,7 @@ auto divide_two(const ityr::global_span<T>& s) {
 }
 
 template <typename T>
-size_t binary_search(ityr::global_span<T> s, const T& v) {
+std::size_t binary_search(ityr::global_span<T> s, const T& v) {
   auto it = std::lower_bound(s.begin(), s.end(), v);
   return it - s.begin();
 }
@@ -269,19 +269,19 @@ int main(int argc, char** argv) {
   ityr::global_span<elem_t> b(b_ptr, n_input);
 
   for (int r = 0; r < n_repeats; r++) {
-    ityr::ito::root_exec([=]{
+    ityr::root_exec([=]{
       fill_array(a);
     });
 
     ityr::profiler_begin();
 
-    auto t0 = ityr::common::clock_gettime_ns();
+    auto t0 = ityr::gettime_ns();
 
-    ityr::ito::root_exec([=]{
-      return cilksort(a, b);
+    ityr::root_exec([=]{
+      cilksort(a, b);
     });
 
-    auto t1 = ityr::common::clock_gettime_ns();
+    auto t1 = ityr::gettime_ns();
 
     ityr::profiler_end();
 
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
     }
 
     if (verify_result) {
-      bool success = ityr::ito::root_exec([=]{
+      bool success = ityr::root_exec([=]{
         return check_sorted(a);
       });
       if (ityr::is_master()) {

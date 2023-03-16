@@ -79,13 +79,13 @@ int main(int argc, char** argv) {
   for (int r = 0; r < n_repeats; r++) {
     ityr::profiler_begin();
 
-    auto t0 = ityr::common::clock_gettime_ns();
+    auto t0 = ityr::gettime_ns();
 
-    result_t result = ityr::ito::root_exec([]{
+    result_t result = ityr::root_exec([]{
       return fib_rec(n_input);
     });
 
-    auto t1 = ityr::common::clock_gettime_ns();
+    auto t1 = ityr::gettime_ns();
 
     ityr::profiler_end();
 
