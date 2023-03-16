@@ -6,9 +6,11 @@
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/logger.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
+#include "ityr/ori/options.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
@@ -25,7 +27,7 @@ public:
       pm_(init_cache_pm()),
       cs_(cache_size / BlockSize, cache_block(this)),
       win_(common::topology::mpicomm(), reinterpret_cast<std::byte*>(vm_.addr()), vm_.size()),
-      max_dirty_cache_blocks_(common::getenv_coll("ITYR_ORI_MAX_DIRTY_CACHE_SIZE", cache_size / 2, common::topology::mpicomm()) / BlockSize) {
+      max_dirty_cache_blocks_(max_dirty_cache_size_option::value() / BlockSize) {
     ITYR_CHECK(cache_size_ > 0);
     ITYR_CHECK(common::is_pow2(cache_size_));
     ITYR_CHECK(cache_size_ % BlockSize == 0);

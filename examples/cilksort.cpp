@@ -245,19 +245,22 @@ int main(int argc, char** argv) {
     setlocale(LC_NUMERIC, "en_US.UTF-8");
     printf("=============================================================\n"
            "[Cilksort]\n"
+           "# of processes:               %d\n"
            "Element size:                 %ld bytes\n"
            "N:                            %ld\n"
-           "# of processes:               %d\n"
            "# of repeats:                 %d\n"
            "Cutoff (cilksort):            %ld\n"
            "Cutoff (cilkmerge):           %ld\n"
            "Verify result:                %d\n"
            "-------------------------------------------------------------\n",
-           sizeof(elem_t), n_input, ityr::n_ranks(), n_repeats,
+           ityr::n_ranks(), sizeof(elem_t), n_input, n_repeats,
            cutoff_sort, cutoff_merge, verify_result);
 
     printf("[Compile Options]\n");
     ityr::print_compile_options();
+    printf("-------------------------------------------------------------\n");
+    printf("[Runtime Options]\n");
+    ityr::print_runtime_options();
     printf("=============================================================\n\n");
     fflush(stdout);
   }

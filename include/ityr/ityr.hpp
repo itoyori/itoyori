@@ -1,12 +1,11 @@
 #pragma once
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
-#include "ityr/common/options.hpp"
 #include "ityr/ito/ito.hpp"
-#include "ityr/ito/options.hpp"
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/root_exec.hpp"
@@ -19,13 +18,15 @@ namespace ityr {
 
 class ityr {
 public:
-  ityr(std::size_t cache_size, std::size_t sub_block_size, MPI_Comm comm)
-    : topo_(comm),
+  ityr(MPI_Comm comm)
+    : mi_(comm),
+      topo_(comm),
       ito_(comm),
-      ori_(cache_size, sub_block_size, comm) {}
+      ori_(comm) {}
 
 private:
   common::mpi_initializer                                    mi_;
+  common::runtime_options                                    opts_;
   common::singleton_initializer<common::topology::instance>  topo_;
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
@@ -35,10 +36,8 @@ private:
 
 using instance = common::singleton<ityr>;
 
-inline void init(std::size_t cache_size     = std::size_t(16) * 1024 * 1024,
-                 std::size_t sub_block_size = std::size_t(4) * 1024,
-                 MPI_Comm comm              = MPI_COMM_WORLD) {
-  instance::init(cache_size, sub_block_size, comm);
+inline void init(MPI_Comm comm = MPI_COMM_WORLD) {
+  instance::init(comm);
 }
 
 inline void fini() {
@@ -80,6 +79,11 @@ inline void profiler_flush() {
 inline void print_compile_options() {
   common::print_compile_options();
   ito::print_compile_options();
+  ori::print_compile_options();
+}
+
+inline void print_runtime_options() {
+  common::print_runtime_options();
 }
 
 }

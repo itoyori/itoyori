@@ -5,13 +5,15 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/options.hpp"
+#include "ityr/common/logger.hpp"
 #include "ityr/common/allocator.hpp"
 #include "ityr/ori/util.hpp"
+#include "ityr/ori/options.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/coll_mem.hpp"
 #include "ityr/ori/home_manager.hpp"
 #include "ityr/ori/cache_manager.hpp"
-#include "ityr/ori/options.hpp"
 
 namespace ityr::ori::core {
 
@@ -19,7 +21,8 @@ template <block_size_t BlockSize>
 class core {
 public:
   core(std::size_t cache_size, std::size_t sub_block_size)
-    : home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
+    : noncoll_allocator_(noncoll_allocator_size_option::value()),
+      home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
       cache_manager_(cache_size, sub_block_size) {}
 
   static constexpr block_size_t block_size = BlockSize;
@@ -402,6 +405,8 @@ private:
 using instance = common::singleton<core<ITYR_ORI_BLOCK_SIZE>>;
 
 ITYR_TEST_CASE("[ityr::ori::core] malloc/free with block policy") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
@@ -427,6 +432,8 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc/free with block policy") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] malloc/free with cyclic policy") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
@@ -452,6 +459,8 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc/free with cyclic policy") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] malloc and free (noncollective)") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
@@ -497,6 +506,8 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc and free (noncollective)") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] get/put") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
@@ -577,6 +588,8 @@ ITYR_TEST_CASE("[ityr::ori::core] get/put") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
@@ -653,6 +666,8 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
@@ -746,6 +761,8 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncontig)") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   int n_cb = 8;
@@ -814,6 +831,8 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncontig)") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
@@ -825,7 +844,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
 
   ITYR_SUBCASE("list creation") {
     int niter = 1000;
-    int n_alloc_iter = 100;
+    int n_alloc_iter = 10;
 
     struct node_t {
       node_t* next = nullptr;

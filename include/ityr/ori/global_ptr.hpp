@@ -377,6 +377,8 @@ ITYR_TEST_CASE("[ityr::ori::global_ptr] global pointer manipulation") {
 }
 
 ITYR_TEST_CASE("[ityr::ori::global_ptr] global reference") {
+  common::runtime_options common_opts;
+  runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo_;
   constexpr block_size_t bs = core::instance::instance_type::block_size;
   int n_cb = 16;

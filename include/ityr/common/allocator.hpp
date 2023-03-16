@@ -137,17 +137,17 @@ private:
 
 class remotable_resource final : public pmr::memory_resource {
 public:
-  remotable_resource()
-    : local_max_size_(get_local_max_size()),
+  remotable_resource(std::size_t local_max_size)
+    : local_max_size_(calc_local_max_size(local_max_size)),
       global_max_size_(local_max_size_ * topology::n_ranks()),
       vm_(reserve_same_vm_coll(global_max_size_, local_max_size_)),
       pm_(init_pm()),
       local_base_addr_(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(vm_.addr()) + local_max_size_ * topology::my_rank())),
       win_(create_win()),
       win_mr_(local_base_addr_, local_max_size_, win()),
-      block_mr_(&win_mr_, getenv_coll("ITYR_ALLOCATOR_BLOCK_SIZE", std::size_t(2), topology::mpicomm()) * 1024 * 1024),
+      block_mr_(&win_mr_, allocator_block_size_option::value()),
       std_pool_mr_(my_std_pool_options(), &block_mr_),
-      max_unflushed_free_objs_(getenv_coll("ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS", 10, topology::mpicomm())),
+      max_unflushed_free_objs_(allocator_max_unflushed_free_objs_option::value()),
       allocated_size_(0),
       allocated_size_threshold_(std::size_t(2) * 1024 * 1024) {}
 
@@ -279,18 +279,13 @@ private:
     return ss.str();
   }
 
-  std::size_t get_local_max_size() const {
-    std::size_t upper_limit = (std::size_t(1) << 40) / next_pow2(topology::n_ranks());
-    std::size_t default_local_size_mb;
-    if constexpr (use_dynamic_win) {
-      default_local_size_mb = upper_limit / 1024 / 1024;
+  std::size_t calc_local_max_size(std::size_t param) const {
+    if (param == 0) {
+      ITYR_CHECK(use_dynamic_win);
+      return (std::size_t(1) << 40) / next_pow2(topology::n_ranks());
     } else {
-      default_local_size_mb = 128;
+      return param;
     }
-
-    auto ret = std::size_t(getenv_coll("ITYR_ALLOCATOR_MAX_LOCAL_SIZE", default_local_size_mb, topology::mpicomm())) * 1024 * 1024; // MB
-    ITYR_CHECK(ret <= upper_limit);
-    return ret;
   }
 
   physical_mem init_pm() const {
@@ -423,9 +418,10 @@ T remote_faa_value(const remotable_resource& rmr, const T& val, T* target_p) {
 // -----------------------------------------------------------------------------
 
 ITYR_TEST_CASE("[ityr::common::allocator] basic test") {
+  runtime_options opts;
   singleton_initializer<topology::instance> topo;
 
-  remotable_resource allocator;
+  remotable_resource allocator(std::size_t(16) * 1024 * 1024);
 
   ITYR_SUBCASE("Local alloc/dealloc") {
     std::vector<std::size_t> sizes = {1, 2, 4, 8, 16, 32, 100, 200, 1000, 100000, 1000000};

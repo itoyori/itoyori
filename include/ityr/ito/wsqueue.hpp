@@ -226,6 +226,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] work stealing queue") {
   int n_entries = 1000;
   using entry_t = int;
 
+  common::runtime_options common_opts;
   common::singleton_initializer<common::topology::instance> topo;
   wsqueue<entry_t> wsq(n_entries);
 

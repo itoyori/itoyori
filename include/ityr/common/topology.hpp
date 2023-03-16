@@ -4,6 +4,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/options.hpp"
 
 namespace ityr::common::topology {
 
@@ -13,10 +14,10 @@ class topology {
 public:
   topology() : topology(MPI_COMM_WORLD) {}
   topology(MPI_Comm comm)
-    : shared_memory_enabled_(getenv_coll("ITYR_ENABLE_SHARED_MEMORY", true, comm)),
+    : enable_shared_memory_(enable_shared_memory_option::value()),
       cg_global_(comm, false),
-      cg_intra_(create_intra_comm(), shared_memory_enabled_),
-      cg_inter_(create_inter_comm(), shared_memory_enabled_),
+      cg_intra_(create_intra_comm(), enable_shared_memory_),
+      cg_inter_(create_inter_comm(), enable_shared_memory_),
       process_map_(create_process_map()),
       intra2global_rank_(create_intra2global_rank()) {}
 
@@ -81,7 +82,7 @@ private:
   };
 
   MPI_Comm create_intra_comm() {
-    if (shared_memory_enabled_) {
+    if (enable_shared_memory_) {
       MPI_Comm h;
       MPI_Comm_split_type(mpicomm(), MPI_COMM_TYPE_SHARED, my_rank(), MPI_INFO_NULL, &h);
       return h;
@@ -91,7 +92,7 @@ private:
   }
 
   MPI_Comm create_inter_comm() {
-    if (shared_memory_enabled_) {
+    if (enable_shared_memory_) {
       MPI_Comm h;
       MPI_Comm_split(mpicomm(), intra_my_rank(), my_rank(), &h);
       return h;
@@ -124,7 +125,7 @@ private:
     return ret;
   }
 
-  bool                           shared_memory_enabled_;
+  bool                           enable_shared_memory_;
   comm_group                     cg_global_;
   comm_group                     cg_intra_;
   comm_group                     cg_inter_;

@@ -180,6 +180,7 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
 }
 
 ITYR_TEST_CASE("[ityr::common::virtual_mem] allocate the same virtual memory across processes") {
+  runtime_options opts;
   singleton_initializer<topology::instance> topo;
 
   std::size_t pagesize = get_page_size();

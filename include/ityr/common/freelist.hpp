@@ -35,9 +35,20 @@ public:
 
   std::optional<uintptr_t> get(std::size_t size, std::size_t alignment) {
     // TODO: consider better implementation
+    auto s = get(size);
+    if (!s.has_value()) {
+      return std::nullopt;
+    }
+
+    if (*s % alignment == 0) {
+      return *s;
+    }
+
+    add(*s, size);
+
     std::size_t req_size = size + alignment;
 
-    auto s = get(req_size);
+    s = get(req_size);
     if (!s.has_value()) {
       return std::nullopt;
     }

@@ -3,11 +3,13 @@
 #include <functional>
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
 #include "ityr/ito/util.hpp"
+#include "ityr/ito/options.hpp"
 #include "ityr/ito/thread.hpp"
 #include "ityr/ito/worker.hpp"
 #include "ityr/ito/prof_events.hpp"
@@ -17,16 +19,20 @@ namespace ityr::ito {
 class ito {
 public:
   ito(MPI_Comm comm)
-    : topo_(comm) {}
+    : mi_(comm),
+      topo_(comm) {}
 
 private:
   common::mpi_initializer                                    mi_;
+  common::runtime_options                                    common_opts_;
   common::singleton_initializer<common::topology::instance>  topo_;
-  aslr_checker                                               aslr_checker_;
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
-  common::singleton_initializer<worker::instance>            worker_;
   common::prof_events                                        common_prof_events_;
+
+  runtime_options                                            ito_opts_;
+  aslr_checker                                               aslr_checker_;
+  common::singleton_initializer<worker::instance>            worker_;
   prof_events                                                ito_prof_events_;
 };
 

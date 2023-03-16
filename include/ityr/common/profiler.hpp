@@ -8,6 +8,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/options.hpp"
@@ -143,9 +144,9 @@ template <typename Mode>
 class profiler {
 public:
   profiler() {
-    state_.output_per_rank = getenv_coll("ITYR_PROF_OUTPUT_PER_RANK", false, topology::mpicomm());
+    state_.output_per_rank = prof_output_per_rank_option::value();
     if constexpr (std::is_same_v<Mode, mode_trace>) {
-      mlog_init(&state_.trace_md, 1, getenv_coll("ITYR_PROF_TRACE_INITIAL_SIZE", 1 << 20, topology::mpicomm()));
+      mlog_init(&state_.trace_md, 1, 1 << 20);
       trace_out_file_ = {std::fopen(trace_out_filename().c_str(), "w"), &std::fclose};
     }
   }
@@ -227,14 +228,15 @@ using instance = singleton<profiler<mode>>;
 using interval_begin_data = mode::interval_begin_data;
 
 template <typename Event>
-class event_initializer : public singleton_initializer<singleton<Event>> {
+class event_initializer {
 public:
   template <typename... Args>
   event_initializer(Args&&... args)
-    : singleton_initializer<singleton<Event>>(instance::get().get_state(),
-                                              std::forward<Args>(args)...) {
+    : init_(instance::get().get_state(), std::forward<Args>(args)...) {
     instance::get().add(&singleton<Event>::get());
   }
+private:
+  singleton_initializer<singleton<Event>> init_;
 };
 
 template <typename Event, typename... Args>

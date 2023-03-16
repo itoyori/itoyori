@@ -4,7 +4,9 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/logger.hpp"
 
 namespace ityr::common::wallclock {
 
@@ -13,7 +15,7 @@ using wallclock_t = uint64_t;
 class global_clock {
 public:
   global_clock()
-    : n_sync_round_trips_(getenv_coll("ITYR_GLOBAL_CLOCK_N_SYNC_ROUND_TRIPS", 100, topology::mpicomm())) {
+    : n_sync_round_trips_(global_clock_sync_round_trips_option::value()) {
     sync();
   }
 

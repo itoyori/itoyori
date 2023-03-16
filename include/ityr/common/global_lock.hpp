@@ -42,6 +42,7 @@ private:
 };
 
 ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
+  runtime_options opts;
   singleton_initializer<topology::instance> topo;
 
   global_lock lock;

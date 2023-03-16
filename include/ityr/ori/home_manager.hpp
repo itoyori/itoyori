@@ -5,6 +5,7 @@
 #include "ityr/common/util.hpp"
 #include "ityr/common/span.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/logger.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
@@ -67,7 +68,7 @@ public:
   }
 
   template <bool DecrementRef>
-  bool checkin_fast(std::byte* addr, std::size_t size) {
+  bool checkin_fast(const std::byte* addr, std::size_t size) {
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 

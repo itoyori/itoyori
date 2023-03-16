@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ityr/common/util.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
@@ -16,25 +17,27 @@ inline constexpr block_size_t block_size = ITYR_ORI_BLOCK_SIZE;
 
 class ori {
 public:
-  ori(std::size_t cache_size, std::size_t sub_block_size, MPI_Comm comm)
-    : topo_(comm),
-      core_(cache_size, sub_block_size) {}
+  ori(MPI_Comm comm)
+    : mi_(comm),
+      topo_(comm),
+      core_(cache_size_option::value(), sub_block_size_option::value()) {}
 
 private:
   common::mpi_initializer                                    mi_;
+  common::runtime_options                                    common_opts_;
   common::singleton_initializer<common::topology::instance>  topo_;
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
   common::prof_events                                        common_prof_events_;
+
+  runtime_options                                            ori_opts_;
   common::singleton_initializer<core::instance>              core_;
 };
 
 using instance = common::singleton<ori>;
 
-inline void init(std::size_t cache_size     = std::size_t(16) * 1024 * 1024,
-                 std::size_t sub_block_size = std::size_t(4) * 1024,
-                 MPI_Comm comm              = MPI_COMM_WORLD) {
-  instance::init(cache_size, sub_block_size, comm);
+inline void init(MPI_Comm comm = MPI_COMM_WORLD) {
+  instance::init(comm);
 }
 
 inline void fini() {

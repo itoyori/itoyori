@@ -63,15 +63,18 @@ int main(int argc, char** argv) {
     setlocale(LC_NUMERIC, "en_US.UTF-8");
     printf("=============================================================\n"
            "[Fibonacci]\n"
-           "N:                            %d\n"
            "# of processes:               %d\n"
+           "N:                            %d\n"
            "# of repeats:                 %d\n"
            "Verify result:                %d\n"
            "-------------------------------------------------------------\n",
-           n_input, ityr::n_ranks(), n_repeats, verify_result);
+           ityr::n_ranks(), n_input, n_repeats, verify_result);
 
     printf("[Compile Options]\n");
     ityr::print_compile_options();
+    printf("-------------------------------------------------------------\n");
+    printf("[Runtime Options]\n");
+    ityr::print_runtime_options();
     printf("=============================================================\n\n");
     fflush(stdout);
   }
@@ -90,18 +93,19 @@ int main(int argc, char** argv) {
     ityr::profiler_end();
 
     if (ityr::is_master()) {
-      printf("[%d] %ld ns\n", r, t1 - t0);
+      printf("[%d] %ld ns", r, t1 - t0);
 
       if (verify_result) {
         result_t answer = fib_fast(n_input);
         if (result == answer) {
-          printf("Result verified: fib(%d) = %ld\n", n_input, result);
+          printf(" - Result verified: fib(%d) = %ld", n_input, result);
         } else {
-          printf("Wrong answer: fib(%d) should be %ld but got %ld\n",
+          printf(" - Wrong result: fib(%d) should be %ld but got %ld",
                  n_input, answer, result);
         }
       }
 
+      printf("\n");
       fflush(stdout);
     }
 

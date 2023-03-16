@@ -223,26 +223,15 @@ inline bool mpi_test(MPI_Request& req) {
   return flag;
 }
 
-template <typename T>
-inline T getenv_coll(const char* env_var, T default_val, MPI_Comm comm) {
-  static bool print_env = getenv_with_default("ITYR_PRINT_ENV", false);
-
-  int rank = mpi_comm_rank(comm);
-  T val = default_val;
-
-  if (rank == 0) {
-    val = getenv_with_default(env_var, default_val);
-    if (print_env) {
-      std::cout << env_var << " = " << val << std::endl;
-    }
-  }
-
-  return mpi_bcast_value(val, 0, comm);
+inline MPI_Comm& mpi_comm_root() {
+  static MPI_Comm comm = MPI_COMM_WORLD;
+  return comm;
 }
 
 class mpi_initializer {
 public:
-  mpi_initializer() {
+  mpi_initializer(MPI_Comm comm) {
+    mpi_comm_root() = comm;
     MPI_Initialized(&initialized_outside_);
     if (!initialized_outside_) {
       MPI_Init(nullptr, nullptr);
@@ -264,5 +253,19 @@ public:
 private:
   int initialized_outside_ = 1;
 };
+
+template <typename T>
+inline T getenv_coll(const std::string& env_var, T default_val) {
+  MPI_Comm comm = mpi_comm_root();
+
+  int rank = mpi_comm_rank(comm);
+  T val = default_val;
+
+  if (rank == 0) {
+    val = getenv_with_default(env_var.c_str(), default_val);
+  }
+
+  return mpi_bcast_value(val, 0, comm);
+}
 
 }

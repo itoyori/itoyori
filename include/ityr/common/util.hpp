@@ -11,8 +11,6 @@
 #include <optional>
 #include <tuple>
 
-#include "ityr/common/options.hpp"
-
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)
 
@@ -59,23 +57,6 @@ inline uint64_t clock_gettime_ns() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000000 + (uint64_t)ts.tv_nsec;
-}
-
-inline constexpr int max_verbose_level = ITYR_MAX_VERBOSE_LEVEL;
-
-template <int Level = 1>
-inline void verbose(const char* fmt, ...) {
-  if (Level <= max_verbose_level) {
-    constexpr int slen = 256;
-    static char msg[slen];
-
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(msg, slen, fmt, args);
-    va_end(args);
-
-    fprintf(stderr, "%ld: %s\n", clock_gettime_ns(), msg);
-  }
 }
 
 [[noreturn]] __attribute__((noinline))

@@ -4,13 +4,14 @@
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/logger.hpp"
 #include "ityr/common/allocator.hpp"
 #include "ityr/common/profiler.hpp"
+#include "ityr/ito/options.hpp"
 #include "ityr/ito/context.hpp"
 #include "ityr/ito/callstack.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/prof_events.hpp"
-#include "ityr/ito/options.hpp"
 
 namespace ityr::ito {
 
@@ -39,8 +40,10 @@ public:
   };
 
   scheduler_ws_workfirst()
-    : stack_(common::getenv_coll("ITYR_ITO_STACK_SIZE", std::size_t(2) * 1024 * 1024, common::topology::mpicomm())),
-      wsq_(common::getenv_coll("ITYR_ITO_WSQUEUE_CAPACITY", 1024, common::topology::mpicomm())) {}
+    : stack_(stack_size_option::value()),
+      wsq_(wsqueue_capacity_option::value()),
+      thread_state_allocator_(thread_state_allocator_size_option::value()),
+      suspended_thread_allocator_(suspended_thread_allocator_size_option::value()) {}
 
   template <typename T, typename Fn, typename... Args>
   T root_exec(Fn&& fn, Args&&... args) {

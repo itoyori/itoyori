@@ -86,6 +86,7 @@ private:
 };
 
 ITYR_TEST_CASE("[ityr::common::physical_mem] map physical memory to two different virtual addresses") {
+  runtime_options opts;
   singleton_initializer<topology::instance> topo;
 
   std::size_t pagesize = get_page_size();
