@@ -14,6 +14,7 @@
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
+#include "ityr/ori/release_manager.hpp"
 
 namespace ityr::ori {
 
@@ -179,18 +180,39 @@ public:
     ensure_all_cache_clean();
   }
 
+  using release_handler = release_manager::release_handler;
+
+  release_handler release_lazy() {
+    if (has_dirty_cache_) {
+      return rm_.get_release_handler();
+    } else {
+      return rm_.get_dummy_handler();
+    }
+  }
+
   void acquire() {
+    // FIXME: no need to writeback dirty data here?
+    ensure_all_cache_clean();
     invalidate_all();
+  }
+
+  void acquire(release_handler rh) {
+    ensure_all_cache_clean();
+    rm_.ensure_released(rh);
+    invalidate_all();
+  }
+
+  void poll() {
+    if (rm_.release_requested()) {
+      ensure_all_cache_clean();
+      ITYR_CHECK(!rm_.release_requested());
+    }
   }
 
   void ensure_all_cache_clean() {
     writeback_begin();
     writeback_complete();
-
-    if (cache_dirty_) {
-      cache_dirty_ = false;
-      /* rm_.increment_epoch(); */
-    }
+    ITYR_CHECK(!has_dirty_cache_);
   }
 
   void ensure_evicted(void* addr) {
@@ -221,7 +243,7 @@ public:
 private:
   static constexpr bool enable_write_through = false;
 
-  using epoch_t = uint64_t;
+  using writeback_epoch_t = uint64_t;
 
   struct cache_block {
     cache_entry_idx_t        entry_idx       = std::numeric_limits<cache_entry_idx_t>::max();
@@ -231,7 +253,7 @@ private:
     common::topology::rank_t owner           = -1;
     std::size_t              pm_offset       = 0;
     int                      ref_count       = 0;
-    epoch_t                  writeback_epoch = 0;
+    writeback_epoch_t        writeback_epoch = 0;
     block_regions            fresh_regions;
     block_regions            dirty_regions;
     cache_manager*           outer;
@@ -239,7 +261,7 @@ private:
     cache_block(cache_manager* outer_p) : outer(outer_p) {}
 
     bool is_writing_back() const {
-      return writeback_epoch > outer->writeback_epoch_;
+      return writeback_epoch == outer->writeback_epoch_;
     }
 
     void invalidate() {
@@ -371,7 +393,8 @@ private:
 
     if (is_new_dirty_block) {
       dirty_cache_blocks_.push_back(&cb);
-      cache_dirty_ = true;
+      has_pending_dirty_cache_ = true;
+      has_dirty_cache_ = true;
 
       if constexpr (enable_write_through) {
         ensure_all_cache_clean();
@@ -389,15 +412,16 @@ private:
         writeback_begin(*cb);
       }
     }
+    has_pending_dirty_cache_ = false;
   }
 
   void writeback_begin(cache_block& cb) {
-    if (cb.writeback_epoch > writeback_epoch_) {
+    if (cb.writeback_epoch == writeback_epoch_) {
       // MPI_Put has been already started on this cache block.
       // As overlapping MPI_Put calls for the same location will cause undefined behaviour,
       // we need to insert MPI_Win_flush between overlapping MPI_Put calls here.
       writeback_complete();
-      ITYR_CHECK(cb.writeback_epoch == writeback_epoch_);
+      ITYR_CHECK(cb.writeback_epoch < writeback_epoch_);
     }
 
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
@@ -418,7 +442,7 @@ private:
 
     cb.dirty_regions.clear();
 
-    cb.writeback_epoch = writeback_epoch_ + 1;
+    cb.writeback_epoch = writeback_epoch_;
 
     writing_back_wins_.push_back(cb.win);
   }
@@ -438,6 +462,11 @@ private:
 
       writeback_epoch_++;
     }
+
+    if (!has_pending_dirty_cache_ && has_dirty_cache_) {
+      has_dirty_cache_ = false;
+      rm_.increment_epoch();
+    }
   }
 
   bool is_cached(void* addr) const {
@@ -445,10 +474,7 @@ private:
   }
 
   void invalidate_all() {
-    ensure_all_cache_clean();
-
     cs_.for_each_entry([&](cache_block& cb) {
-      // FIXME: this check is for prefetching
       cb.invalidate();
     });
   }
@@ -472,10 +498,21 @@ private:
 
   std::vector<cache_block*>              dirty_cache_blocks_;
   std::size_t                            max_dirty_cache_blocks_;
-  bool                                   cache_dirty_ = false;
 
+  // A writeback epoch is an interval between writeback completion events.
+  // Writeback epochs are conceptually different from epochs used in the lazy release manager.
+  // Even if the writeback epoch is incremented, some cache blocks might be dirty (pending).
+  writeback_epoch_t                      writeback_epoch_ = 1;
   std::vector<MPI_Win>                   writing_back_wins_;
-  epoch_t                                writeback_epoch_ = 0;
+
+  // A pending dirty cache block is marked dirty but not yet started to writeback.
+  // Only if the writeback is completed and there is no pending dirty cache, we can say
+  // all cache blocks are clean (has_dirty_cache_ = false).
+  bool                                   has_pending_dirty_cache_ = false;
+  bool                                   has_dirty_cache_         = false;
+
+  // A release epoch is an interval between the events when all cache become clean.
+  release_manager                        rm_;
 };
 
 }

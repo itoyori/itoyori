@@ -163,12 +163,32 @@ public:
     common::verbose("Release fence end");
   }
 
+  using release_handler = typename cache_manager<BlockSize>::release_handler;
+
+  release_handler release_lazy() {
+    common::verbose("Lazy release handler is created");
+
+    return cache_manager_.release_lazy();
+  }
+
   void acquire() {
     common::verbose("Acquire fence begin");
 
     cache_manager_.acquire();
 
     common::verbose("Acquire fence end");
+  }
+
+  void acquire(release_handler rh) {
+    common::verbose("Acquire fence (lazy) begin");
+
+    cache_manager_.acquire(rh);
+
+    common::verbose("Acquire fence (lazy) end");
+  }
+
+  void poll() {
+    cache_manager_.poll();
   }
 
   /* APIs for debugging */
@@ -917,6 +937,88 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
       count++;
     }
   }
+}
+
+ITYR_TEST_CASE("[ityr::ori::core] release/acquire fence") {
+  common::runtime_options common_opts;
+  runtime_options opts;
+  common::singleton_initializer<common::topology::instance> topo;
+  constexpr block_size_t bs = 65536;
+  int n_cb = 16;
+  core<bs> c(n_cb * bs, bs / 4);
+
+  auto my_rank = common::topology::my_rank();
+  auto n_ranks = common::topology::n_ranks();
+  auto mpicomm = common::topology::mpicomm();
+
+  auto barrier = [&]() {
+    c.release();
+    common::mpi_barrier(mpicomm);
+    c.acquire();
+  };
+
+  int* p = reinterpret_cast<int*>(c.malloc_coll(sizeof(int)));
+
+  if (my_rank == 0) {
+    c.checkout(p, sizeof(int), mode::write);
+    p[0] = 3;
+    c.checkin(p, sizeof(int), mode::write);
+  }
+
+  barrier();
+
+  c.checkout(p, sizeof(int), mode::read);
+  ITYR_CHECK(p[0] == 3);
+  c.checkin(p, sizeof(int), mode::read);
+
+  barrier();
+
+  if (my_rank == (n_ranks + 1) % n_ranks) {
+    c.checkout(p, sizeof(int), mode::read_write);
+    p[0] += 5;
+    c.checkin(p, sizeof(int), mode::read_write);
+  }
+
+  barrier();
+
+  c.checkout(p, sizeof(int), mode::read);
+  ITYR_CHECK(p[0] == 8);
+  c.checkin(p, sizeof(int), mode::read);
+
+  barrier();
+
+  int n = 100;
+  for (int i = 0; i < n; i++) {
+    auto root_rank = (n_ranks + i) % n_ranks;
+    if (my_rank == root_rank) {
+      c.checkout(p, sizeof(int), mode::read_write);
+      p[0] += 12;
+      c.checkin(p, sizeof(int), mode::read_write);
+    }
+
+    core<bs>::release_handler rh;
+
+    if (my_rank == root_rank) {
+      rh = c.release_lazy();
+    }
+
+    rh = common::mpi_bcast_value(rh, root_rank, mpicomm);
+
+    if (my_rank != root_rank) {
+      c.acquire(rh);
+    }
+
+    c.checkout(p, sizeof(int), mode::read);
+    ITYR_CHECK(p[0] == 20 + 12 * i);
+    c.checkin(p, sizeof(int), mode::read);
+
+    auto req = common::mpi_ibarrier(mpicomm);
+    while (!common::mpi_test(req)) {
+      c.poll();
+    }
+  }
+
+  c.free_coll(p);
 }
 
 }

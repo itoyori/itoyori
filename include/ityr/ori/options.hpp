@@ -41,11 +41,25 @@ struct noncoll_allocator_size_option : public common::option<noncoll_allocator_s
   static std::size_t default_value() { return std::size_t(4) * 1024 * 1024; };
 };
 
+struct lazy_release_check_interval_option : public common::option<lazy_release_check_interval_option, int> {
+  using option::option;
+  static std::string name() { return "ITYR_ORI_LAZY_RELEASE_CHECK_INTERVAL"; };
+  static int default_value() { return 10; };
+};
+
+struct lazy_release_make_mpi_progress_option : public common::option<lazy_release_make_mpi_progress_option, bool> {
+  using option::option;
+  static std::string name() { return "ITYR_ORI_LAZY_RELEASE_MAKE_MPI_PROGRESS"; };
+  static bool default_value() { return true; };
+};
+
 struct runtime_options {
-  common::option_initializer<cache_size_option>             ITYR_ANON_VAL;
-  common::option_initializer<sub_block_size_option>         ITYR_ANON_VAL;
-  common::option_initializer<max_dirty_cache_size_option>   ITYR_ANON_VAL;
-  common::option_initializer<noncoll_allocator_size_option> ITYR_ANON_VAL;
+  common::option_initializer<cache_size_option>                     ITYR_ANON_VAL;
+  common::option_initializer<sub_block_size_option>                 ITYR_ANON_VAL;
+  common::option_initializer<max_dirty_cache_size_option>           ITYR_ANON_VAL;
+  common::option_initializer<noncoll_allocator_size_option>         ITYR_ANON_VAL;
+  common::option_initializer<lazy_release_check_interval_option>    ITYR_ANON_VAL;
+  common::option_initializer<lazy_release_make_mpi_progress_option> ITYR_ANON_VAL;
 };
 
 }

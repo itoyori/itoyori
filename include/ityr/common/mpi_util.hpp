@@ -124,8 +124,8 @@ inline void mpi_bcast(T*          buf,
                       int         root_rank,
                       MPI_Comm    comm) {
   MPI_Bcast(buf,
-            count,
-            mpi_type<T>(),
+            sizeof(T) * count,
+            MPI_BYTE,
             root_rank,
             comm);
 }
@@ -221,6 +221,11 @@ inline bool mpi_test(MPI_Request& req) {
   int flag;
   MPI_Test(&req, &flag, MPI_STATUS_IGNORE);
   return flag;
+}
+
+inline void mpi_make_progress() {
+  int flag;
+  MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &flag, MPI_STATUS_IGNORE);
 }
 
 inline MPI_Comm& mpi_comm_root() {
