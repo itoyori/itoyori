@@ -393,7 +393,6 @@ private:
 
     if (is_new_dirty_block) {
       dirty_cache_blocks_.push_back(&cb);
-      has_pending_dirty_cache_ = true;
       has_dirty_cache_ = true;
 
       if constexpr (enable_write_through) {
@@ -401,7 +400,6 @@ private:
 
       } else if (dirty_cache_blocks_.size() >= max_dirty_cache_blocks_) {
         writeback_begin();
-        dirty_cache_blocks_.clear();
       }
     }
   }
@@ -412,7 +410,7 @@ private:
         writeback_begin(*cb);
       }
     }
-    has_pending_dirty_cache_ = false;
+    dirty_cache_blocks_.clear();
   }
 
   void writeback_begin(cache_block& cb) {
@@ -463,7 +461,7 @@ private:
       writeback_epoch_++;
     }
 
-    if (!has_pending_dirty_cache_ && has_dirty_cache_) {
+    if (dirty_cache_blocks_.empty() && has_dirty_cache_) {
       has_dirty_cache_ = false;
       rm_.increment_epoch();
     }
@@ -501,15 +499,14 @@ private:
 
   // A writeback epoch is an interval between writeback completion events.
   // Writeback epochs are conceptually different from epochs used in the lazy release manager.
-  // Even if the writeback epoch is incremented, some cache blocks might be dirty (pending).
+  // Even if the writeback epoch is incremented, some cache blocks might be dirty.
   writeback_epoch_t                      writeback_epoch_ = 1;
   std::vector<MPI_Win>                   writing_back_wins_;
 
   // A pending dirty cache block is marked dirty but not yet started to writeback.
   // Only if the writeback is completed and there is no pending dirty cache, we can say
-  // all cache blocks are clean (has_dirty_cache_ = false).
-  bool                                   has_pending_dirty_cache_ = false;
-  bool                                   has_dirty_cache_         = false;
+  // all cache blocks are clean.
+  bool                                   has_dirty_cache_ = false;
 
   // A release epoch is an interval between the events when all cache become clean.
   release_manager                        rm_;
