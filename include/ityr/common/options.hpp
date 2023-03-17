@@ -32,6 +32,7 @@ inline void print_compile_options() {
 
 class option_base {
 public:
+  virtual ~option_base() = default;
   virtual void print() const = 0;
 };
 
