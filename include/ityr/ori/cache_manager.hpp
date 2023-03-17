@@ -241,7 +241,7 @@ public:
   }
 
 private:
-  static constexpr bool enable_write_through = false;
+  static constexpr bool enable_write_through = ITYR_ORI_ENABLE_WRITE_THROUGH;
 
   using writeback_epoch_t = uint64_t;
 
