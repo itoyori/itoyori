@@ -213,7 +213,7 @@ public:
   }
 
   void swap(this_t r) {
-    PCAS_CHECK(&r != ptr_);
+    ITYR_CHECK(&r != ptr_);
     with_read_write([&](T& this_v) {
       r.with_read_write([&](T& v) {
         using std::swap;

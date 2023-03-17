@@ -20,6 +20,11 @@ inline void print_compile_options() {
 #define ITYR_ORI_ENABLE_WRITE_THROUGH false
 #endif
   ITYR_PRINT_MACRO(ITYR_ORI_ENABLE_WRITE_THROUGH);
+
+#ifndef ITYR_ORI_ENABLE_LAZY_RELEASE
+#define ITYR_ORI_ENABLE_LAZY_RELEASE true
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_ENABLE_LAZY_RELEASE);
 }
 
 struct cache_size_option : public common::option<cache_size_option, std::size_t> {

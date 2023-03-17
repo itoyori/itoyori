@@ -19,7 +19,13 @@ inline bool operator!=(no_retval_t, no_retval_t) noexcept {
   return false;
 }
 
+template <typename ReleaseHandler>
 struct parallel_invoke_state {
+public:
+  parallel_invoke_state(ReleaseHandler rh) : rh_(rh) {}
+
+  bool all_serialized() const { return all_serialized_; }
+
   inline auto parallel_invoke_aux() {
     return std::make_tuple();
   }
@@ -59,15 +65,17 @@ struct parallel_invoke_state {
   inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest) {
     using retval_t = std::invoke_result_t<Fn, Args...>;
 
+    ori::poll();
+
     ito::thread<retval_t> th(ito::with_callback,
                              [](bool serialized) { if (!serialized) ori::release(); },
                              std::apply<const Fn&, const std::tuple<Args...>&>,
                              std::forward<Fn>(fn),
                              std::forward<std::tuple<Args...>>(args));
     if (!th.serialized()) {
-      ori::acquire();
+      ori::acquire(rh_);
     }
-    all_serialized &= th.serialized();
+    all_serialized_ &= th.serialized();
 
     auto ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
 
@@ -88,15 +96,17 @@ struct parallel_invoke_state {
     }
   }
 
-  bool all_serialized = true;
+private:
+  ReleaseHandler rh_;
+  bool           all_serialized_ = true;
 };
 
 template <typename... Args>
 inline auto parallel_invoke(Args&&... args) {
-  parallel_invoke_state s;
-  ori::release();
+  auto rh = ori::release_lazy();
+  parallel_invoke_state s(rh);
   auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
-  if (!s.all_serialized) {
+  if (!s.all_serialized()) {
     ori::acquire();
   }
   return ret;

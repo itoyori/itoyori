@@ -168,8 +168,17 @@ inline void release() {
   core::instance::get().release();
 }
 
-inline void acquire() {
-  core::instance::get().acquire();
+inline auto release_lazy() {
+  return core::instance::get().release_lazy();
+}
+
+template <typename... Args>
+inline void acquire(Args&&... args) {
+  core::instance::get().acquire(std::forward<Args>(args)...);
+}
+
+inline void poll() {
+  core::instance::get().poll();
 }
 
 }

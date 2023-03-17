@@ -20,6 +20,9 @@ namespace ityr::ori {
 
 template <block_size_t BlockSize>
 class cache_manager {
+  static constexpr bool enable_write_through = ITYR_ORI_ENABLE_WRITE_THROUGH;
+  static constexpr bool enable_lazy_release = ITYR_ORI_ENABLE_LAZY_RELEASE;
+
 public:
   cache_manager(std::size_t cache_size, std::size_t sub_block_size)
     : cache_size_(cache_size),
@@ -180,13 +183,18 @@ public:
     ensure_all_cache_clean();
   }
 
-  using release_handler = release_manager::release_handler;
+  using release_handler = std::conditional_t<enable_lazy_release, release_manager::release_handler, void*>;
 
-  release_handler release_lazy() {
-    if (has_dirty_cache_) {
-      return rm_.get_release_handler();
+  auto release_lazy() {
+    if constexpr (enable_lazy_release) {
+      if (has_dirty_cache_) {
+        return rm_.get_release_handler();
+      } else {
+        return rm_.get_dummy_handler();
+      }
     } else {
-      return rm_.get_dummy_handler();
+      release();
+      return release_handler{};
     }
   }
 
@@ -196,16 +204,21 @@ public:
     invalidate_all();
   }
 
-  void acquire(release_handler rh) {
+  template <typename ReleaseHandler>
+  void acquire(ReleaseHandler rh) {
     ensure_all_cache_clean();
-    rm_.ensure_released(rh);
+    if constexpr (enable_lazy_release) {
+      rm_.ensure_released(rh);
+    }
     invalidate_all();
   }
 
   void poll() {
-    if (rm_.release_requested()) {
-      ensure_all_cache_clean();
-      ITYR_CHECK(!rm_.release_requested());
+    if constexpr (enable_lazy_release) {
+      if (rm_.release_requested()) {
+        ensure_all_cache_clean();
+        ITYR_CHECK(!rm_.release_requested());
+      }
     }
   }
 
@@ -241,8 +254,6 @@ public:
   }
 
 private:
-  static constexpr bool enable_write_through = ITYR_ORI_ENABLE_WRITE_THROUGH;
-
   using writeback_epoch_t = uint64_t;
 
   struct cache_block {

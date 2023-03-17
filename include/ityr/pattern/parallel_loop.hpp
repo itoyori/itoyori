@@ -193,22 +193,24 @@ inline auto parallel_loop_generic(parallel_loop_options opts,
                                   ForwardIterator       first,
                                   ForwardIterator       last,
                                   ForwardIterators...   firsts) {
-  ori::release();
-  return parallel_loop_generic_aux(opts, serial_fn, combine_fn, first, last, firsts...);
+  auto rh = ori::release_lazy();
+  return parallel_loop_generic_aux(opts, serial_fn, combine_fn, rh, first, last, firsts...);
 }
 
-template <typename SerialFn, typename CombineFn,
+template <typename SerialFn, typename CombineFn, typename ReleaseHandler,
           typename ForwardIterator, typename... ForwardIterators>
 inline std::invoke_result_t<SerialFn, serial_loop_options,
                             ForwardIterator, ForwardIterator, ForwardIterators...>
 parallel_loop_generic_aux(parallel_loop_options opts,
                           SerialFn              serial_fn,
                           CombineFn             combine_fn,
+                          ReleaseHandler        rh,
                           ForwardIterator       first,
                           ForwardIterator       last,
                           ForwardIterators...   firsts) {
   using retval_t = std::invoke_result_t<SerialFn, serial_loop_options,
                                         ForwardIterator, ForwardIterator, ForwardIterators...>;
+  ori::poll();
 
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
@@ -218,12 +220,12 @@ parallel_loop_generic_aux(parallel_loop_options opts,
   } else {
     auto mid = std::next(first, d / 2);
     auto recur_fn_left = [=]() -> retval_t {
-      return parallel_loop_generic_aux(opts, serial_fn, combine_fn,
+      return parallel_loop_generic_aux(opts, serial_fn, combine_fn, rh,
                                        first, mid, firsts...);
     };
 
     auto recur_fn_right = [&]() -> retval_t {
-      return parallel_loop_generic_aux(opts, serial_fn, combine_fn,
+      return parallel_loop_generic_aux(opts, serial_fn, combine_fn, rh,
                                        mid, last, std::next(firsts, d / 2)...);
     };
 
@@ -231,7 +233,7 @@ parallel_loop_generic_aux(parallel_loop_options opts,
                              [](bool serialized) { if (!serialized) ori::release(); },
                              recur_fn_left);
     if (!th.serialized()) {
-      ori::acquire();
+      ori::acquire(rh);
     }
 
     if constexpr(std::is_void_v<retval_t>) {
