@@ -218,6 +218,8 @@ public:
   singleton_initializer(singleton_initializer&&) = delete;
   singleton_initializer& operator=(singleton_initializer&&) = delete;
 
+  bool should_finalize () const { return should_finalize_; }
+
 private:
   bool should_finalize_ = false;
 };

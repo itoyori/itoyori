@@ -233,7 +233,9 @@ public:
   template <typename... Args>
   event_initializer(Args&&... args)
     : init_(instance::get().get_state(), std::forward<Args>(args)...) {
-    instance::get().add(&singleton<Event>::get());
+    if (init_.should_finalize()) {
+      instance::get().add(&singleton<Event>::get());
+    }
   }
 private:
   singleton_initializer<singleton<Event>> init_;
