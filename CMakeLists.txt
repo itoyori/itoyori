@@ -18,11 +18,14 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG -g")
 
 find_package(MPI REQUIRED)
-include_directories(${MPI_CXX_INCLUDE_PATH})
 
 add_library(itoyori INTERFACE)
-target_include_directories(itoyori INTERFACE include)
-target_include_directories(itoyori INTERFACE massivelogger/include)
+target_include_directories(itoyori INTERFACE
+  ${MPI_CXX_INCLUDE_PATH}
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/massivelogger/include>
+  $<INSTALL_INTERFACE:include>
+)
 target_link_libraries(itoyori INTERFACE ${MPI_CXX_LIBRARIES} rt)
 target_compile_options(itoyori INTERFACE -Wall -Wextra -fno-stack-protector)
 
@@ -44,9 +47,29 @@ if(NOT HAS_STD_MEMORY_RESOURCE)
   target_link_libraries(itoyori INTERFACE ${Boost_LIBRARIES})
 endif()
 
+install(TARGETS itoyori EXPORT itoyori-export)
+
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+
+set(ConfigPackageLocation lib/cmake/itoyori)
+install(EXPORT itoyori-export
+  FILE itoyori-config.cmake
+  DESTINATION ${ConfigPackageLocation}
+  EXPORT_LINK_INTERFACE_LIBRARIES
+)
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config-version.cmake"
+  VERSION ${itoyori_VERSION}
+  COMPATIBILITY AnyNewerVersion
+)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config-version.cmake"
+  DESTINATION ${ConfigPackageLocation}
+)
 
 set(MAX_VERBOSE_LEVEL 0 CACHE STRING "Max verbose level for logging output")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DITYR_MAX_VERBOSE_LEVEL=${MAX_VERBOSE_LEVEL}")

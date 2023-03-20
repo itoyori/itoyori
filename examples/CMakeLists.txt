@@ -22,6 +22,5 @@ foreach(example IN LISTS examples)
                   ${example}_serial.out
                   ${example}_prof_stats.out
                   ${example}_prof_trace.out
-          DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/ityr/examples")
+          DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/itoyori/examples")
 endforeach()
-
