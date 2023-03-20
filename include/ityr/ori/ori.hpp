@@ -10,6 +10,7 @@
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/core.hpp"
 #include "ityr/ori/global_ptr.hpp"
+#include "ityr/ori/prof_events.hpp"
 
 namespace ityr::ori {
 
@@ -32,6 +33,7 @@ private:
 
   runtime_options                                            ori_opts_;
   common::singleton_initializer<core::instance>              core_;
+  prof_events                                                prof_events_;
 };
 
 using instance = common::singleton<ori>;

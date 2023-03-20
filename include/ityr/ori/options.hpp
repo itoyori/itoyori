@@ -64,12 +64,12 @@ struct lazy_release_make_mpi_progress_option : public common::option<lazy_releas
 };
 
 struct runtime_options {
-  common::option_initializer<cache_size_option>                     ITYR_ANON_VAL;
-  common::option_initializer<sub_block_size_option>                 ITYR_ANON_VAL;
-  common::option_initializer<max_dirty_cache_size_option>           ITYR_ANON_VAL;
-  common::option_initializer<noncoll_allocator_size_option>         ITYR_ANON_VAL;
-  common::option_initializer<lazy_release_check_interval_option>    ITYR_ANON_VAL;
-  common::option_initializer<lazy_release_make_mpi_progress_option> ITYR_ANON_VAL;
+  common::option_initializer<cache_size_option>                     ITYR_ANON_VAR;
+  common::option_initializer<sub_block_size_option>                 ITYR_ANON_VAR;
+  common::option_initializer<max_dirty_cache_size_option>           ITYR_ANON_VAR;
+  common::option_initializer<noncoll_allocator_size_option>         ITYR_ANON_VAR;
+  common::option_initializer<lazy_release_check_interval_option>    ITYR_ANON_VAR;
+  common::option_initializer<lazy_release_make_mpi_progress_option> ITYR_ANON_VAR;
 };
 
 }

@@ -68,7 +68,7 @@ public:
     ori::poll();
 
     ito::thread<retval_t> th(ito::with_callback,
-                             [](bool serialized) { if (!serialized) ori::release(); },
+                             []() { ori::release(); },
                              std::apply<const Fn&, const std::tuple<Args...>&>,
                              std::forward<Fn>(fn),
                              std::forward<std::tuple<Args...>>(args));

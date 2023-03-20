@@ -284,7 +284,7 @@ private:
 };
 
 #define ITYR_PROFILER_RECORD(event, ...) \
-  ityr::common::profiler::interval_scope<event> ITYR_ANON_VAL {__VA_ARGS__};
+  ityr::common::profiler::interval_scope<event> ITYR_ANON_VAR {__VA_ARGS__};
 
 template <typename PhaseFrom, typename PhaseTo>
 inline void switch_phase() {

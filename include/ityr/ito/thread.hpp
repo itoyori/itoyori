@@ -21,9 +21,9 @@ public:
   thread(Fn&& fn, Args&&... args) {
     fork(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
-  template <typename OnDieCallback, typename Fn, typename... Args>
-  thread(with_callback_t, OnDieCallback&& on_die_cb, Fn&& fn, Args&&... args) {
-    fork(with_callback, std::forward<OnDieCallback>(on_die_cb), std::forward<Fn>(fn), std::forward<Args>(args)...);
+  template <typename OnDriftCallback, typename Fn, typename... Args>
+  thread(with_callback_t, OnDriftCallback&& on_drift_cb, Fn&& fn, Args&&... args) {
+    fork(with_callback, std::forward<OnDriftCallback>(on_drift_cb), std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   thread(const thread&) = delete;
@@ -41,7 +41,7 @@ public:
   void fork(Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
-    w.sched().fork(handler_, [](bool){},
+    w.sched().fork(handler_, nullptr,
                    std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 

@@ -37,10 +37,10 @@ struct suspended_thread_allocator_size_option : public common::option<suspended_
 };
 
 struct runtime_options {
-  common::option_initializer<stack_size_option>                      ITYR_ANON_VAL;
-  common::option_initializer<wsqueue_capacity_option>                ITYR_ANON_VAL;
-  common::option_initializer<thread_state_allocator_size_option>     ITYR_ANON_VAL;
-  common::option_initializer<suspended_thread_allocator_size_option> ITYR_ANON_VAL;
+  common::option_initializer<stack_size_option>                      ITYR_ANON_VAR;
+  common::option_initializer<wsqueue_capacity_option>                ITYR_ANON_VAR;
+  common::option_initializer<thread_state_allocator_size_option>     ITYR_ANON_VAR;
+  common::option_initializer<suspended_thread_allocator_size_option> ITYR_ANON_VAR;
 };
 
 }

@@ -119,6 +119,11 @@ struct prof_phase_sched_die : public common::profiler::event {
   std::string str() const override { return "P_sched_die"; }
 };
 
+struct prof_phase_sched_drift_cb : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_drift_cb"; }
+};
+
 struct prof_phase_sched_resume_parent : public common::profiler::event {
   using event::event;
   std::string str() const override { return "P_sched_resume_parent"; }
@@ -149,20 +154,21 @@ public:
   prof_events() {}
 
 private:
-  common::profiler::event_initializer<prof_event_sched_steal>         sched_steal_;
-  common::profiler::event_initializer<prof_event_wsqueue_push>        wsqueue_push_;
-  common::profiler::event_initializer<prof_event_wsqueue_pop>         wsqueue_pop_;
-  common::profiler::event_initializer<prof_event_wsqueue_steal>       wsqueue_steal_;
-  common::profiler::event_initializer<prof_event_wsqueue_empty>       wsqueue_empty_;
-  common::profiler::event_initializer<prof_phase_sched_loop>          phase_sched_loop_;
-  common::profiler::event_initializer<prof_phase_sched_fork>          phase_sched_fork_;
-  common::profiler::event_initializer<prof_phase_sched_join>          phase_sched_join_;
-  common::profiler::event_initializer<prof_phase_sched_die>           phase_sched_die_;
-  common::profiler::event_initializer<prof_phase_sched_resume_parent> phase_sched_resume_parent_;
-  common::profiler::event_initializer<prof_phase_sched_resume_join>   phase_sched_resume_join_;
-  common::profiler::event_initializer<prof_phase_sched_resume_stolen> phase_sched_resume_stolen_;
-  common::profiler::event_initializer<prof_phase_thread>              phase_thread_;
-  common::profiler::event_initializer<prof_phase_spmd>                phase_spmd_;
+  common::profiler::event_initializer<prof_event_sched_steal>         ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_push>        ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_pop>         ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_steal>       ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_empty>       ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_loop>          ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_fork>          ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_join>          ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_die>           ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_drift_cb>      ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_resume_parent> ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_resume_join>   ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_resume_stolen> ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_thread>              ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_spmd>                ITYR_ANON_VAR;
 };
 
 }

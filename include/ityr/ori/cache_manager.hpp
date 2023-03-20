@@ -11,6 +11,7 @@
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
+#include "ityr/ori/prof_events.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
@@ -180,6 +181,7 @@ public:
   }
 
   void release() {
+    ITYR_PROFILER_RECORD(prof_event_release);
     ensure_all_cache_clean();
   }
 
@@ -199,6 +201,8 @@ public:
   }
 
   void acquire() {
+    ITYR_PROFILER_RECORD(prof_event_acquire);
+
     // FIXME: no need to writeback dirty data here?
     ensure_all_cache_clean();
     invalidate_all();
@@ -206,8 +210,11 @@ public:
 
   template <typename ReleaseHandler>
   void acquire(ReleaseHandler rh) {
+    ITYR_PROFILER_RECORD(prof_event_acquire);
+
     ensure_all_cache_clean();
     if constexpr (enable_lazy_release) {
+      ITYR_PROFILER_RECORD(prof_event_acquire_wait);
       rm_.ensure_released(rh);
     }
     invalidate_all();
@@ -216,6 +223,8 @@ public:
   void poll() {
     if constexpr (enable_lazy_release) {
       if (rm_.release_requested()) {
+        ITYR_PROFILER_RECORD(prof_event_release_lazy);
+
         ensure_all_cache_clean();
         ITYR_CHECK(!rm_.release_requested());
       }

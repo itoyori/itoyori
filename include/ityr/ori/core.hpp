@@ -10,7 +10,7 @@
 #include "ityr/common/allocator.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
-#include "ityr/ori/cache_system.hpp"
+#include "ityr/ori/prof_events.hpp"
 #include "ityr/ori/coll_mem.hpp"
 #include "ityr/ori/home_manager.hpp"
 #include "ityr/ori/cache_manager.hpp"
@@ -110,6 +110,8 @@ public:
   }
 
   void get(const void* from_addr, void* to_addr, std::size_t size) {
+    ITYR_PROFILER_RECORD(prof_event_get);
+
     // TODO: support get/put for data larger than the cache size
     if (size <= BlockSize) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
@@ -123,6 +125,8 @@ public:
   }
 
   void put(const void* from_addr, void* to_addr, std::size_t size) {
+    ITYR_PROFILER_RECORD(prof_event_put);
+
     if (size <= BlockSize) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
       checkout_impl<mode::write_t, false>(reinterpret_cast<std::byte*>(to_addr), size);
@@ -139,6 +143,7 @@ public:
   void checkout(void* addr, std::size_t size, Mode) {
     static_assert(!std::is_same_v<Mode, mode::no_access_t>);
 
+    ITYR_PROFILER_RECORD(prof_event_checkout);
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
@@ -149,6 +154,7 @@ public:
   void checkin(void* addr, std::size_t size, Mode) {
     static_assert(!std::is_same_v<Mode, mode::no_access_t>);
 
+    ITYR_PROFILER_RECORD(prof_event_checkin);
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
                     str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 

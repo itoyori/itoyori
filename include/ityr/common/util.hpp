@@ -49,7 +49,7 @@
 #define ITYR_ASSERT(cond) assert(cond)
 #endif
 
-#define ITYR_ANON_VAL ITYR_CONCAT(anon_, __LINE__)
+#define ITYR_ANON_VAR ITYR_CONCAT(anon_, __LINE__)
 
 namespace ityr::common {
 

@@ -132,11 +132,11 @@ struct allocator_max_unflushed_free_objs_option : public option<allocator_max_un
 };
 
 struct runtime_options {
-  option_initializer<enable_shared_memory_option>              ITYR_ANON_VAL;
-  option_initializer<global_clock_sync_round_trips_option>     ITYR_ANON_VAL;
-  option_initializer<prof_output_per_rank_option>              ITYR_ANON_VAL;
-  option_initializer<allocator_block_size_option>              ITYR_ANON_VAL;
-  option_initializer<allocator_max_unflushed_free_objs_option> ITYR_ANON_VAL;
+  option_initializer<enable_shared_memory_option>              ITYR_ANON_VAR;
+  option_initializer<global_clock_sync_round_trips_option>     ITYR_ANON_VAR;
+  option_initializer<prof_output_per_rank_option>              ITYR_ANON_VAR;
+  option_initializer<allocator_block_size_option>              ITYR_ANON_VAR;
+  option_initializer<allocator_max_unflushed_free_objs_option> ITYR_ANON_VAR;
 };
 
 }

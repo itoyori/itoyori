@@ -230,7 +230,7 @@ parallel_loop_generic_aux(parallel_loop_options opts,
     };
 
     ito::thread<retval_t> th(ito::with_callback,
-                             [](bool serialized) { if (!serialized) ori::release(); },
+                             []() { ori::release(); },
                              recur_fn_left);
     if (!th.serialized()) {
       ori::acquire(rh);

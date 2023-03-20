@@ -106,19 +106,19 @@ public:
   prof_events() {}
 
 private:
-  profiler::event_initializer<prof_event_rma_get>               rma_get_;
-  profiler::event_initializer<prof_event_rma_put>               rma_put_;
-  profiler::event_initializer<prof_event_rma_atomic_faa>        rma_atomic_faa_;
-  profiler::event_initializer<prof_event_rma_atomic_cas>        rma_atomic_cas_;
-  profiler::event_initializer<prof_event_rma_atomic_get>        rma_atomic_get_;
-  profiler::event_initializer<prof_event_rma_atomic_put>        rma_atomic_put_;
-  profiler::event_initializer<prof_event_rma_flush>             rma_flush_;
-  profiler::event_initializer<prof_event_global_lock_trylock>   global_lock_trylock_;
-  profiler::event_initializer<prof_event_global_lock_unlock>    global_lock_unlock_;
-  profiler::event_initializer<prof_event_allocator_alloc>       allocator_alloc_;
-  profiler::event_initializer<prof_event_allocator_free_local>  allocator_dealloc_local_;
-  profiler::event_initializer<prof_event_allocator_free_remote> allocator_dealloc_remote_;
-  profiler::event_initializer<prof_event_allocator_collect>     allocator_collect_;
+  profiler::event_initializer<prof_event_rma_get>               ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_put>               ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_atomic_faa>        ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_atomic_cas>        ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_atomic_get>        ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_atomic_put>        ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_flush>             ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_global_lock_trylock>   ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_global_lock_unlock>    ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_allocator_alloc>       ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_allocator_free_local>  ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_allocator_free_remote> ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_allocator_collect>     ITYR_ANON_VAR;
 };
 
 }
