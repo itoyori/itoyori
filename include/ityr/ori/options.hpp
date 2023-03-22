@@ -6,6 +6,11 @@
 namespace ityr::ori {
 
 inline void print_compile_options() {
+#ifndef ITYR_ORI_CORE
+#define ITYR_ORI_CORE default
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_CORE);
+
 #ifndef ITYR_ORI_BLOCK_SIZE
 #define ITYR_ORI_BLOCK_SIZE 65536
 #endif

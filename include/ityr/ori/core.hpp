@@ -18,9 +18,9 @@
 namespace ityr::ori::core {
 
 template <block_size_t BlockSize>
-class core {
+class core_default {
 public:
-  core(std::size_t cache_size, std::size_t sub_block_size)
+  core_default(std::size_t cache_size, std::size_t sub_block_size)
     : noncoll_allocator_(noncoll_allocator_size_option::value()),
       home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
       cache_manager_(cache_size, sub_block_size) {}
@@ -427,6 +427,66 @@ private:
   home_manager<BlockSize>                              home_manager_;
   cache_manager<BlockSize>                             cache_manager_;
 };
+
+template <block_size_t BlockSize>
+class core_serial {
+public:
+  core_serial(std::size_t, std::size_t) {}
+
+  static constexpr block_size_t block_size = BlockSize;
+
+  void* malloc_coll(std::size_t size) { return std::malloc(size); }
+
+  template <template <block_size_t> typename MemMapper, typename... MemMapperArgs>
+  void* malloc_coll(std::size_t size, MemMapperArgs&&...) {
+    return std::malloc(size);
+  }
+
+  void* malloc(std::size_t size) {
+    return std::malloc(size);
+  }
+
+  void free_coll(void* addr) {
+    std::free(addr);
+  }
+
+  void free(void* addr, std::size_t) {
+    std::free(addr);
+  }
+
+  void get(const void* from_addr, void* to_addr, std::size_t size) {
+    std::memcpy(to_addr, from_addr, size);
+  }
+
+  void put(const void* from_addr, void* to_addr, std::size_t size) {
+    std::memcpy(to_addr, from_addr, size);
+  }
+
+  template <typename Mode>
+  void checkout(void*, std::size_t, Mode) {}
+
+  template <typename Mode>
+  void checkin(void*, std::size_t, Mode) {}
+
+  void release() {}
+
+  using release_handler = void*;
+
+  release_handler release_lazy() { return {}; }
+
+  void acquire() {}
+
+  void acquire(release_handler) {}
+
+  void poll() {}
+
+  /* APIs for debugging */
+
+  void* get_local_mem(void* addr) { return addr; }
+};
+
+template <block_size_t BlockSize>
+using core = ITYR_CONCAT(core_, ITYR_ORI_CORE)<BlockSize>;
 
 using instance = common::singleton<core<ITYR_ORI_BLOCK_SIZE>>;
 
