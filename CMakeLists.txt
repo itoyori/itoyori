@@ -47,17 +47,24 @@ if(NOT HAS_STD_MEMORY_RESOURCE)
   target_link_libraries(itoyori INTERFACE ${Boost_LIBRARIES})
 endif()
 
-install(TARGETS itoyori EXPORT itoyori-export)
+install(TARGETS itoyori EXPORT itoyori-targets)
 
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 set(ConfigPackageLocation lib/cmake/itoyori)
-install(EXPORT itoyori-export
-  FILE itoyori-config.cmake
+install(EXPORT itoyori-targets
+  FILE itoyori-targets.cmake
   DESTINATION ${ConfigPackageLocation}
   EXPORT_LINK_INTERFACE_LIBRARIES
+)
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/config.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config.cmake"
+  INSTALL_DESTINATION ${ConfigPackageLocation}
 )
 
 include(CMakePackageConfigHelpers)
@@ -67,7 +74,8 @@ write_basic_package_version_file(
   COMPATIBILITY AnyNewerVersion
 )
 install(
-  FILES "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config-version.cmake"
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/itoyori-config-version.cmake"
   DESTINATION ${ConfigPackageLocation}
 )
 
