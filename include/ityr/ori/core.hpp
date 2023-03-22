@@ -359,9 +359,9 @@ private:
   void checkin_impl(std::byte* addr, std::size_t size) {
     constexpr bool register_dirty = !std::is_same_v<Mode, mode::read_t>;
     if (noncoll_allocator_.has(addr)) {
-      checkin_noncoll<register_dirty, true>(addr, size);
+      checkin_noncoll<register_dirty, DecrementRef>(addr, size);
     } else {
-      checkin_coll<register_dirty, true>(addr, size);
+      checkin_coll<register_dirty, DecrementRef>(addr, size);
     }
   }
 
