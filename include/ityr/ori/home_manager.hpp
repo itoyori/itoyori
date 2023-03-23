@@ -84,7 +84,7 @@ public:
     ITYR_CHECK(size > 0);
 
     if constexpr (!enable_vm_map) {
-      return true;
+      return false;
     }
 
     if constexpr (!DecrementRef) {

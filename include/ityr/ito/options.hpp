@@ -14,26 +14,26 @@ inline void print_compile_options() {
 
 struct stack_size_option : public common::option<stack_size_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ITO_STACK_SIZE"; };
-  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; };
+  static std::string name() { return "ITYR_ITO_STACK_SIZE"; }
+  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; }
 };
 
 struct wsqueue_capacity_option : public common::option<wsqueue_capacity_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ITO_WSQUEUE_CAPACITY"; };
-  static std::size_t default_value() { return 1024; };
+  static std::string name() { return "ITYR_ITO_WSQUEUE_CAPACITY"; }
+  static std::size_t default_value() { return 1024; }
 };
 
 struct thread_state_allocator_size_option : public common::option<thread_state_allocator_size_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ITO_THREAD_STATE_ALLOCATOR_SIZE"; };
-  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; };
+  static std::string name() { return "ITYR_ITO_THREAD_STATE_ALLOCATOR_SIZE"; }
+  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; }
 };
 
 struct suspended_thread_allocator_size_option : public common::option<suspended_thread_allocator_size_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ITO_SUSPENDED_THREAD_ALLOCATOR_SIZE"; };
-  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; };
+  static std::string name() { return "ITYR_ITO_SUSPENDED_THREAD_ALLOCATOR_SIZE"; }
+  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; }
 };
 
 struct runtime_options {

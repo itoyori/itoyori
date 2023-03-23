@@ -453,8 +453,8 @@ private:
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
-        const std::byte* seg_addr_b   = std::max(from_addr, seg_addr);
-        const std::byte* seg_addr_e   = std::min(seg_addr + seg_size, from_addr + size);
+        std::byte* seg_addr_b         = std::max(from_addr, seg_addr);
+        std::byte* seg_addr_e         = std::min(seg_addr + seg_size, from_addr + size);
         std::size_t seg_offset        = seg_addr_b - seg_addr;
         std::byte* from_addr_         = reinterpret_cast<std::byte*>(vm.addr()) + pm_offset + seg_offset;
         std::byte* to_addr_           = to_addr + (seg_addr_b - from_addr);

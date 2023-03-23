@@ -283,8 +283,10 @@ public:
     ITYR_CHECK(is_cached(blk_addr));
     cache_block& cb = get_entry<false>(blk_addr);
 
+    ITYR_CHECK(cb.entry_idx < cs_.num_entries());
+
     std::size_t blk_offset = req_addr_b - blk_addr;
-    std::byte* from_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx + BlockSize + blk_offset;
+    std::byte* from_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx * BlockSize + blk_offset;
     std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
   }
 
@@ -301,8 +303,10 @@ public:
     ITYR_CHECK(is_cached(blk_addr));
     cache_block& cb = get_entry<false>(blk_addr);
 
+    ITYR_CHECK(cb.entry_idx < cs_.num_entries());
+
     std::size_t blk_offset = req_addr_b - blk_addr;
-    std::byte* to_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx + BlockSize + blk_offset;
+    std::byte* to_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx * BlockSize + blk_offset;
     std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
   }
 

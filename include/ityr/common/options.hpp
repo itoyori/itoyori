@@ -103,32 +103,32 @@ inline void print_runtime_options() {
 
 struct enable_shared_memory_option : public option<enable_shared_memory_option, bool> {
   using option::option;
-  static std::string name() { return "ITYR_ENABLE_SHARED_MEMORY"; };
-  static bool default_value() { return true; };
+  static std::string name() { return "ITYR_ENABLE_SHARED_MEMORY"; }
+  static bool default_value() { return true; }
 };
 
 struct global_clock_sync_round_trips_option : public option<global_clock_sync_round_trips_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_GLOBAL_CLOCK_SYNC_ROUND_TRIPS"; };
-  static std::size_t default_value() { return 100; };
+  static std::string name() { return "ITYR_GLOBAL_CLOCK_SYNC_ROUND_TRIPS"; }
+  static std::size_t default_value() { return 100; }
 };
 
 struct prof_output_per_rank_option : public option<prof_output_per_rank_option, bool> {
   using option::option;
-  static std::string name() { return "ITYR_PROF_OUTPUT_PER_RANK"; };
-  static bool default_value() { return false; };
+  static std::string name() { return "ITYR_PROF_OUTPUT_PER_RANK"; }
+  static bool default_value() { return false; }
 };
 
 struct allocator_block_size_option : public option<allocator_block_size_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ALLOCATOR_BLOCK_SIZE"; };
-  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; };
+  static std::string name() { return "ITYR_ALLOCATOR_BLOCK_SIZE"; }
+  static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; }
 };
 
 struct allocator_max_unflushed_free_objs_option : public option<allocator_max_unflushed_free_objs_option, std::size_t> {
   using option::option;
-  static std::string name() { return "ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS"; };
-  static std::size_t default_value() { return 10; };
+  static std::string name() { return "ITYR_ALLOCATOR_MAX_UNFLUSHED_FREE_OBJS"; }
+  static std::size_t default_value() { return 10; }
 };
 
 struct runtime_options {
