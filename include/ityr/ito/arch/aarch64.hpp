@@ -156,6 +156,19 @@ public:
     // discard the current context
   }
 
+  static void clear_parent_frame(context_frame* cf) {
+    // Workaround for generating backtracing.
+    // Backtracing in libunwind often causes segfault because of the stack management.
+    // That is, because stacks are moved across different nodes, their parent stack may not exist
+    // in the current node. Thus, we clear the frame pointer and instruction pointer outside the
+    // current stack (which should be in the parent stack area), so that backtracing does not
+    // go further than that.
+    if (cf->parent_frame) {
+      cf->parent_frame->fp = nullptr;
+      cf->parent_frame->lr = nullptr;
+    }
+  }
+
 };
 
 }

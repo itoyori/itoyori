@@ -53,7 +53,6 @@ public:
 
     suspend([&, ts](context_frame* cf) {
       sched_cf_ = cf;
-      cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom());
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
@@ -309,6 +308,7 @@ private:
     context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base);
     suspend([&](context_frame* cf) {
       sched_cf_ = cf;
+      context::clear_parent_frame(next_cf);
       resume(next_cf);
     });
   }
@@ -347,6 +347,7 @@ private:
       allocator.deallocate(evacuation_ptr, frame_size);
 
       context_frame* cf = reinterpret_cast<context_frame*>(frame_base);
+      context::clear_parent_frame(cf);
       context::resume(cf);
     }, &suspended_thread_allocator_, ss.evacuation_ptr, ss.frame_base, reinterpret_cast<void*>(ss.frame_size));
   }
@@ -359,7 +360,11 @@ private:
 
   template <typename Fn>
   void root_on_stack(Fn&& fn) {
-    context::call_on_stack(stack_.top(), stack_.size(), [](void* fn_, void*, void*, void*) {
+    // Add a margin of sizeof(context_frame) to the bottom of the stack, because
+    // this region can be accessed by the clear_parent_frame() function later
+    cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
+    context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
+                           [](void* fn_, void*, void*, void*) {
       Fn fn = *reinterpret_cast<Fn*>(fn_); // copy closure to the new stack frame
       fn();
     }, &fn, nullptr, nullptr, nullptr);
