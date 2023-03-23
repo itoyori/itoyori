@@ -19,6 +19,8 @@ namespace ityr::ori::core {
 
 template <block_size_t BlockSize>
 class core_default {
+  static constexpr bool enable_vm_map = ITYR_ORI_ENABLE_VM_MAP;
+
 public:
   core_default(std::size_t cache_size, std::size_t sub_block_size)
     : noncoll_allocator_(noncoll_allocator_size_option::value()),
@@ -112,36 +114,44 @@ public:
   void get(const void* from_addr, void* to_addr, std::size_t size) {
     ITYR_PROFILER_RECORD(prof_event_get);
 
+    std::byte* from_addr_ = reinterpret_cast<std::byte*>(const_cast<void*>(from_addr));
+
     // TODO: support get/put for data larger than the cache size
     if (size <= BlockSize) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl<mode::read_t, false>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
-      std::memcpy(to_addr, from_addr, size);
+      checkout_impl<mode::read_t, false>(from_addr_, size);
+      get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
     } else {
-      checkout_impl<mode::read_t, true>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
-      std::memcpy(to_addr, from_addr, size);
-      checkin_impl<mode::read_t, true>(reinterpret_cast<std::byte*>(const_cast<void*>(from_addr)), size);
+      checkout_impl<mode::read_t, true>(from_addr_, size);
+      get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
+      checkin_impl<mode::read_t, true>(from_addr_, size);
     }
   }
 
   void put(const void* from_addr, void* to_addr, std::size_t size) {
     ITYR_PROFILER_RECORD(prof_event_put);
 
+    std::byte* to_addr_ = reinterpret_cast<std::byte*>(to_addr);
+
     if (size <= BlockSize) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl<mode::write_t, false>(reinterpret_cast<std::byte*>(to_addr), size);
-      std::memcpy(to_addr, from_addr, size);
-      checkin_impl<mode::write_t, false>(reinterpret_cast<std::byte*>(to_addr), size);
+      checkout_impl<mode::write_t, false>(to_addr_, size);
+      put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
+      checkin_impl<mode::write_t, false>(to_addr_, size);
     } else {
-      checkout_impl<mode::write_t, true>(reinterpret_cast<std::byte*>(to_addr), size);
-      std::memcpy(to_addr, from_addr, size);
-      checkin_impl<mode::write_t, true>(reinterpret_cast<std::byte*>(to_addr), size);
+      checkout_impl<mode::write_t, true>(to_addr_, size);
+      put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
+      checkin_impl<mode::write_t, true>(to_addr_, size);
     }
   }
 
   template <typename Mode>
   void checkout(void* addr, std::size_t size, Mode) {
     static_assert(!std::is_same_v<Mode, mode::no_access_t>);
+
+    if constexpr (!enable_vm_map) {
+      common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
+    }
 
     ITYR_PROFILER_RECORD(prof_event_checkout);
     common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
@@ -153,6 +163,10 @@ public:
   template <typename Mode>
   void checkin(void* addr, std::size_t size, Mode) {
     static_assert(!std::is_same_v<Mode, mode::no_access_t>);
+
+    if constexpr (!enable_vm_map) {
+      common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
+    }
 
     ITYR_PROFILER_RECORD(prof_event_checkin);
     common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
@@ -243,27 +257,27 @@ private:
   }
 
   template <typename Fn>
-  void for_each_block(void* addr, std::size_t size, Fn&& fn) {
+  void for_each_block(void* addr, std::size_t size, Fn fn) {
     std::byte* blk_addr_b = common::round_down_pow2(reinterpret_cast<std::byte*>(addr), BlockSize);
     std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
 
     for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
       std::byte* req_addr_b = std::max(reinterpret_cast<std::byte*>(addr), blk_addr);
       std::byte* req_addr_e = std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize);
-      std::forward<Fn>(fn)(blk_addr, req_addr_b, req_addr_e);
+      fn(blk_addr, req_addr_b, req_addr_e);
     }
   }
 
   template <typename HomeSegFn, typename CacheBlkFn>
   void for_each_seg(const coll_mem& cm, void* addr, std::size_t size,
-                    HomeSegFn&& home_seg_fn, CacheBlkFn&& cache_blk_fn) {
+                    HomeSegFn home_seg_fn, CacheBlkFn cache_blk_fn) {
     for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
       std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
       std::size_t seg_size = seg.offset_e - seg.offset_b;
 
       if (common::topology::is_locally_accessible(seg.owner)) {
         // no need to iterate over memory blocks (of BlockSize) for home segments
-        std::forward<HomeSegFn>(home_seg_fn)(seg_addr, seg_size, seg.owner, seg.pm_offset);
+        home_seg_fn(seg_addr, seg_size, seg.owner, seg.pm_offset);
 
       } else {
         // iterate over memory blocks within the memory segment for cache blocks
@@ -274,7 +288,7 @@ private:
                                                     std::byte* req_addr_e) {
           std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
           ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
-          std::forward<CacheBlkFn>(cache_blk_fn)(blk_addr, req_addr_b, req_addr_e, seg.owner, pm_offset);
+          cache_blk_fn(blk_addr, req_addr_b, req_addr_e, seg.owner, pm_offset);
         });
       }
     });
@@ -413,6 +427,121 @@ private:
                                    std::byte* req_addr_e) {
       cache_manager_.template checkin_blk<RegisterDirty, DecrementRef>(
           blk_addr, req_addr_b, req_addr_e);
+    });
+  }
+
+  /*
+   * The following get/put_copy_* functions are mainly for performance evaluation for cases
+   * in which virtual memory mapping is not used and instead the data are always copied between
+   * the cache region and the user buffer via GET/PUT calls. Thus, checkout/checkin cannot be
+   * used when enable_vm_map is false.
+   */
+
+  void get_copy_impl(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    if constexpr (enable_vm_map) {
+      std::memcpy(to_addr, from_addr, size);
+    } else if (noncoll_allocator_.has(from_addr)) {
+      get_copy_noncoll(from_addr, to_addr, size);
+    } else {
+      get_copy_coll(from_addr, to_addr, size);
+    }
+  }
+
+  void get_copy_coll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(!enable_vm_map);
+
+    coll_mem& cm = coll_mem_get(from_addr);
+
+    for_each_seg(cm, from_addr, size,
+      // home segment
+      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+        const std::byte* seg_addr_b   = std::max(from_addr, seg_addr);
+        const std::byte* seg_addr_e   = std::min(seg_addr + seg_size, from_addr + size);
+        std::size_t seg_offset        = seg_addr_b - seg_addr;
+        std::byte* from_addr_         = reinterpret_cast<std::byte*>(vm.addr()) + pm_offset + seg_offset;
+        std::byte* to_addr_           = to_addr + (seg_addr_b - from_addr);
+        std::memcpy(to_addr_, from_addr_, seg_addr_e - seg_addr_b);
+      },
+      // cache block
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t, std::size_t) {
+        cache_manager_.get_copy_blk(blk_addr, req_addr_b, req_addr_e, to_addr + (req_addr_b - from_addr));
+      });
+  }
+
+  void get_copy_noncoll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(!enable_vm_map);
+
+    ITYR_CHECK(noncoll_allocator_.has(from_addr));
+
+    auto target_rank = noncoll_allocator_.get_owner(from_addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      std::memcpy(to_addr, from_addr, size);
+      return;
+    }
+
+    for_each_block(from_addr, size, [&](std::byte* blk_addr,
+                                        std::byte* req_addr_b,
+                                        std::byte* req_addr_e) {
+      cache_manager_.get_copy_blk(blk_addr, req_addr_b, req_addr_e, to_addr + (req_addr_b - from_addr));
+    });
+  }
+
+  void put_copy_impl(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    if constexpr (enable_vm_map) {
+      std::memcpy(to_addr, from_addr, size);
+    } else if (noncoll_allocator_.has(to_addr)) {
+      put_copy_noncoll(from_addr, to_addr, size);
+    } else {
+      put_copy_coll(from_addr, to_addr, size);
+    }
+  }
+
+  void put_copy_coll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(!enable_vm_map);
+
+    coll_mem& cm = coll_mem_get(to_addr);
+
+    for_each_seg(cm, to_addr, size,
+      // home segment
+      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+        std::byte* seg_addr_b         = std::max(to_addr, seg_addr);
+        std::byte* seg_addr_e         = std::min(seg_addr + seg_size, to_addr + size);
+        std::size_t seg_offset        = seg_addr_b - seg_addr;
+        const std::byte* from_addr_   = from_addr + (seg_addr_b - to_addr);
+        std::byte* to_addr_           = reinterpret_cast<std::byte*>(vm.addr()) + pm_offset + seg_offset;
+        std::memcpy(to_addr_, from_addr_, seg_addr_e - seg_addr_b);
+      },
+      // cache block
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t, std::size_t) {
+        cache_manager_.put_copy_blk(blk_addr, req_addr_b, req_addr_e, from_addr + (req_addr_b - to_addr));
+      });
+  }
+
+  void put_copy_noncoll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(!enable_vm_map);
+
+    ITYR_CHECK(noncoll_allocator_.has(to_addr));
+
+    auto target_rank = noncoll_allocator_.get_owner(to_addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      std::memcpy(to_addr, from_addr, size);
+      return;
+    }
+
+    for_each_block(to_addr, size, [&](std::byte* blk_addr,
+                                      std::byte* req_addr_b,
+                                      std::byte* req_addr_e) {
+      cache_manager_.put_copy_blk(blk_addr, req_addr_b, req_addr_e, from_addr + (req_addr_b - to_addr));
     });
   }
 

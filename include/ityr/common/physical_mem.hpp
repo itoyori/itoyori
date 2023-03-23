@@ -46,6 +46,8 @@ public:
     return *this;
   }
 
+  std::size_t size() const { return size_; }
+
   void map_to_vm(void* addr, std::size_t size, std::size_t offset) const {
     ITYR_CHECK(addr != nullptr);
     ITYR_CHECK(reinterpret_cast<uintptr_t>(addr) % get_page_size() == 0);

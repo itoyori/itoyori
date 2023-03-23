@@ -30,6 +30,16 @@ inline void print_compile_options() {
 #define ITYR_ORI_ENABLE_LAZY_RELEASE true
 #endif
   ITYR_PRINT_MACRO(ITYR_ORI_ENABLE_LAZY_RELEASE);
+
+#ifndef ITYR_ORI_ENABLE_VM_MAP
+#define ITYR_ORI_ENABLE_VM_MAP true
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_ENABLE_VM_MAP);
+
+#ifndef ITYR_ORI_FORCE_GETPUT
+#define ITYR_ORI_FORCE_GETPUT false
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_FORCE_GETPUT);
 }
 
 struct cache_size_option : public common::option<cache_size_option, std::size_t> {

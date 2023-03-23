@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <algorithm>
 
 #include "ityr/common/util.hpp"
@@ -23,6 +24,7 @@ template <block_size_t BlockSize>
 class cache_manager {
   static constexpr bool enable_write_through = ITYR_ORI_ENABLE_WRITE_THROUGH;
   static constexpr bool enable_lazy_release = ITYR_ORI_ENABLE_LAZY_RELEASE;
+  static constexpr bool enable_vm_map = ITYR_ORI_ENABLE_VM_MAP;
 
 public:
   cache_manager(std::size_t cache_size, std::size_t sub_block_size)
@@ -67,7 +69,7 @@ public:
       }
     }
 
-    if constexpr (IncrementRef) {
+    if constexpr (enable_vm_map && IncrementRef) {
       cb.ref_count++;
     }
 
@@ -94,7 +96,11 @@ public:
       cb.win       = win;
       cb.owner     = owner;
       cb.pm_offset = pm_offset;
-      cache_blocks_to_map_.push_back(&cb);
+      if constexpr (enable_vm_map) {
+        cache_blocks_to_map_.push_back(&cb);
+      } else {
+        cb.mapped_addr = blk_addr;
+      }
     }
 
     block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
@@ -107,7 +113,7 @@ public:
       }
     }
 
-    if constexpr (IncrementRef) {
+    if constexpr (enable_vm_map && IncrementRef) {
       cb.ref_count++;
     }
 
@@ -116,11 +122,13 @@ public:
 
   void checkout_complete(MPI_Win win) {
     // Overlap communication and memory remapping
-    if (!cache_blocks_to_map_.empty()) {
-      for (cache_block* cb : cache_blocks_to_map_) {
-        update_mapping(*cb);
+    if constexpr (enable_vm_map) {
+      if (!cache_blocks_to_map_.empty()) {
+        for (cache_block* cb : cache_blocks_to_map_) {
+          update_mapping(*cb);
+        }
+        cache_blocks_to_map_.clear();
       }
-      cache_blocks_to_map_.clear();
     }
 
     if (fetching_) {
@@ -151,7 +159,7 @@ public:
       add_dirty_region(cb, br);
     }
 
-    if constexpr (DecrementRef) {
+    if constexpr (enable_vm_map && DecrementRef) {
       cb.ref_count--;
     }
 
@@ -175,7 +183,7 @@ public:
       add_dirty_region(cb, br);
     }
 
-    if constexpr (DecrementRef) {
+    if constexpr (enable_vm_map && DecrementRef) {
       cb.ref_count--;
     }
   }
@@ -260,6 +268,42 @@ public:
       block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
       cb.dirty_regions.remove(br);
     }
+  }
+
+  void get_copy_blk(std::byte* blk_addr,
+                    std::byte* req_addr_b,
+                    std::byte* req_addr_e,
+                    std::byte* to_addr) {
+    ITYR_CHECK(blk_addr <= req_addr_b);
+    ITYR_CHECK(blk_addr <= req_addr_e);
+    ITYR_CHECK(req_addr_b <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_e <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_b < req_addr_e);
+
+    ITYR_CHECK(is_cached(blk_addr));
+    cache_block& cb = get_entry<false>(blk_addr);
+
+    std::size_t blk_offset = req_addr_b - blk_addr;
+    std::byte* from_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx + BlockSize + blk_offset;
+    std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
+  }
+
+  void put_copy_blk(std::byte*       blk_addr,
+                    std::byte*       req_addr_b,
+                    std::byte*       req_addr_e,
+                    const std::byte* from_addr) {
+    ITYR_CHECK(blk_addr <= req_addr_b);
+    ITYR_CHECK(blk_addr <= req_addr_e);
+    ITYR_CHECK(req_addr_b <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_e <= blk_addr + BlockSize);
+    ITYR_CHECK(req_addr_b < req_addr_e);
+
+    ITYR_CHECK(is_cached(blk_addr));
+    cache_block& cb = get_entry<false>(blk_addr);
+
+    std::size_t blk_offset = req_addr_b - blk_addr;
+    std::byte* to_addr = reinterpret_cast<std::byte*>(vm_.addr()) + cb.entry_idx + BlockSize + blk_offset;
+    std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
   }
 
 private:

@@ -86,8 +86,24 @@ inline void put(const T* from_ptr, global_ptr<T> to_ptr, std::size_t count) {
   core::instance::get().put(from_ptr, to_ptr.raw_ptr(), count * sizeof(T));
 }
 
+inline constexpr bool force_getput = ITYR_ORI_FORCE_GETPUT;
+
+template <bool SkipFetch, typename T>
+inline T* checkout_with_getput(global_ptr<T> ptr, std::size_t count) {
+  std::size_t size = count * sizeof(T);
+  auto ret = reinterpret_cast<std::remove_const_t<T>*>(std::malloc(size + sizeof(void*)));
+  if (!SkipFetch) {
+    core::instance::get().get(ptr.raw_ptr(), ret, size);
+  }
+  *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(ret) + size) = ptr.raw_ptr();
+  return ret;
+}
+
 template <typename T>
 inline const T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_t) {
+  if constexpr (force_getput) {
+    return checkout_with_getput<false>(ptr, count);
+  }
   core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::read);
   return ptr.raw_ptr();
 }
@@ -95,6 +111,9 @@ inline const T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_t) {
 template <typename T>
 inline T* checkout(global_ptr<T> ptr, std::size_t count, mode::write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with write access mode");
+  if constexpr (force_getput) {
+    return checkout_with_getput<true>(ptr, count);
+  }
   core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::write);
   return ptr.raw_ptr();
 }
@@ -102,24 +121,50 @@ inline T* checkout(global_ptr<T> ptr, std::size_t count, mode::write_t) {
 template <typename T>
 inline T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with read+write access mode");
+  if constexpr (force_getput) {
+    return checkout_with_getput<false>(ptr, count);
+  }
   core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::read_write);
   return ptr.raw_ptr();
 }
 
+template <bool RegisterDirty, typename T>
+inline void checkin_with_getput(T* raw_ptr, std::size_t count) {
+  std::size_t size = count * sizeof(T);
+  void* gptr = *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(
+        const_cast<std::remove_const_t<T>*>(raw_ptr)) + size);
+  if constexpr (RegisterDirty) {
+    core::instance::get().put(raw_ptr, gptr, size);
+  }
+  std::free(const_cast<std::remove_const_t<T>*>(raw_ptr));
+}
+
 template <typename T>
 inline void checkin(const T* raw_ptr, std::size_t count, mode::read_t) {
+  if constexpr (force_getput) {
+    checkin_with_getput<false>(raw_ptr, count);
+    return;
+  }
   core::instance::get().checkin(const_cast<T*>(raw_ptr), count * sizeof(T), mode::read);
 }
 
 template <typename T>
 inline void checkin(T* raw_ptr, std::size_t count, mode::write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked in with write access mode");
+  if constexpr (force_getput) {
+    checkin_with_getput<true>(raw_ptr, count);
+    return;
+  }
   core::instance::get().checkin(raw_ptr, count * sizeof(T), mode::write);
 }
 
 template <typename T>
 inline void checkin(T* raw_ptr, std::size_t count, mode::read_write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked in with read+write access mode");
+  if constexpr (force_getput) {
+    checkin_with_getput<true>(raw_ptr, count);
+    return;
+  }
   core::instance::get().checkin(raw_ptr, count * sizeof(T), mode::read_write);
 }
 

@@ -9,6 +9,7 @@
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
+#include "ityr/ori/options.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
@@ -17,6 +18,8 @@ namespace ityr::ori {
 
 template <block_size_t BlockSize>
 class home_manager {
+  static constexpr bool enable_vm_map = ITYR_ORI_ENABLE_VM_MAP;
+
 public:
   home_manager(std::size_t mmap_entry_limit)
     : mmap_entry_limit_(mmap_entry_limit),
@@ -26,6 +29,10 @@ public:
   bool checkout_fast(std::byte* addr, std::size_t size) {
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
+
+    if constexpr (!enable_vm_map) {
+      return false;
+    }
 
     auto meo = home_tlb_.get([&](const common::span<std::byte>& seg) {
       return seg.data() <= addr && addr + size <= seg.data() + seg.size();
@@ -50,6 +57,10 @@ public:
     ITYR_CHECK(seg_addr);
     ITYR_CHECK(seg_size > 0);
 
+    if constexpr (!enable_vm_map) {
+      return;
+    }
+
     mmap_entry& me = get_entry(seg_addr);
 
     if (seg_addr != me.mapped_addr) {
@@ -72,6 +83,10 @@ public:
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
+    if constexpr (!enable_vm_map) {
+      return true;
+    }
+
     if constexpr (!DecrementRef) {
       return false;
     }
@@ -91,6 +106,10 @@ public:
 
   template <bool DecrementRef>
   void checkin_seg(std::byte* seg_addr) {
+    if constexpr (!enable_vm_map) {
+      return;
+    }
+
     if constexpr (DecrementRef) {
       mmap_entry& me = get_entry<false>(seg_addr);
       me.ref_count--;
@@ -98,6 +117,10 @@ public:
   }
 
   void checkout_complete() {
+    if constexpr (!enable_vm_map) {
+      return;
+    }
+
     if (!home_segments_to_map_.empty()) {
       for (mmap_entry* me : home_segments_to_map_) {
         update_mapping(*me);
@@ -107,6 +130,10 @@ public:
   }
 
   void ensure_evicted(void* addr) {
+    if constexpr (!enable_vm_map) {
+      return;
+    }
+
     cs_.ensure_evicted(cache_key(addr));
   }
 
