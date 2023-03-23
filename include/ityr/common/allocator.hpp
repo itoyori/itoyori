@@ -149,7 +149,7 @@ public:
       std_pool_mr_(my_std_pool_options(), &block_mr_),
       max_unflushed_free_objs_(allocator_max_unflushed_free_objs_option::value()),
       allocated_size_(0),
-      allocated_size_threshold_(std::size_t(2) * 1024 * 1024) {}
+      allocated_size_threshold_(std::size_t(16) * 1024) {}
 
   MPI_Win win() const { return win_.win(); }
 
