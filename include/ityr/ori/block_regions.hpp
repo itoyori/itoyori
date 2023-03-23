@@ -12,9 +12,9 @@ struct block_region {
   template <typename T1, typename T2>
   block_region(T1 b, T2 e) {
     ITYR_CHECK(0 <= b);
-    ITYR_CHECK(b < std::numeric_limits<block_size_t>::max());
+    ITYR_CHECK(b < static_cast<T1>(std::numeric_limits<block_size_t>::max()));
     ITYR_CHECK(0 <= e);
-    ITYR_CHECK(e < std::numeric_limits<block_size_t>::max());
+    ITYR_CHECK(e < static_cast<T2>(std::numeric_limits<block_size_t>::max()));
     begin = static_cast<block_size_t>(b);
     end   = static_cast<block_size_t>(e);
   }

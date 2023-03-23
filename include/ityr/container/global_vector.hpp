@@ -393,8 +393,8 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
                             count_iterator<long>(0),
                             count_iterator<long>(n));
     ITYR_CHECK(!gv1.empty());
-    ITYR_CHECK(gv1.size() == n);
-    ITYR_CHECK(gv1.capacity() >= n);
+    ITYR_CHECK(gv1.size() == std::size_t(n));
+    ITYR_CHECK(gv1.capacity() >= std::size_t(n));
     root_exec([&] {
       long count = parallel_reduce({.cutoff_count   = 128,
                                     .checkout_count = 128},
@@ -473,7 +473,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     ITYR_SUBCASE("clear") {
       gv1.clear();
       ITYR_CHECK(gv1.empty());
-      ITYR_CHECK(gv1.capacity() >= n);
+      ITYR_CHECK(gv1.capacity() >= std::size_t(n));
     }
 
     ITYR_SUBCASE("move-only elems") {
