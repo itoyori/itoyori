@@ -540,7 +540,7 @@ public:
 
     auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
-    coll_mem& cm = coll_mem_create(size, std::move(mmapper));
+    coll_mem& cm = cm_manager_.create(size, std::move(mmapper));
     void* addr = cm.vm().addr();
 
     common::verbose("Allocate collective memory [%p, %p) (%ld bytes) (win=%p)",
