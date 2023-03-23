@@ -17,6 +17,44 @@
 
 namespace ityr::ori::core {
 
+template <block_size_t BlockSize, typename Fn>
+void for_each_block(void* addr, std::size_t size, Fn fn) {
+  std::byte* blk_addr_b = common::round_down_pow2(reinterpret_cast<std::byte*>(addr), BlockSize);
+  std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
+
+  for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
+    std::byte* req_addr_b = std::max(reinterpret_cast<std::byte*>(addr), blk_addr);
+    std::byte* req_addr_e = std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize);
+    fn(blk_addr, req_addr_b, req_addr_e);
+  }
+}
+
+template <block_size_t BlockSize, typename HomeSegFn, typename CacheBlkFn>
+void for_each_seg_blk(const coll_mem& cm, void* addr, std::size_t size,
+                      HomeSegFn home_seg_fn, CacheBlkFn cache_blk_fn) {
+  for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
+    std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
+    std::size_t seg_size = seg.offset_e - seg.offset_b;
+
+    if (common::topology::is_locally_accessible(seg.owner)) {
+      // no need to iterate over memory blocks (of BlockSize) for home segments
+      home_seg_fn(seg_addr, seg_size, seg.owner, seg.pm_offset);
+
+    } else {
+      // iterate over memory blocks within the memory segment for cache blocks
+      std::byte* addr_b = std::max(seg_addr, reinterpret_cast<std::byte*>(addr));
+      std::byte* addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
+      for_each_block<BlockSize>(addr_b, addr_e - addr_b, [&](std::byte* blk_addr,
+                                                             std::byte* req_addr_b,
+                                                             std::byte* req_addr_e) {
+        std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
+        ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
+        cache_blk_fn(blk_addr, req_addr_b, req_addr_e, seg.owner, pm_offset);
+      });
+    }
+  });
+}
+
 template <block_size_t BlockSize>
 class core_default {
   static constexpr bool enable_vm_map = ITYR_ORI_ENABLE_VM_MAP;
@@ -98,9 +136,9 @@ public:
 
     } else {
       // ensure dirty data of this memory object are discarded
-      for_each_block(addr, size, [&](std::byte* blk_addr,
-                                     std::byte* req_addr_b,
-                                     std::byte* req_addr_e) {
+      for_each_block<BlockSize>(addr, size, [&](std::byte* blk_addr,
+                                                std::byte* req_addr_b,
+                                                std::byte* req_addr_e) {
         cache_manager_.discard_dirty(blk_addr, req_addr_b, req_addr_e);
       });
 
@@ -256,44 +294,6 @@ private:
     coll_mems_[cm.id()].reset();
   }
 
-  template <typename Fn>
-  void for_each_block(void* addr, std::size_t size, Fn fn) {
-    std::byte* blk_addr_b = common::round_down_pow2(reinterpret_cast<std::byte*>(addr), BlockSize);
-    std::byte* blk_addr_e = reinterpret_cast<std::byte*>(addr) + size;
-
-    for (std::byte* blk_addr = blk_addr_b; blk_addr < blk_addr_e; blk_addr += BlockSize) {
-      std::byte* req_addr_b = std::max(reinterpret_cast<std::byte*>(addr), blk_addr);
-      std::byte* req_addr_e = std::min(reinterpret_cast<std::byte*>(addr) + size, blk_addr + BlockSize);
-      fn(blk_addr, req_addr_b, req_addr_e);
-    }
-  }
-
-  template <typename HomeSegFn, typename CacheBlkFn>
-  void for_each_seg(const coll_mem& cm, void* addr, std::size_t size,
-                    HomeSegFn home_seg_fn, CacheBlkFn cache_blk_fn) {
-    for_each_mem_segment(cm, addr, size, [&](const auto& seg) {
-      std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
-      std::size_t seg_size = seg.offset_e - seg.offset_b;
-
-      if (common::topology::is_locally_accessible(seg.owner)) {
-        // no need to iterate over memory blocks (of BlockSize) for home segments
-        home_seg_fn(seg_addr, seg_size, seg.owner, seg.pm_offset);
-
-      } else {
-        // iterate over memory blocks within the memory segment for cache blocks
-        std::byte* addr_b = std::max(seg_addr, reinterpret_cast<std::byte*>(addr));
-        std::byte* addr_e = std::min(seg_addr + seg_size, reinterpret_cast<std::byte*>(addr) + size);
-        for_each_block(addr_b, addr_e - addr_b, [&](std::byte* blk_addr,
-                                                    std::byte* req_addr_b,
-                                                    std::byte* req_addr_e) {
-          std::size_t pm_offset = seg.pm_offset + (blk_addr - seg_addr);
-          ITYR_CHECK(pm_offset + BlockSize <= cm.mem_mapper().local_size(seg.owner));
-          cache_blk_fn(blk_addr, req_addr_b, req_addr_e, seg.owner, pm_offset);
-        });
-      }
-    });
-  }
-
   template <typename Mode, bool IncrementRef>
   void checkout_impl(std::byte* addr, std::size_t size) {
     constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
@@ -316,7 +316,7 @@ private:
 
     coll_mem& cm = coll_mem_get(addr);
 
-    for_each_seg(cm, addr, size,
+    for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         home_manager_.template checkout_seg<IncrementRef>(
@@ -353,9 +353,9 @@ private:
       return;
     }
 
-    for_each_block(addr, size, [&](std::byte* blk_addr,
-                                   std::byte* req_addr_b,
-                                   std::byte* req_addr_e) {
+    for_each_block<BlockSize>(addr, size, [&](std::byte* blk_addr,
+                                              std::byte* req_addr_b,
+                                              std::byte* req_addr_e) {
       cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
           blk_addr, req_addr_b, req_addr_e,
           noncoll_allocator_.win(),
@@ -388,7 +388,7 @@ private:
 
     coll_mem& cm = coll_mem_get(addr);
 
-    for_each_seg(cm, addr, size,
+    for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t, common::topology::rank_t, std::size_t) {
         home_manager_.template checkin_seg<DecrementRef>(seg_addr);
@@ -419,9 +419,9 @@ private:
       return;
     }
 
-    for_each_block(addr, size, [&](std::byte* blk_addr,
-                                   std::byte* req_addr_b,
-                                   std::byte* req_addr_e) {
+    for_each_block<BlockSize>(addr, size, [&](std::byte* blk_addr,
+                                              std::byte* req_addr_b,
+                                              std::byte* req_addr_e) {
       cache_manager_.template checkin_blk<RegisterDirty, DecrementRef>(
           blk_addr, req_addr_b, req_addr_e);
     });
@@ -449,7 +449,7 @@ private:
 
     coll_mem& cm = coll_mem_get(from_addr);
 
-    for_each_seg(cm, from_addr, size,
+    for_each_seg_blk<BlockSize>(cm, from_addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
@@ -481,9 +481,9 @@ private:
       return;
     }
 
-    for_each_block(from_addr, size, [&](std::byte* blk_addr,
-                                        std::byte* req_addr_b,
-                                        std::byte* req_addr_e) {
+    for_each_block<BlockSize>(from_addr, size, [&](std::byte* blk_addr,
+                                                   std::byte* req_addr_b,
+                                                   std::byte* req_addr_e) {
       cache_manager_.get_copy_blk(blk_addr, req_addr_b, req_addr_e, to_addr + (req_addr_b - from_addr));
     });
   }
@@ -503,7 +503,7 @@ private:
 
     coll_mem& cm = coll_mem_get(to_addr);
 
-    for_each_seg(cm, to_addr, size,
+    for_each_seg_blk<BlockSize>(cm, to_addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
@@ -535,9 +535,9 @@ private:
       return;
     }
 
-    for_each_block(to_addr, size, [&](std::byte* blk_addr,
-                                      std::byte* req_addr_b,
-                                      std::byte* req_addr_e) {
+    for_each_block<BlockSize>(to_addr, size, [&](std::byte* blk_addr,
+                                                 std::byte* req_addr_b,
+                                                 std::byte* req_addr_e) {
       cache_manager_.put_copy_blk(blk_addr, req_addr_b, req_addr_e, from_addr + (req_addr_b - to_addr));
     });
   }
@@ -552,6 +552,281 @@ private:
 
   home_manager<BlockSize>                              home_manager_;
   cache_manager<BlockSize>                             cache_manager_;
+};
+
+template <block_size_t BlockSize>
+class core_nocache {
+public:
+  core_nocache(std::size_t, std::size_t)
+    : noncoll_allocator_(noncoll_allocator_size_option::value()) {}
+
+  static constexpr block_size_t block_size = BlockSize;
+
+  void* malloc_coll(std::size_t size) { return malloc_coll<default_mem_mapper>(size); }
+
+  template <template <block_size_t> typename MemMapper, typename... MemMapperArgs>
+  void* malloc_coll(std::size_t size, MemMapperArgs&&... mmargs) {
+    if (size == 0) {
+      common::die("Memory allocation size cannot be 0");
+    }
+
+    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
+                                                          std::forward<MemMapperArgs>(mmargs)...);
+    coll_mem& cm = coll_mem_create(size, std::move(mmapper));
+    void* addr = cm.vm().addr();
+
+    common::verbose("Allocate collective memory [%p, %p) (%ld bytes) (win=%p)",
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
+
+    return addr;
+  }
+
+  void* malloc(std::size_t size) {
+    ITYR_CHECK_MESSAGE(size > 0, "Memory allocation size cannot be 0");
+
+    void* addr = noncoll_allocator_.allocate(size);
+
+    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes)",
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
+    return addr;
+  }
+
+  void free_coll(void* addr) {
+    if (!addr) {
+      common::die("Null pointer was passed to free_coll()");
+    }
+
+    coll_mem& cm = coll_mem_get(addr);
+    ITYR_CHECK(addr == cm.vm().addr());
+
+    common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
+                    addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
+
+    coll_mem_destroy(cm);
+  }
+
+  void free(void* addr, std::size_t size) {
+    ITYR_CHECK_MESSAGE(addr, "Null pointer was passed to free()");
+    ITYR_CHECK(noncoll_allocator_.has(addr));
+
+    common::topology::rank_t target_rank = noncoll_allocator_.get_owner(addr);
+
+    if (target_rank == common::topology::my_rank()) {
+      noncoll_allocator_.local_deallocate(addr, size);
+
+      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
+                      addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
+    } else {
+      noncoll_allocator_.remote_deallocate(addr, size, target_rank);
+
+      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
+                      addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
+    }
+  }
+
+  void get(const void* from_addr, void* to_addr, std::size_t size) {
+    ITYR_PROFILER_RECORD(prof_event_get);
+
+    std::byte* from_addr_ = reinterpret_cast<std::byte*>(const_cast<void*>(from_addr));
+    get_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
+  }
+
+  void put(const void* from_addr, void* to_addr, std::size_t size) {
+    ITYR_PROFILER_RECORD(prof_event_put);
+
+    std::byte* to_addr_ = reinterpret_cast<std::byte*>(to_addr);
+    put_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
+  }
+
+  template <typename Mode>
+  void checkout(void*, std::size_t, Mode) {
+    common::die("core::checkout/checkin is disabled");
+  }
+
+  template <typename Mode>
+  void checkin(void*, std::size_t, Mode) {
+    common::die("core::checkout/checkin is disabled");
+  }
+
+  void release() {}
+
+  using release_handler = void*;
+
+  release_handler release_lazy() { return {}; }
+
+  void acquire() {}
+
+  void acquire(release_handler) {}
+
+  void poll() {}
+
+  /* APIs for debugging */
+
+  void* get_local_mem(void* addr) {
+    coll_mem& cm = coll_mem_get(addr);
+    return cm.local_home_vm().addr();
+  }
+
+private:
+  coll_mem& coll_mem_get(void* addr) {
+    for (auto [addr_begin, addr_end, id] : coll_mem_ids_) {
+      if (addr_begin <= addr && addr < addr_end) {
+        return *coll_mems_[id];
+      }
+    }
+    common::die("Address %p was passed but not allocated by Itoyori", addr);
+  }
+
+  coll_mem& coll_mem_create(std::size_t size, std::unique_ptr<mem_mapper::base> mmapper) {
+    coll_mem_id_t id = coll_mems_.size();
+
+    coll_mem& cm = *coll_mems_.emplace_back(std::in_place, size, id, std::move(mmapper));
+    std::byte* raw_ptr = reinterpret_cast<std::byte*>(cm.vm().addr());
+
+    coll_mem_ids_.emplace_back(std::make_tuple(raw_ptr, raw_ptr + size, id));
+
+    return cm;
+  }
+
+  void coll_mem_destroy(coll_mem& cm) {
+    std::byte* p = reinterpret_cast<std::byte*>(cm.vm().addr());
+    auto it = std::find(coll_mem_ids_.begin(), coll_mem_ids_.end(),
+                        std::make_tuple(p, p + cm.size(), cm.id()));
+    ITYR_CHECK(it != coll_mem_ids_.end());
+    coll_mem_ids_.erase(it);
+
+    coll_mems_[cm.id()].reset();
+  }
+
+  void get_impl(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    if (noncoll_allocator_.has(from_addr)) {
+      get_noncoll(from_addr, to_addr, size);
+    } else {
+      get_coll(from_addr, to_addr, size);
+    }
+  }
+
+  void get_coll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    coll_mem& cm = coll_mem_get(from_addr);
+
+    bool fetching = false;
+
+    for_each_seg_blk<BlockSize>(cm, from_addr, size,
+      // home segment
+      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+        std::byte* seg_addr_b         = std::max(from_addr, seg_addr);
+        std::byte* seg_addr_e         = std::min(seg_addr + seg_size, from_addr + size);
+        std::size_t seg_offset        = seg_addr_b - seg_addr;
+        std::byte* from_addr_         = reinterpret_cast<std::byte*>(vm.addr()) + pm_offset + seg_offset;
+        std::byte* to_addr_           = to_addr + (seg_addr_b - from_addr);
+        std::memcpy(to_addr_, from_addr_, seg_addr_e - seg_addr_b);
+      },
+      // cache block
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t owner, std::size_t pm_offset) {
+        common::mpi_get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
+                           owner, pm_offset + (req_addr_b - blk_addr), cm.win());
+        fetching = true;
+      });
+
+    if (fetching) {
+      common::mpi_win_flush_all(cm.win());
+    }
+  }
+
+  void get_noncoll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(noncoll_allocator_.has(from_addr));
+
+    auto target_rank = noncoll_allocator_.get_owner(from_addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      std::memcpy(to_addr, from_addr, size);
+      return;
+    }
+
+    for_each_block<BlockSize>(from_addr, size, [&](std::byte* blk_addr,
+                                                   std::byte* req_addr_b,
+                                                   std::byte* req_addr_e) {
+      common::mpi_get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
+                         target_rank, noncoll_allocator_.get_disp(blk_addr) + (req_addr_b - blk_addr),
+                         noncoll_allocator_.win());
+    });
+
+    common::mpi_win_flush(target_rank, noncoll_allocator_.win());
+  }
+
+  void put_impl(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    if (noncoll_allocator_.has(to_addr)) {
+      put_noncoll(from_addr, to_addr, size);
+    } else {
+      put_coll(from_addr, to_addr, size);
+    }
+  }
+
+  void put_coll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    coll_mem& cm = coll_mem_get(to_addr);
+
+    bool putting = false;
+
+    for_each_seg_blk<BlockSize>(cm, to_addr, size,
+      // home segment
+      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+        std::byte* seg_addr_b         = std::max(to_addr, seg_addr);
+        std::byte* seg_addr_e         = std::min(seg_addr + seg_size, to_addr + size);
+        std::size_t seg_offset        = seg_addr_b - seg_addr;
+        const std::byte* from_addr_   = from_addr + (seg_addr_b - to_addr);
+        std::byte* to_addr_           = reinterpret_cast<std::byte*>(vm.addr()) + pm_offset + seg_offset;
+        std::memcpy(to_addr_, from_addr_, seg_addr_e - seg_addr_b);
+      },
+      // cache block
+      [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
+          common::topology::rank_t owner, std::size_t pm_offset) {
+        common::mpi_put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
+                           owner, pm_offset + (req_addr_b - blk_addr), cm.win());
+        putting = true;
+      });
+
+    if (putting) {
+      common::mpi_win_flush_all(cm.win());
+    }
+  }
+
+  void put_noncoll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
+    ITYR_CHECK(noncoll_allocator_.has(to_addr));
+
+    auto target_rank = noncoll_allocator_.get_owner(to_addr);
+    ITYR_CHECK(0 <= target_rank);
+    ITYR_CHECK(target_rank < common::topology::n_ranks());
+
+    if (common::topology::is_locally_accessible(target_rank)) {
+      std::memcpy(to_addr, from_addr, size);
+      return;
+    }
+
+    for_each_block<BlockSize>(to_addr, size, [&](std::byte* blk_addr,
+                                                 std::byte* req_addr_b,
+                                                 std::byte* req_addr_e) {
+      common::mpi_put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
+                         target_rank, noncoll_allocator_.get_disp(blk_addr) + (req_addr_b - blk_addr),
+                         noncoll_allocator_.win());
+    });
+
+    common::mpi_win_flush(target_rank, noncoll_allocator_.win());
+  }
+
+  template <block_size_t BS>
+  using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
+
+  std::vector<std::optional<coll_mem>>                 coll_mems_;
+  std::vector<std::tuple<void*, void*, coll_mem_id_t>> coll_mem_ids_;
+
+  common::remotable_resource                           noncoll_allocator_;
 };
 
 template <block_size_t BlockSize>
