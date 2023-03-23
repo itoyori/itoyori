@@ -12,6 +12,7 @@
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/prof_events.hpp"
 #include "ityr/ori/coll_mem.hpp"
+#include "ityr/ori/coll_mem_manager.hpp"
 #include "ityr/ori/home_manager.hpp"
 #include "ityr/ori/cache_manager.hpp"
 
@@ -77,7 +78,7 @@ public:
 
     auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
-    coll_mem& cm = coll_mem_create(size, std::move(mmapper));
+    coll_mem& cm = cm_manager_.create(size, std::move(mmapper));
     void* addr = cm.vm().addr();
 
     common::verbose("Allocate collective memory [%p, %p) (%ld bytes) (win=%p)",
@@ -105,7 +106,7 @@ public:
     // ensure free safety
     cache_manager_.ensure_all_cache_clean();
 
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
     ITYR_CHECK(addr == cm.vm().addr());
 
     // ensure all cache entries are evicted
@@ -118,7 +119,7 @@ public:
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
                     addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
 
-    coll_mem_destroy(cm);
+    cm_manager_.destroy(cm);
   }
 
   // TODO: remove size from parameters
@@ -252,7 +253,7 @@ public:
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
     return cm.local_home_vm().addr();
   }
 
@@ -262,36 +263,6 @@ private:
     std::size_t margin = 1000;
     ITYR_CHECK(sys_limit > n_cache_blocks + margin);
     return (sys_limit - n_cache_blocks - margin) / 2;
-  }
-
-  coll_mem& coll_mem_get(void* addr) {
-    for (auto [addr_begin, addr_end, id] : coll_mem_ids_) {
-      if (addr_begin <= addr && addr < addr_end) {
-        return *coll_mems_[id];
-      }
-    }
-    common::die("Address %p was passed but not allocated by Itoyori", addr);
-  }
-
-  coll_mem& coll_mem_create(std::size_t size, std::unique_ptr<mem_mapper::base> mmapper) {
-    coll_mem_id_t id = coll_mems_.size();
-
-    coll_mem& cm = *coll_mems_.emplace_back(std::in_place, size, id, std::move(mmapper));
-    std::byte* raw_ptr = reinterpret_cast<std::byte*>(cm.vm().addr());
-
-    coll_mem_ids_.emplace_back(std::make_tuple(raw_ptr, raw_ptr + size, id));
-
-    return cm;
-  }
-
-  void coll_mem_destroy(coll_mem& cm) {
-    std::byte* p = reinterpret_cast<std::byte*>(cm.vm().addr());
-    auto it = std::find(coll_mem_ids_.begin(), coll_mem_ids_.end(),
-                        std::make_tuple(p, p + cm.size(), cm.id()));
-    ITYR_CHECK(it != coll_mem_ids_.end());
-    coll_mem_ids_.erase(it);
-
-    coll_mems_[cm.id()].reset();
   }
 
   template <typename Mode, bool IncrementRef>
@@ -314,7 +285,7 @@ private:
       return;
     }
 
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
 
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
@@ -386,7 +357,7 @@ private:
       return;
     }
 
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
 
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
@@ -447,7 +418,7 @@ private:
   void get_copy_coll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     ITYR_CHECK(!enable_vm_map);
 
-    coll_mem& cm = coll_mem_get(from_addr);
+    coll_mem& cm = cm_manager_.get(from_addr);
 
     for_each_seg_blk<BlockSize>(cm, from_addr, size,
       // home segment
@@ -501,7 +472,7 @@ private:
   void put_copy_coll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     ITYR_CHECK(!enable_vm_map);
 
-    coll_mem& cm = coll_mem_get(to_addr);
+    coll_mem& cm = cm_manager_.get(to_addr);
 
     for_each_seg_blk<BlockSize>(cm, to_addr, size,
       // home segment
@@ -545,13 +516,10 @@ private:
   template <block_size_t BS>
   using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
 
-  std::vector<std::optional<coll_mem>>                 coll_mems_;
-  std::vector<std::tuple<void*, void*, coll_mem_id_t>> coll_mem_ids_;
-
-  common::remotable_resource                           noncoll_allocator_;
-
-  home_manager<BlockSize>                              home_manager_;
-  cache_manager<BlockSize>                             cache_manager_;
+  coll_mem_manager           cm_manager_;
+  common::remotable_resource noncoll_allocator_;
+  home_manager<BlockSize>    home_manager_;
+  cache_manager<BlockSize>   cache_manager_;
 };
 
 template <block_size_t BlockSize>
@@ -597,13 +565,13 @@ public:
       common::die("Null pointer was passed to free_coll()");
     }
 
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
     ITYR_CHECK(addr == cm.vm().addr());
 
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
                     addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
 
-    coll_mem_destroy(cm);
+    cm_manager_.destroy(cm);
   }
 
   void free(void* addr, std::size_t size) {
@@ -665,41 +633,11 @@ public:
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
-    coll_mem& cm = coll_mem_get(addr);
+    coll_mem& cm = cm_manager_.get(addr);
     return cm.local_home_vm().addr();
   }
 
 private:
-  coll_mem& coll_mem_get(void* addr) {
-    for (auto [addr_begin, addr_end, id] : coll_mem_ids_) {
-      if (addr_begin <= addr && addr < addr_end) {
-        return *coll_mems_[id];
-      }
-    }
-    common::die("Address %p was passed but not allocated by Itoyori", addr);
-  }
-
-  coll_mem& coll_mem_create(std::size_t size, std::unique_ptr<mem_mapper::base> mmapper) {
-    coll_mem_id_t id = coll_mems_.size();
-
-    coll_mem& cm = *coll_mems_.emplace_back(std::in_place, size, id, std::move(mmapper));
-    std::byte* raw_ptr = reinterpret_cast<std::byte*>(cm.vm().addr());
-
-    coll_mem_ids_.emplace_back(std::make_tuple(raw_ptr, raw_ptr + size, id));
-
-    return cm;
-  }
-
-  void coll_mem_destroy(coll_mem& cm) {
-    std::byte* p = reinterpret_cast<std::byte*>(cm.vm().addr());
-    auto it = std::find(coll_mem_ids_.begin(), coll_mem_ids_.end(),
-                        std::make_tuple(p, p + cm.size(), cm.id()));
-    ITYR_CHECK(it != coll_mem_ids_.end());
-    coll_mem_ids_.erase(it);
-
-    coll_mems_[cm.id()].reset();
-  }
-
   void get_impl(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     if (noncoll_allocator_.has(from_addr)) {
       get_noncoll(from_addr, to_addr, size);
@@ -709,7 +647,7 @@ private:
   }
 
   void get_coll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    coll_mem& cm = coll_mem_get(from_addr);
+    coll_mem& cm = cm_manager_.get(from_addr);
 
     bool fetching = false;
 
@@ -769,7 +707,7 @@ private:
   }
 
   void put_coll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    coll_mem& cm = coll_mem_get(to_addr);
+    coll_mem& cm = cm_manager_.get(to_addr);
 
     bool putting = false;
 
@@ -823,10 +761,8 @@ private:
   template <block_size_t BS>
   using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
 
-  std::vector<std::optional<coll_mem>>                 coll_mems_;
-  std::vector<std::tuple<void*, void*, coll_mem_id_t>> coll_mem_ids_;
-
-  common::remotable_resource                           noncoll_allocator_;
+  coll_mem_manager           cm_manager_;
+  common::remotable_resource noncoll_allocator_;
 };
 
 template <block_size_t BlockSize>
