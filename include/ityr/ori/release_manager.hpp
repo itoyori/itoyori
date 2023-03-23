@@ -6,6 +6,7 @@
 #include "ityr/common/topology.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
+#include "ityr/ori/prof_events.hpp"
 
 namespace ityr::ori {
 
@@ -42,6 +43,8 @@ public:
 
   void ensure_released(const release_handler& rh) {
     if (release_needed(rh)) {
+      ITYR_PROFILER_RECORD(prof_event_acquire_wait);
+
       bool request_done = false;
       while (remote_epochs_[rh.target_rank] < rh.required_epoch) {
         if (!request_done) {

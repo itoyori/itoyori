@@ -222,7 +222,6 @@ public:
 
     ensure_all_cache_clean();
     if constexpr (enable_lazy_release) {
-      ITYR_PROFILER_RECORD(prof_event_acquire_wait);
       rm_.ensure_released(rh);
     }
     invalidate_all();
