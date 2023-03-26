@@ -5,6 +5,7 @@
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/span.hpp"
+#include "ityr/common/options.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
 
@@ -258,7 +259,14 @@ public:
     wireup(comm);
   }
   mpi_win_manager(MPI_Comm comm, std::size_t size) {
-    MPI_Win_allocate(size, 1, MPI_INFO_NULL, comm, &baseptr_, &win_);
+    if (rma_use_mpi_win_allocate::value()) {
+      MPI_Win_allocate(size, 1, MPI_INFO_NULL, comm, &baseptr_, &win_);
+    } else {
+      // In Fujitsu MPI, a large communication latency was observed only when we used
+      // MPI_Win_allocate, and here is a workaround for it.
+      baseptr_ = std::malloc(size);
+      MPI_Win_create(baseptr_, size, 1, MPI_INFO_NULL, comm, &win_);
+    }
     MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
     wireup(comm);
   }
@@ -277,6 +285,8 @@ public:
     if (win_ != MPI_WIN_NULL) {
       MPI_Win_unlock_all(win_);
       MPI_Win_free(&win_);
+      // TODO: free baseptr_ when ITYR_RMA_USE_MPI_WIN_ALLOCATE=false and the user
+      // did not provide a buffer (or remove the option)
     }
   }
 

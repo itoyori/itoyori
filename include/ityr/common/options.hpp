@@ -119,6 +119,12 @@ struct prof_output_per_rank_option : public option<prof_output_per_rank_option, 
   static bool default_value() { return false; }
 };
 
+struct rma_use_mpi_win_allocate : public option<rma_use_mpi_win_allocate, bool> {
+  using option::option;
+  static std::string name() { return "ITYR_RMA_USE_MPI_WIN_ALLOCATE"; }
+  static bool default_value() { return true; }
+};
+
 struct allocator_block_size_option : public option<allocator_block_size_option, std::size_t> {
   using option::option;
   static std::string name() { return "ITYR_ALLOCATOR_BLOCK_SIZE"; }
@@ -135,6 +141,7 @@ struct runtime_options {
   option_initializer<enable_shared_memory_option>              ITYR_ANON_VAR;
   option_initializer<global_clock_sync_round_trips_option>     ITYR_ANON_VAR;
   option_initializer<prof_output_per_rank_option>              ITYR_ANON_VAR;
+  option_initializer<rma_use_mpi_win_allocate>                 ITYR_ANON_VAR;
   option_initializer<allocator_block_size_option>              ITYR_ANON_VAR;
   option_initializer<allocator_max_unflushed_free_objs_option> ITYR_ANON_VAR;
 };
