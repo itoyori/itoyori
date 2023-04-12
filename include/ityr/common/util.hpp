@@ -10,6 +10,7 @@
 #include <sstream>
 #include <optional>
 #include <tuple>
+#include <new>
 
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)
@@ -36,8 +37,8 @@
 #define ITYR_SUBCASE(name)
 #define ITYR_CHECK(cond)                     ITYR_ASSERT(cond)
 #define ITYR_CHECK_MESSAGE(cond, ...)        ITYR_ASSERT(cond)
-#define ITYR_REQUIRE(cond)                   ITYR_ASSERT(cond)
-#define ITYR_REQUIRE_MESSAGE(cond, ...)      ITYR_ASSERT(cond)
+#define ITYR_REQUIRE(cond)                   if (!(cond)) { ityr::common::die("Assertion failed (%s:%d)", __FILE__, __LINE__); }
+#define ITYR_REQUIRE_MESSAGE(cond, msg, ...) if (!(cond)) { ityr::common::die(msg " (%s:%d)", ##__VA_ARGS__, __FILE__, __LINE__); }
 #define ITYR_CHECK_THROWS_AS(exp, exception) exp
 
 #endif
@@ -52,6 +53,12 @@
 #define ITYR_ANON_VAR ITYR_CONCAT(anon_, __LINE__)
 
 namespace ityr::common {
+
+#ifdef __cpp_lib_hardware_interference_size
+using std::hardware_destructive_interference_size;
+#else
+constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
 
 inline uint64_t clock_gettime_ns() {
   struct timespec ts;

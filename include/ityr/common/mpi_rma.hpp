@@ -258,13 +258,14 @@ public:
     MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
     wireup(comm);
   }
-  mpi_win_manager(MPI_Comm comm, std::size_t size) {
+  mpi_win_manager(MPI_Comm comm, std::size_t size, std::size_t alignment = alignof(max_align_t)) {
     if (rma_use_mpi_win_allocate::value()) {
+      // TODO: handle alignment
       MPI_Win_allocate(size, 1, MPI_INFO_NULL, comm, &baseptr_, &win_);
     } else {
       // In Fujitsu MPI, a large communication latency was observed only when we used
       // MPI_Win_allocate, and here is a workaround for it.
-      baseptr_ = std::malloc(size);
+      baseptr_ = std::aligned_alloc(alignment, size);
       MPI_Win_create(baseptr_, size, 1, MPI_INFO_NULL, comm, &win_);
     }
     MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
@@ -326,6 +327,7 @@ private:
 // This value should be larger than a cacheline size, because otherwise
 // the buffers on different processes may be allocated to the same cacheline,
 // which can cause unintended cache misses (false sharing).
+// TODO: use hardware_destructive_interference_size?
 inline constexpr std::size_t mpi_win_size_min = 1024;
 
 template <typename T>
@@ -336,11 +338,11 @@ public:
     : win_(comm),
       comm_(comm) {}
   mpi_win_manager(MPI_Comm comm, std::size_t count)
-    : win_(comm, round_up_pow2(sizeof(T) * count, mpi_win_size_min)),
+    : win_(comm, round_up_pow2(sizeof(T) * count, mpi_win_size_min), alignof(T)),
       comm_(comm),
       local_buf_(init_local_buf(count)) {}
   mpi_win_manager(MPI_Comm comm, T* baseptr, std::size_t count)
-    : win_(comm, baseptr, round_up_pow2(sizeof(T) * count, mpi_win_size_min)),
+    : win_(comm, baseptr, sizeof(T) * count),
       comm_(comm) {}
 
   ~mpi_win_manager() {
@@ -363,6 +365,8 @@ public:
 private:
   span<T> init_local_buf(std::size_t count) const {
     T* local_base = baseptr();
+    ITYR_REQUIRE(reinterpret_cast<uintptr_t>(local_base) % alignof(T) == 0);
+
     for (std::size_t i = 0; i < count; i++) {
       new (local_base + i) T();
     }

@@ -122,7 +122,7 @@ struct prof_output_per_rank_option : public option<prof_output_per_rank_option, 
 struct rma_use_mpi_win_allocate : public option<rma_use_mpi_win_allocate, bool> {
   using option::option;
   static std::string name() { return "ITYR_RMA_USE_MPI_WIN_ALLOCATE"; }
-  static bool default_value() { return true; }
+  static bool default_value() { return false; }
 };
 
 struct allocator_block_size_option : public option<allocator_block_size_option, std::size_t> {
