@@ -7,7 +7,7 @@ namespace ityr::ito {
 
 inline void print_compile_options() {
 #ifndef ITYR_ITO_SCHEDULER
-#define ITYR_ITO_SCHEDULER ws_workfirst
+#define ITYR_ITO_SCHEDULER randws
 #endif
   ITYR_PRINT_MACRO(ITYR_ITO_SCHEDULER);
 }
