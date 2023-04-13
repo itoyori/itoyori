@@ -40,7 +40,7 @@ namespace ityr::ito {
 struct context_frame_aarch64 {
   void*                  fp;
   void*                  lr;
-  void*                  top;
+  void*                  saved_ptr;
   context_frame_aarch64* parent_frame;
 };
 
@@ -54,16 +54,17 @@ public:
   static void save_context_with_call(context_frame*    parent_cf,
                                      save_context_fn_t fn,
                                      void*             arg0,
-                                     void*             arg1) {
-    register void* parent_cf_x9 asm("x9")  = reinterpret_cast<void*>(parent_cf);
-    register void* fn_x10       asm("x10") = reinterpret_cast<void*>(fn);
-    register void* arg0_x1      asm("x1")  = arg0;
-    register void* arg1_x2      asm("x2")  = arg1;
+                                     void*             arg1,
+                                     void*             saved_ptr = nullptr) {
+    register void* parent_cf_x9  asm("x9")  = reinterpret_cast<void*>(parent_cf);
+    register void* fn_x10        asm("x10") = reinterpret_cast<void*>(fn);
+    register void* arg0_x1       asm("x1")  = arg0;
+    register void* arg1_x2       asm("x2")  = arg1;
+    register void* saved_ptr_x11 asm("x11") = saved_ptr;
     asm volatile (
         ITYR_AARCH64_SAVE_R19
-        /* stack top and parent field of context */
-        "sub x0, sp, #32\n\t"
-        "stp x0, %0, [sp, #-16]!\n\t"
+        /* push saved_ptr and parent field of context */
+        "stp %4, %0, [sp, #-16]!\n\t"
         /* save FP (r29) and LR (r30) */
         "adr x30, 1f\n\t"
         "stp x29, x30, [sp, #-16]!\n\t"
@@ -74,13 +75,13 @@ public:
         "add sp, sp, #16\n\t"
 
         "1:\n\t"
-        /* skip parent field */
+        /* skip saved_ptr and parent field */
         "add sp, sp, #16\n\t"
         ITYR_AARCH64_RESTORE_R19
-      : "+r"(parent_cf_x9), "+r"(fn_x10), "+r"(arg0_x1), "+r"(arg1_x2)
+      : "+r"(parent_cf_x9), "+r"(fn_x10), "+r"(arg0_x1), "+r"(arg1_x2), "+r"(saved_ptr_x11)
       :
       : "x0", "x3", "x4", "x5", "x6", "x7",
-        "x8", "x11", "x12", "x13", "x14", "x15",
+        "x8", "x12", "x13", "x14", "x15",
         "x16", "x17", "x18", ITYR_AARCH64_CLOBBER_R19 "x20", "x21", "x22", "x23",
         "x24", "x25", "x26", "x27", "x28", "x29", "x30",
         ITYR_AARCH64_FLOAT_CLOBBERS,

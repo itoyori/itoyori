@@ -20,6 +20,7 @@ struct context_frame_x86_64 {
   void*                 rip;
   void*                 rsp;
   void*                 rbp;
+  void*                 saved_ptr;
   context_frame_x86_64* parent_frame;
 };
 
@@ -33,9 +34,11 @@ public:
   static void save_context_with_call(context_frame*    parent_cf,
                                      save_context_fn_t fn,
                                      void*             arg0,
-                                     void*             arg1) {
-    register void* parent_cf_r8 asm("r8") = reinterpret_cast<void*>(parent_cf);
-    register void* fn_r9        asm("r9") = reinterpret_cast<void*>(fn);
+                                     void*             arg1,
+                                     void*             saved_ptr = nullptr) {
+    register void* parent_cf_r8  asm("r8")  = reinterpret_cast<void*>(parent_cf);
+    register void* fn_r9         asm("r9")  = reinterpret_cast<void*>(fn);
+    register void* saved_ptr_r10 asm("r10") = reinterpret_cast<void*>(saved_ptr);
     asm volatile (
         /* save red zone */
         "sub  $128, %%rsp\n\t"
@@ -43,10 +46,10 @@ public:
         "mov  %%rsp, %%rax\n\t"
         "and  $0xFFFFFFFFFFFFFFF0, %%rsp\n\t"
         "push %%rax\n\t"
-        /* alignment */
-        "sub  $0x8, %%rsp\n\t"
         /* parent field of context frame */
         "push %0\n\t"
+        /* push saved_ptr */
+        "push %4\n\t"
         /* push rbp */
         "push %%rbp\n\t"
         /* sp */
@@ -66,17 +69,17 @@ public:
         "add  $8, %%rsp\n\t"
         /* pop rbp */
         "pop  %%rbp\n\t"
-        /* parent field of context frame and align */
+        /* saved_ptr and parent field of context frame */
         "add  $16, %%rsp\n\t"
         /* revert sp alignmment */
         "pop  %%rsp\n\t"
         /* restore red zone */
         "add  $128, %%rsp\n\t"
       : "+r"(parent_cf_r8), "+r"(fn_r9),
-        "+S"(arg0), "+d"(arg1)
+        "+S"(arg0), "+d"(arg1), "+r"(saved_ptr_r10)
       :
       : "%rax", "%rbx", "%rcx", "%rdi",
-        "%r10", "%r11", "%r12", "%r13", "%r14", "%r15",
+        "%r11", "%r12", "%r13", "%r14", "%r15",
         ITYR_X86_64_FLOAT_REGS,
         "cc", "memory"
     );

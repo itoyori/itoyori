@@ -57,6 +57,16 @@ inline bool is_spmd() {
   return w.is_spmd();
 }
 
+inline scheduler::task_group_data task_group_begin() {
+  auto& w = worker::instance::get();
+  return w.sched().task_group_begin();
+}
+
+inline void task_group_end(scheduler::task_group_data& tgdata) {
+  auto& w = worker::instance::get();
+  w.sched().task_group_end(tgdata);
+}
+
 ITYR_TEST_CASE("[ityr::ito] fib") {
   init();
 

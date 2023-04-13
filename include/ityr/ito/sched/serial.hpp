@@ -37,6 +37,10 @@ public:
     return true;
   }
 
+  struct task_group_data {};
+  task_group_data task_group_begin() { return {}; }
+  void task_group_end(task_group_data&) {}
+
 private:
   template <typename T, typename Fn, typename... Args>
   T invoke_fn(Fn&& fn, Args&&... args) {

@@ -4,6 +4,7 @@
 #include "ityr/ito/options.hpp"
 #include "ityr/ito/sched/serial.hpp"
 #include "ityr/ito/sched/randws.hpp"
+#include "ityr/ito/sched/adws.hpp"
 
 namespace ityr::ito {
 

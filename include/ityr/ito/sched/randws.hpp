@@ -149,14 +149,8 @@ public:
       } else {
         bool migrated = true;
         suspend([&, ts](context_frame* cf) {
-          std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
-          void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
-          std::memcpy(evacuation_ptr, cf, cf_size);
+          suspended_state ss = evacuate(cf);
 
-          common::verbose("Evacuate suspended thread context [%p, %p) to %p",
-                          cf, cf->parent_frame, evacuation_ptr);
-
-          suspended_state ss {evacuation_ptr, cf, cf_size};
           remote_put_value(thread_state_allocator_, ss, &ts->suspended);
 
           // race
@@ -206,6 +200,10 @@ public:
   static bool is_serialized(thread_handler<T> th) {
     return th.serialized;
   }
+
+  struct task_group_data {};
+  task_group_data task_group_begin() { return {}; }
+  void task_group_end(task_group_data&) {}
 
 private:
   template <typename T, typename Fn, typename... Args>
@@ -357,6 +355,17 @@ private:
     cf_top_ = nullptr;
     common::verbose("Resume scheduler context");
     context::resume(sched_cf_);
+  }
+
+  suspended_state evacuate(context_frame* cf) {
+    std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
+    void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
+    std::memcpy(evacuation_ptr, cf, cf_size);
+
+    common::verbose("Evacuate suspended thread context [%p, %p) to %p",
+                    cf, cf->parent_frame, evacuation_ptr);
+
+    return {evacuation_ptr, cf, cf_size};
   }
 
   template <typename Fn>

@@ -76,7 +76,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
     serial_for_each({.checkout_count = 100},
                     make_global_iterator(p1    , ori::mode::write),
                     make_global_iterator(p1 + n, ori::mode::write),
-                    [&](int& v) { v = count++; });;
+                    [&](int& v) { v = count++; });
 
     parallel_for_each(
       make_global_iterator(p1    , ori::mode::read),
@@ -229,6 +229,8 @@ parallel_loop_generic_aux(parallel_loop_options opts,
                                        mid, last, std::next(firsts, d / 2)...);
     };
 
+    auto tgdata = ito::task_group_begin();
+
     ito::thread<retval_t> th(ito::with_callback,
                              []() { ori::release(); },
                              recur_fn_left);
@@ -245,6 +247,8 @@ parallel_loop_generic_aux(parallel_loop_options opts,
 
       th.join();
 
+      ito::task_group_end(tgdata);
+
       if (!th.serialized()) {
         ori::acquire();
       }
@@ -256,6 +260,8 @@ parallel_loop_generic_aux(parallel_loop_options opts,
       }
 
       auto ret1 = th.join();
+
+      ito::task_group_end(tgdata);
 
       if (!th.serialized()) {
         ori::acquire();
@@ -325,7 +331,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
     serial_for_each({.checkout_count = 100},
                     make_global_iterator(p    , ori::mode::write),
                     make_global_iterator(p + n, ori::mode::write),
-                    [&](int& v) { v = count++; });;
+                    [&](int& v) { v = count++; });
   });
 
   ITYR_SUBCASE("default cutoff") {
