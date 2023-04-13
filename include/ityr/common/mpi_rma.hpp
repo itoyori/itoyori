@@ -337,10 +337,11 @@ public:
   mpi_win_manager(MPI_Comm comm)
     : win_(comm),
       comm_(comm) {}
-  mpi_win_manager(MPI_Comm comm, std::size_t count)
+  template <typename... ElemArgs>
+  mpi_win_manager(MPI_Comm comm, std::size_t count, ElemArgs&&... args)
     : win_(comm, round_up_pow2(sizeof(T) * count, mpi_win_size_min), alignof(T)),
       comm_(comm),
-      local_buf_(init_local_buf(count)) {}
+      local_buf_(init_local_buf(count, std::forward<ElemArgs>(args)...)) {}
   mpi_win_manager(MPI_Comm comm, T* baseptr, std::size_t count)
     : win_(comm, baseptr, sizeof(T) * count),
       comm_(comm) {}
@@ -363,12 +364,13 @@ public:
   span<T> local_buf() const { return local_buf_; }
 
 private:
-  span<T> init_local_buf(std::size_t count) const {
+  template <typename... ElemArgs>
+  span<T> init_local_buf(std::size_t count, ElemArgs... args) const {
     T* local_base = baseptr();
     ITYR_REQUIRE(reinterpret_cast<uintptr_t>(local_base) % alignof(T) == 0);
 
     for (std::size_t i = 0; i < count; i++) {
-      new (local_base + i) T();
+      new (local_base + i) T(args...);
     }
     mpi_barrier(comm_);
     return span<T>{local_base, count};

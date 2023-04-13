@@ -21,19 +21,21 @@ public:
   const char* what() const noexcept override { return "Work stealing queue is full."; }
 };
 
-template <typename Entry>
+template <typename Entry, bool EnablePass = true>
 class wsqueue {
 public:
   wsqueue(int n_entries, int n_queues = 1)
     : n_entries_(n_entries),
       n_queues_(n_queues),
-      queue_state_win_(common::topology::mpicomm(), n_queues_),
-      entries_win_(common::topology::mpicomm(), n_entries_ * n_queues_) {}
+      initial_pos_(EnablePass ? n_entries / 2 : 0),
+      queue_state_win_(common::topology::mpicomm(), n_queues_, initial_pos_),
+      entries_win_(common::topology::mpicomm(), n_entries_ * n_queues_),
+      queue_lock_(n_queues_) {}
 
   void push(const Entry& entry, int idx = 0) {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_push);
 
-    local_empty_ = false;
+    ITYR_CHECK(idx < n_queues_);
 
     queue_state& qs = local_queue_state(idx);
     auto entries = local_entries(idx);
@@ -44,17 +46,9 @@ public:
       queue_lock_.lock(common::topology::my_rank(), idx);
 
       int b = qs.base.load(std::memory_order_relaxed);
-
-      if (b == 0) {
-        throw wsqueue_full_exception{};
-      }
-
-      std::move(&entries[b], &entries[t], entries.begin());
-
-      qs.top.store(t - b, std::memory_order_relaxed);
-      qs.base.store(0, std::memory_order_relaxed);
-
-      t = t - b;
+      int offset = -(b + 1) / 2;
+      move_entries(offset, idx);
+      t += offset;
 
       queue_lock_.unlock(common::topology::my_rank(), idx);
     }
@@ -67,13 +61,33 @@ public:
   std::optional<Entry> pop(int idx = 0) {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_pop);
 
-    if (local_empty_) {
+    ITYR_CHECK(idx < n_queues_);
+
+    queue_state& qs = local_queue_state(idx);
+    if constexpr (EnablePass) {
+      // Move entries so that the base does not become too close to zero;
+      // otherwise, remote pass operations may fail.
+      // Check before the queue empty check.
+      int b = qs.base.load(std::memory_order_relaxed);
+      if (b < n_entries_ / 10) {
+        int t = qs.top.load(std::memory_order_relaxed);
+        if (n_entries_ - t > n_entries_ / 10) {
+          queue_lock_.lock(common::topology::my_rank(), idx);
+
+          int t = qs.top.load(std::memory_order_relaxed);
+          int offset = (n_entries_ - t + 1) / 2;
+          move_entries(offset, idx);
+
+          queue_lock_.unlock(common::topology::my_rank(), idx);
+        }
+      }
+    }
+
+    if (qs.empty()) {
       return std::nullopt;
     }
 
     std::optional<Entry> ret;
-
-    queue_state& qs = local_queue_state(idx);
     auto entries = local_entries(idx);
 
     int t = qs.top.load(std::memory_order_relaxed) - 1;
@@ -98,17 +112,13 @@ public:
       } else if (b == t) {
         ret = entries[t];
 
-        qs.top.store(0, std::memory_order_relaxed);
-        qs.base.store(0, std::memory_order_relaxed);
-
-        local_empty_ = true;
+        qs.top.store(initial_pos_, std::memory_order_relaxed);
+        qs.base.store(initial_pos_, std::memory_order_relaxed);
       } else {
         ret = std::nullopt;
 
-        qs.top.store(0, std::memory_order_relaxed);
-        qs.base.store(0, std::memory_order_relaxed);
-
-        local_empty_ = true;
+        qs.top.store(initial_pos_, std::memory_order_relaxed);
+        qs.base.store(initial_pos_, std::memory_order_relaxed);
       }
 
       queue_lock_.unlock(common::topology::my_rank(), idx);
@@ -119,6 +129,8 @@ public:
 
   std::optional<Entry> steal_nolock(common::topology::rank_t target_rank, int idx = 0) {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_steal, target_rank);
+
+    ITYR_CHECK(idx < n_queues_);
 
     ITYR_CHECK(queue_lock_.is_locked(target_rank, idx));
 
@@ -138,6 +150,8 @@ public:
   }
 
   std::optional<Entry> steal(common::topology::rank_t target_rank, int idx = 0) {
+    ITYR_CHECK(idx < n_queues_);
+
     queue_lock_.lock(target_rank, idx);
     auto ret = steal_nolock(target_rank, idx);
     queue_lock_.unlock(target_rank, idx);
@@ -145,6 +159,8 @@ public:
   }
 
   std::optional<Entry> steal_aborting(common::topology::rank_t target_rank, int idx = 0) {
+    ITYR_CHECK(idx < n_queues_);
+
     if (!queue_lock_.trylock(target_rank, idx)) {
       return std::nullopt;
     }
@@ -153,12 +169,45 @@ public:
     return ret;
   }
 
+  bool trypass(const Entry& entry, common::topology::rank_t target_rank, int idx = 0) {
+    if constexpr (!EnablePass) {
+      common::die("Pass operation is not allowed");
+    }
+
+    ITYR_CHECK(idx < n_queues_);
+
+    queue_lock_.lock(target_rank, idx);
+
+    int b = common::mpi_get_value<int>(target_rank, queue_state_base_disp(idx), queue_state_win_.win());
+
+    if (b == 0) {
+      queue_lock_.unlock(target_rank, idx);
+      return false;
+    }
+
+    common::mpi_put_value<Entry>(entry, target_rank, entries_disp(b - 1, idx), entries_win_.win());
+
+    common::mpi_put_value<int>(b - 1, target_rank, queue_state_base_disp(idx), queue_state_win_.win());
+
+    queue_lock_.unlock(target_rank, idx);
+
+    return true;
+  }
+
+  void pass(const Entry& entry, common::topology::rank_t target_rank, int idx = 0) {
+    ITYR_CHECK(idx < n_queues_);
+    while (!trypass(entry, target_rank, idx));
+  }
+
   int size(int idx = 0) const {
+    ITYR_CHECK(idx < n_queues_);
     return local_queue_state(idx).size();
   }
 
   bool empty(common::topology::rank_t target_rank, int idx = 0) const {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_empty, target_rank);
+
+    ITYR_CHECK(idx < n_queues_);
 
     auto remote_qs = common::mpi_get_value<queue_state>(target_rank, queue_state_disp(idx), queue_state_win_.win());
     return remote_qs.empty();
@@ -168,12 +217,12 @@ public:
 
 private:
   struct queue_state {
-    std::atomic<int> top  = 0;
-    std::atomic<int> base = 0;
+    std::atomic<int> top;
+    std::atomic<int> base;
     // Check if they are safe to be accessed by MPI RMA
     static_assert(sizeof(std::atomic<int>) == sizeof(int));
 
-    queue_state() = default;
+    queue_state(int initial_pos = 0) : top(initial_pos), base(initial_pos) {}
 
     // Copy constructors for std::atomic are deleted
     queue_state(const queue_state& qs) {
@@ -205,6 +254,8 @@ private:
   // static_assert(std::is_trivially_copyable_v<queue_state>);
 
   struct alignas(common::hardware_destructive_interference_size) queue_state_wrapper {
+    template <typename... Args>
+    queue_state_wrapper(Args&&... args) : value(std::forward<Args>(args)...) {}
     queue_state value;
   };
 
@@ -232,8 +283,33 @@ private:
     return entries_win_.local_buf().subspan(idx * n_entries_, n_entries_);
   }
 
+  void move_entries(int offset, int idx) {
+    ITYR_CHECK(queue_lock_.is_locked(common::topology::my_rank(), idx));
+
+    queue_state& qs = local_queue_state(idx);
+    auto entries = local_entries(idx);
+
+    int t = qs.top.load(std::memory_order_relaxed);
+    int b = qs.base.load(std::memory_order_relaxed);
+
+    ITYR_CHECK(b <= t);
+
+    int new_b = b + offset;
+    int new_t = t + offset;
+
+    if (offset == 0 || new_b < 0 || n_entries_ < new_t) {
+      throw wsqueue_full_exception{};
+    }
+
+    std::move(&entries[b], &entries[t], &entries[new_b]);
+
+    qs.top.store(new_t, std::memory_order_relaxed);
+    qs.base.store(new_b, std::memory_order_relaxed);
+  }
+
   int                                          n_entries_;
   int                                          n_queues_;
+  int                                          initial_pos_;
   common::mpi_win_manager<queue_state_wrapper> queue_state_win_;
   common::mpi_win_manager<Entry>               entries_win_;
   common::global_lock                          queue_lock_;
@@ -441,6 +517,38 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] single queue") {
       common::mpi_barrier(common::topology::mpicomm());
 
       ITYR_CHECK(wsq.empty(target_rank));
+    }
+  }
+
+  ITYR_SUBCASE("pass") {
+    for (common::topology::rank_t target_rank = 0; target_rank < n_ranks; target_rank++) {
+      ITYR_CHECK(wsq.empty(target_rank));
+
+      common::mpi_barrier(common::topology::mpicomm());
+
+      if (target_rank == my_rank) {
+        entry_t sum = 0;
+
+        auto req = common::mpi_ibarrier(common::topology::mpicomm());
+        while (!common::mpi_test(req) || !wsq.empty(my_rank)) {
+          auto result = wsq.steal_aborting(target_rank);
+          if (result.has_value()) {
+            sum += *result;
+          }
+        }
+
+        ITYR_CHECK(sum == (n_entries / n_ranks) * (n_entries / n_ranks - 1) / 2 * (n_ranks - 1));
+
+      } else {
+        for (int i = 0; i < n_entries / n_ranks; i++) {
+          wsq.pass(i, target_rank);
+        }
+
+        auto req = common::mpi_ibarrier(common::topology::mpicomm());
+        common::mpi_wait(req);
+      }
+
+      common::mpi_barrier(common::topology::mpicomm());
     }
   }
 }

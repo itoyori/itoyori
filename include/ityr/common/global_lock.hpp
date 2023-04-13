@@ -15,25 +15,37 @@ class global_lock {
 public:
   global_lock(int n_locks = 1)
     : n_locks_(n_locks),
-      lock_win_(topology::mpicomm(), n_locks_) {}
+      lock_win_(topology::mpicomm(), n_locks_, 0) {}
 
   bool trylock(topology::rank_t target_rank, int idx = 0) const {
     ITYR_PROFILER_RECORD(prof_event_global_lock_trylock, target_rank);
+
+    ITYR_CHECK(idx < n_locks_);
+
     lock_t result = mpi_atomic_cas_value<lock_t>(1, 0, target_rank, get_disp(idx), lock_win_.win());
+
+    ITYR_CHECK(0 <= result);
+    ITYR_CHECK(result <= 1);
     return result == 0;
   }
 
   void lock(topology::rank_t target_rank, int idx = 0) const {
+    ITYR_CHECK(idx < n_locks_);
     while (!trylock(target_rank, idx));
   }
 
   void unlock(topology::rank_t target_rank, int idx = 0) const {
     ITYR_PROFILER_RECORD(prof_event_global_lock_unlock, target_rank);
+
+    ITYR_CHECK(idx < n_locks_);
+
     lock_t ret = mpi_atomic_put_value<lock_t>(0, target_rank, get_disp(idx), lock_win_.win());
     ITYR_CHECK_MESSAGE(ret == 1, "should be locked before unlock");
   }
 
   bool is_locked(topology::rank_t target_rank, int idx = 0) const {
+    ITYR_CHECK(idx < n_locks_);
+
     lock_t result = mpi_atomic_get_value<lock_t>(target_rank, get_disp(idx), lock_win_.win());
     return result == 1;
   }
@@ -42,6 +54,8 @@ private:
   using lock_t = int;
 
   struct alignas(common::hardware_destructive_interference_size) lock_wrapper {
+    template <typename... Args>
+    lock_wrapper(Args&&... args) : value(std::forward<Args>(args)...) {}
     lock_t value;
   };
 
