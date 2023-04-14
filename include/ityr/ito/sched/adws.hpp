@@ -22,7 +22,7 @@ public:
   virtual void execute() = 0;
 };
 
-template <typename Fn, class... Args>
+template <typename Fn, typename... Args>
 class callable_task : task_general {
 public:
   callable_task(Fn fn, Args... args) : fn_(fn), arg_(args...) {}
@@ -146,8 +146,8 @@ public:
       thread_state_allocator_(thread_state_allocator_size_option::value()),
       suspended_thread_allocator_(suspended_thread_allocator_size_option::value()) {}
 
-  template <typename T, typename Fn, typename... Args>
-  T root_exec(Fn&& fn, Args&&... args) {
+  template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
+  T root_exec(SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
@@ -170,7 +170,8 @@ public:
       });
     });
 
-    sched_loop([=]() { return ts->resume_flag >= 1; });
+    sched_loop(std::forward<SchedLoopCallback>(cb),
+               [=]() { return ts->resume_flag >= 1; });
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
@@ -205,6 +206,8 @@ public:
 
       auto target_rank = tls_->drange.owner();
       if (target_rank != common::topology::my_rank()) {
+        common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_migrate>();
+
         suspend([&](context_frame* cf) {
           suspended_state ss = evacuate(cf);
 
@@ -213,8 +216,12 @@ public:
 
           cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
 
+          common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
+
           resume_sched();
         });
+
+        common::profiler::switch_phase<prof_phase_sched_resume_migrate, prof_phase_thread>();
       }
     }
   }
@@ -223,10 +230,13 @@ public:
   /* void fork(thread_handler<T>& th, OnDriftCallback&& on_drift_cb, */
   /*           WorkHint w1, WorkHint w2, */
   /*           Fn&& fn, Args&&... args) { */
-  template <typename T, typename OnDriftCallback, typename Fn, typename... Args>
-  void fork(thread_handler<T>& th, OnDriftCallback&& on_drift_cb,
+  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
+  void fork(thread_handler<T>& th,
+            OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
             Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
+
+    auto my_rank = common::topology::my_rank();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
     th.state = ts;
@@ -250,10 +260,10 @@ public:
       new_drange = tls_->drange;
       // Since this task may have been stolen by workers outside of this task group,
       // the target rank should be itself.
-      target_rank = common::topology::my_rank();
+      target_rank = my_rank;
     }
 
-    if (target_rank == common::topology::my_rank()) {
+    if (target_rank == my_rank) {
       /* Put the continuation into the local queue and execute the new task (work-first) */
 
       suspend([&, ts, fn, args...](context_frame* cf) mutable {
@@ -277,7 +287,7 @@ public:
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Thread %p is completed", ts);
 
-        on_die_workfirst(ts, retval, std::forward<OnDriftCallback>(on_drift_cb));
+        on_die_workfirst(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
         common::verbose("Thread %p is serialized (fast path)", ts);
 
@@ -293,22 +303,40 @@ public:
         common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
       });
 
+      // reload my_rank because this thread might have been migrated
       if (target_rank == common::topology::my_rank()) {
         common::profiler::switch_phase<prof_phase_sched_resume_parent, prof_phase_thread>();
       } else {
-        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
+        if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
+          common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();
+          on_drift_fork_cb();
+          common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
+        } else {
+          common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
+        }
       }
 
     } else {
       /* Pass the new task to another worker and execute the continuation */
 
-      auto new_task_fn = [&, ts, new_drange, fn, args...]() {
+      auto new_task_fn = [&, my_rank, ts, new_drange, on_drift_fork_cb, on_drift_die_cb, fn, args...]() {
         common::verbose("Starting a migrated thread %p [%f, %f)",
                         ts, new_drange.begin(), new_drange.end());
 
-        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
-
         tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{.drange = new_drange};
+
+        if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
+          // If the new task is executed on another process
+          if (my_rank != common::topology::my_rank()) {
+            common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_sched_drift_fork_cb>();
+            on_drift_fork_cb();
+            common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
+          } else {
+            common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
+          }
+        } else {
+          common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
+        }
 
         T retval = invoke_fn<T>(fn, args...);
 
@@ -317,7 +345,7 @@ public:
         common::verbose("A migrated thread %p [%f, %f) is completed",
                         ts, new_drange.begin(), new_drange.end());
 
-        on_die_drifted(ts, retval, std::forward<OnDriftCallback>(on_drift_cb));
+        on_die_drifted(ts, retval, on_drift_die_cb);
       };
 
       size_t task_size = sizeof(callable_task<decltype(new_task_fn)>);
@@ -417,33 +445,31 @@ public:
     return retval;
   }
 
-  template <typename CondFn>
-  void sched_loop(CondFn&& cond_fn) {
+  template <typename SchedLoopCallback, typename CondFn>
+  void sched_loop(SchedLoopCallback&& cb, CondFn&& cond_fn) {
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
         use_primary_wsq_ = true;
-        suspend([&](context_frame* cf) {
-          sched_cf_ = cf;
-          execute_cross_worker_task(*cwt);
-        });
+        execute_cross_worker_task(*cwt);
         continue;
       }
 
       auto mwe = migration_wsq_.pop();
       if (mwe.has_value()) {
         use_primary_wsq_ = false;
-        suspend([&](context_frame* cf) {
-          sched_cf_ = cf;
-          execute_migrated_task(*mwe);
-        });
+        execute_migrated_task(*mwe);
         continue;
       }
 
-      common::mpi_make_progress();
       /* steal(); */
+
+      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
+        cb();
+      }
+      common::mpi_make_progress();
     }
 
     common::verbose("Exit scheduling loop");
@@ -484,8 +510,8 @@ private:
     return retval;
   }
 
-  template <typename T, typename OnDriftCallback>
-  void on_die_workfirst(thread_state<T>* ts, const T& retval, OnDriftCallback&& on_drift_cb) {
+  template <typename T, typename OnDriftDieCallback>
+  void on_die_workfirst(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
     bool serialized;
     if (use_primary_wsq_) {
       auto qe = primary_wsq_.pop();
@@ -499,16 +525,16 @@ private:
     }
 
     if (!serialized) {
-      on_die_drifted(ts, retval, std::forward<OnDriftCallback>(on_drift_cb));
+      on_die_drifted(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
     }
   }
 
-  template <typename T, typename OnDriftCallback>
-  void on_die_drifted(thread_state<T>* ts, const T& retval, OnDriftCallback&& on_drift_cb) {
-    if constexpr (!std::is_null_pointer_v<OnDriftCallback>) {
-      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_cb>();
-      std::forward<OnDriftCallback>(on_drift_cb)();
-      common::profiler::switch_phase<prof_phase_sched_drift_cb, prof_phase_sched_die>();
+  template <typename T, typename OnDriftDieCallback>
+  void on_die_drifted(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
+    if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_die_cb>();
+      on_drift_die_cb();
+      common::profiler::switch_phase<prof_phase_sched_drift_die_cb, prof_phase_sched_die>();
     }
 
     if constexpr (!std::is_same_v<T, no_retval_t>) {
@@ -661,27 +687,53 @@ private:
   void execute_cross_worker_task(const cross_worker_task& cwt) {
     if (cwt.evacuation_ptr == nullptr) {
       // This task is a new task
-      start_new_task(cwt.frame_base, cwt.frame_size);
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
+
+      suspend([&](context_frame* cf) {
+        sched_cf_ = cf;
+        start_new_task(cwt.frame_base, cwt.frame_size);
+      });
 
     } else {
       // This task is an evacuated continuation
-      resume(suspended_state{cwt.evacuation_ptr, cwt.frame_base, cwt.frame_size});
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_migrate>();
+
+      suspend([&](context_frame* cf) {
+        sched_cf_ = cf;
+        resume(suspended_state{cwt.evacuation_ptr, cwt.frame_base, cwt.frame_size});
+      });
     }
   }
 
   void execute_migrated_task(const migration_wsq_entry& mwe) {
     if (!mwe.is_continuation) {
       // This task is a new task
-      start_new_task(mwe.frame_base, mwe.frame_size);
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
+
+      suspend([&](context_frame* cf) {
+        sched_cf_ = cf;
+        start_new_task(mwe.frame_base, mwe.frame_size);
+      });
 
     } else if (mwe.evacuation_ptr) {
       // This task is an evacuated continuation
-      resume(suspended_state{mwe.evacuation_ptr, mwe.frame_base, mwe.frame_size});
+      /* common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_evac>(); */
+
+      /* suspend([&](context_frame* cf) { */
+      /*   sched_cf_ = cf; */
+      /*   resume(suspended_state{mwe.evacuation_ptr, mwe.frame_base, mwe.frame_size}); */
+      /* }); */
+      common::die("unimplenented");
 
     } else {
       // This task is a continuation on the stack
-      context_frame* next_cf = reinterpret_cast<context_frame*>(mwe.frame_base);
-      resume(next_cf);
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_parent>();
+
+      suspend([&](context_frame* cf) {
+        sched_cf_ = cf;
+        context_frame* next_cf = reinterpret_cast<context_frame*>(mwe.frame_base);
+        resume(next_cf);
+      });
     }
   }
 

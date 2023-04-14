@@ -232,13 +232,11 @@ parallel_loop_generic_aux(parallel_loop_options opts,
     auto tgdata = ito::task_group_begin();
 
     ito::thread<retval_t> th(ito::with_callback,
-                             []() { ori::release(); },
+                             [=]() { ori::acquire(rh); },
+                             [=]() { ori::release(); },
                              recur_fn_left);
-    if (!th.serialized()) {
-      ori::acquire(rh);
-    }
 
-    if constexpr(std::is_void_v<retval_t>) {
+    if constexpr (std::is_void_v<retval_t>) {
       recur_fn_right();
 
       if (!th.serialized()) {

@@ -16,10 +16,14 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
 
   using retval_t = std::invoke_result_t<Fn, Args...>;
   if constexpr (std::is_void_v<retval_t>) {
-    ito::root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    ito::root_exec(ito::with_callback,
+                   []() { ori::poll(); },
+                   std::forward<Fn>(fn), std::forward<Args>(args)...);
     ori::acquire();
   } else {
-    auto ret = ito::root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    auto ret = ito::root_exec(ito::with_callback,
+                              []() { ori::poll(); },
+                              std::forward<Fn>(fn), std::forward<Args>(args)...);
     ori::acquire();
     return ret;
   }

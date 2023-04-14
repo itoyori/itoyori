@@ -48,8 +48,13 @@ inline void fini() {
 
 template <typename Fn, typename... Args>
 inline auto root_exec(Fn&& fn, Args&&... args) {
+  return root_exec(with_callback, nullptr, std::forward<Fn>(fn), std::forward<Args>(args)...);
+}
+
+template <typename SchedLoopCallback, typename Fn, typename... Args>
+inline auto root_exec(with_callback_t, SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
   auto& w = worker::instance::get();
-  return w.root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  return w.root_exec(std::forward<SchedLoopCallback>(cb), std::forward<Fn>(fn), std::forward<Args>(args)...);
 }
 
 inline bool is_spmd() {

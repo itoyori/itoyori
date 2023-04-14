@@ -46,8 +46,8 @@ public:
       thread_state_allocator_(thread_state_allocator_size_option::value()),
       suspended_thread_allocator_(suspended_thread_allocator_size_option::value()) {}
 
-  template <typename T, typename Fn, typename... Args>
-  T root_exec(Fn&& fn, Args&&... args) {
+  template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
+  T root_exec(SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
@@ -67,7 +67,8 @@ public:
       });
     });
 
-    sched_loop([=]() { return ts->resume_flag >= 1; });
+    sched_loop(std::forward<SchedLoopCallback>(cb),
+               [=]() { return ts->resume_flag >= 1; });
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
@@ -80,8 +81,10 @@ public:
     return retval;
   }
 
-  template <typename T, typename OnDriftCallback, typename Fn, typename... Args>
-  void fork(thread_handler<T>& th, OnDriftCallback&& on_drift_cb, Fn&& fn, Args&&... args) {
+  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
+  void fork(thread_handler<T>& th,
+            OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+            Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
@@ -102,7 +105,7 @@ public:
       common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
       common::verbose("Thread %p is completed", ts);
 
-      on_die(ts, retval, std::forward<OnDriftCallback>(on_drift_cb));
+      on_die(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
       common::verbose("Thread %p is serialized (fast path)", ts);
 
@@ -121,7 +124,13 @@ public:
     if (th.serialized) {
       common::profiler::switch_phase<prof_phase_sched_resume_parent, prof_phase_thread>();
     } else {
-      common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
+      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
+        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();
+        on_drift_fork_cb();
+        common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
+      } else {
+        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
+      }
     }
   }
 
@@ -185,12 +194,16 @@ public:
     return retval;
   }
 
-  template <typename CondFn>
-  void sched_loop(CondFn&& cond_fn) {
+  template <typename SchedLoopCallback, typename CondFn>
+  void sched_loop(SchedLoopCallback&& cb, CondFn&& cond_fn) {
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
       steal();
+
+      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
+        cb();
+      }
     }
 
     common::verbose("Exit scheduling loop");
@@ -217,16 +230,16 @@ private:
     return retval;
   }
 
-  template <typename T, typename OnDriftCallback>
-  void on_die(thread_state<T>* ts, const T& retval, OnDriftCallback&& on_drift_cb) {
+  template <typename T, typename OnDriftDieCallback>
+  void on_die(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
     auto qe = wsq_.pop();
     bool serialized = qe.has_value();
 
     if (!serialized) {
-      if constexpr (!std::is_null_pointer_v<OnDriftCallback>) {
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_cb>();
-        std::forward<OnDriftCallback>(on_drift_cb)();
-        common::profiler::switch_phase<prof_phase_sched_drift_cb, prof_phase_sched_die>();
+      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
+        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_die_cb>();
+        on_drift_die_cb();
+        common::profiler::switch_phase<prof_phase_sched_drift_die_cb, prof_phase_sched_die>();
       }
 
       if constexpr (!std::is_same_v<T, no_retval_t>) {

@@ -68,13 +68,11 @@ public:
     ori::poll();
 
     ito::thread<retval_t> th(ito::with_callback,
+                             [rh = rh_]() { ori::acquire(rh); },
                              []() { ori::release(); },
                              std::apply<const Fn&, const std::tuple<Args...>&>,
                              std::forward<Fn>(fn),
                              std::forward<std::tuple<Args...>>(args));
-    if (!th.serialized()) {
-      ori::acquire(rh_);
-    }
     all_serialized_ &= th.serialized();
 
     auto ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
@@ -104,8 +102,14 @@ private:
 template <typename... Args>
 inline auto parallel_invoke(Args&&... args) {
   auto rh = ori::release_lazy();
+
+  auto tgdata = ito::task_group_begin();
+
   parallel_invoke_state s(rh);
   auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
+
+  ito::task_group_end(tgdata);
+
   if (!s.all_serialized()) {
     ori::acquire();
   }

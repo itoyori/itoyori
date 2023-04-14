@@ -14,13 +14,13 @@ public:
 
   scheduler_serial() {}
 
-  template <typename T, typename Fn, typename... Args>
-  T root_exec(Fn&& fn, Args&&... args) {
+  template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
+  T root_exec(SchedLoopCallback&&, Fn&& fn, Args&&... args) {
     return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
-  template <typename T, typename OnDriftCallback, typename Fn, typename... Args>
-  void fork(thread_handler<T>& th, OnDriftCallback&&, Fn&& fn, Args&&... args) {
+  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
+  void fork(thread_handler<T>& th, OnDriftForkCallback&&, OnDriftDieCallback&&, Fn&& fn, Args&&... args) {
     th = invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
@@ -29,8 +29,8 @@ public:
     return th;
   }
 
-  template <typename CondFn>
-  void sched_loop(CondFn&&) {}
+  template <typename SchedLoopCallback, typename CondFn>
+  void sched_loop(SchedLoopCallback&&, CondFn&&) {}
 
   template <typename T>
   static bool is_serialized(thread_handler<T>) {

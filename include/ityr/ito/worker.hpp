@@ -11,18 +11,19 @@ public:
   worker()
     : sched_() {}
 
-  template <typename Fn, typename... Args>
-  auto root_exec(Fn&& fn, Args&&... args) {
+  template <typename SchedLoopCallback, typename Fn, typename... Args>
+  auto root_exec(SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
     ITYR_CHECK(is_spmd_);
     is_spmd_ = false;
 
     using retval_t = std::invoke_result_t<Fn, Args...>;
     if constexpr (std::is_void_v<retval_t>) {
       if (common::topology::my_rank() == 0) {
-        sched_.root_exec<scheduler::no_retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+        sched_.root_exec<scheduler::no_retval_t>(std::forward<SchedLoopCallback>(cb),
+                                                 std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
-        sched_.sched_loop([]{ return true; });
+        sched_.sched_loop(std::forward<SchedLoopCallback>(cb), []{ return true; });
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_spmd>();
       }
 
@@ -33,10 +34,11 @@ public:
     } else {
       retval_t retval {};
       if (common::topology::my_rank() == 0) {
-        retval = sched_.root_exec<retval_t>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+        retval = sched_.root_exec<retval_t>(std::forward<SchedLoopCallback>(cb),
+                                            std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
-        sched_.sched_loop([]{ return true; });
+        sched_.sched_loop(std::forward<SchedLoopCallback>(cb), []{ return true; });
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_spmd>();
       }
 
