@@ -156,10 +156,11 @@ public:
       sched_cf_ = cf;
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
-        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
         distrange root_drange {common::topology::n_ranks()};
         tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{.drange = root_drange};
+
+        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
         T retval = invoke_fn<T>(fn, args...);
 
@@ -226,14 +227,11 @@ public:
     }
   }
 
-  /* template <typename T, typename OnDriftCallback, typename WorkHint, typename Fn, typename... Args> */
-  /* void fork(thread_handler<T>& th, OnDriftCallback&& on_drift_cb, */
-  /*           WorkHint w1, WorkHint w2, */
-  /*           Fn&& fn, Args&&... args) { */
-  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
+  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
+            typename WorkHint, typename Fn, typename... Args>
   void fork(thread_handler<T>& th,
             OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
-            Fn&& fn, Args&&... args) {
+            WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     auto my_rank = common::topology::my_rank();
@@ -245,7 +243,7 @@ public:
     distrange new_drange;
     common::topology::rank_t target_rank;
     if (tls_->drange.is_cross_worker()) {
-      auto [dr1, dr2] = tls_->drange.divide(1, 1);
+      auto [dr1, dr2] = tls_->drange.divide(w1, w2);
 
       common::verbose("Distribution range [%f, %f) is divided into [%f, %f) and [%f, %f)",
                       tls_->drange.begin(), tls_->drange.end(),
@@ -319,7 +317,7 @@ public:
     } else {
       /* Pass the new task to another worker and execute the continuation */
 
-      auto new_task_fn = [&, my_rank, ts, new_drange, on_drift_fork_cb, on_drift_die_cb, fn, args...]() {
+      auto new_task_fn = [&, my_rank, ts, new_drange, on_drift_fork_cb, on_drift_die_cb, fn, args...]() mutable {
         common::verbose("Starting a migrated thread %p [%f, %f)",
                         ts, new_drange.begin(), new_drange.end());
 
@@ -500,7 +498,7 @@ private:
   };
 
   template <typename T, typename Fn, typename... Args>
-  static T invoke_fn(Fn&& fn, Args&&... args) {
+  T invoke_fn(Fn&& fn, Args&&... args) {
     T retval;
     if constexpr (!std::is_same_v<T, no_retval_t>) {
       retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);

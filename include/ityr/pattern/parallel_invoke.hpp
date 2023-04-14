@@ -19,6 +19,35 @@ inline bool operator!=(no_retval_t, no_retval_t) noexcept {
   return false;
 }
 
+template <typename... Args>
+struct count_num_tasks;
+
+template <typename Fn>
+struct count_num_tasks<Fn> {
+  static constexpr int value = 1;
+};
+
+template <typename Fn1, typename Fn2, typename... Rest>
+struct count_num_tasks<Fn1, Fn2, Rest...> {
+  static constexpr int value = 1 + count_num_tasks<Fn2, Rest...>::value;
+};
+
+template <typename Fn, typename... Args>
+struct count_num_tasks<Fn, std::tuple<Args...>> {
+  static constexpr int value = 1;
+};
+
+template <typename Fn, typename... Args, typename... Rest>
+struct count_num_tasks<Fn, std::tuple<Args...>, Rest...> {
+  static constexpr int value = 1 + count_num_tasks<Rest...>::value;
+};
+
+static_assert(count_num_tasks<void (*)()>::value                                            == 1);
+static_assert(count_num_tasks<void (*)(int), std::tuple<int>>::value                        == 1);
+static_assert(count_num_tasks<void (*)(), int (*)()>::value                                 == 2);
+static_assert(count_num_tasks<void (*)(int, int), std::tuple<int, int>, void (*)()>::value  == 2);
+static_assert(count_num_tasks<void (*)(int), std::tuple<int>, int (*)(), void (*)()>::value == 3);
+
 template <typename ReleaseHandler>
 struct parallel_invoke_state {
 public:
@@ -46,7 +75,7 @@ public:
                                std::forward<Rest>(rest)...);
   }
 
-  template <typename Fn, typename... Args, typename... Rest>
+  template <typename Fn, typename... Args>
   inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args) {
     using retval_t = std::invoke_result_t<Fn, Args...>;
 
@@ -65,11 +94,15 @@ public:
   inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest) {
     using retval_t = std::invoke_result_t<Fn, Args...>;
 
+    constexpr int n_rest_tasks = count_num_tasks<Rest...>::value;
+    static_assert(n_rest_tasks > 0);
+
     ori::poll();
 
     ito::thread<retval_t> th(ito::with_callback,
                              [rh = rh_]() { ori::acquire(rh); },
                              []() { ori::release(); },
+                             ito::with_workhint, 1, n_rest_tasks,
                              std::apply<const Fn&, const std::tuple<Args...>&>,
                              std::forward<Fn>(fn),
                              std::forward<std::tuple<Args...>>(args));

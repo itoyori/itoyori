@@ -81,10 +81,11 @@ public:
     return retval;
   }
 
-  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
+  template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
+            typename WorkHint, typename Fn, typename... Args>
   void fork(thread_handler<T>& th,
             OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
-            Fn&& fn, Args&&... args) {
+            WorkHint, WorkHint, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;

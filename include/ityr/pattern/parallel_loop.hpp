@@ -234,6 +234,7 @@ parallel_loop_generic_aux(parallel_loop_options opts,
     ito::thread<retval_t> th(ito::with_callback,
                              [=]() { ori::acquire(rh); },
                              [=]() { ori::release(); },
+                             ito::with_workhint, 1, 1,
                              recur_fn_left);
 
     if constexpr (std::is_void_v<retval_t>) {
