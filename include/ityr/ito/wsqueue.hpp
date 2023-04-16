@@ -214,6 +214,7 @@ public:
   }
 
   const common::global_lock& lock() const { return queue_lock_; }
+  int n_queues() const { return n_queues_; }
 
 private:
   struct queue_state {

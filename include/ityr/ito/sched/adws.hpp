@@ -32,21 +32,21 @@ private:
   std::tuple<Args...> arg_;
 };
 
-class distrange {
+class dist_range {
 public:
   using value_type = double;
 
-  distrange() {}
-  distrange(common::topology::rank_t n_ranks)
+  dist_range() {}
+  dist_range(common::topology::rank_t n_ranks)
     : begin_(0), end_(static_cast<value_type>(n_ranks)) {}
-  distrange(value_type begin, value_type end)
+  dist_range(value_type begin, value_type end)
     : begin_(begin), end_(end) {}
 
   value_type begin() const { return begin_; }
   value_type end() const { return end_; }
 
   template <typename T>
-  std::pair<distrange, distrange> divide(T r1, T r2) const {
+  std::pair<dist_range, dist_range> divide(T r1, T r2) const {
     value_type at = begin_ + (end_ - begin_) * r1 / (r1 + r2);
 
     // Boundary condition for tasks at the very bottom of the task hierarchy.
@@ -58,7 +58,7 @@ public:
       if (at < begin_) at = begin_;
     }
 
-    return std::make_pair(distrange{begin_, at}, distrange{at, end_});
+    return std::make_pair(dist_range{begin_, at}, dist_range{at, end_});
   }
 
   common::topology::rank_t owner() const {
@@ -72,6 +72,70 @@ public:
 private:
   value_type begin_;
   value_type end_;
+};
+
+class dist_tree {
+public:
+  struct node_ref {
+    common::topology::rank_t owner_rank  = -1;
+    int                      local_depth = -1;
+    int                      depth       = -1; // piggy-back to reduce communication
+  };
+
+  struct node {
+    node_ref   parent;
+    dist_range drange;
+    bool       dominant;
+  };
+
+  dist_tree()
+    : max_local_depth_(adws_max_dist_tree_depth_option::value()),
+      win_(common::topology::mpicomm(), max_local_depth_) {}
+
+  node_ref append(node_ref parent, dist_range drange) {
+    auto my_rank = common::topology::my_rank();
+
+    int local_depth;
+    if (parent.owner_rank != my_rank) {
+      // Append the top local node to the remote parent node
+      local_depth = 0;
+    } else {
+      local_depth = parent.local_depth + 1;
+      ITYR_REQUIRE_MESSAGE(parent.local_depth + 1 < max_local_depth_,
+                           "Reached maximum local depth (%d) for dist_tree", max_local_depth_);
+    }
+
+    node& new_node = local_node(local_depth);
+    new_node.parent   = parent;
+    new_node.drange   = drange;
+    new_node.dominant = false;
+
+    return {my_rank, local_depth, parent.depth + 1};
+  }
+
+  void set_dominant(node_ref nr) {
+    if (nr.owner_rank == common::topology::my_rank()) {
+      get_local_node(nr).dominant = true;
+    } else {
+      std::size_t disp = nr.local_depth * sizeof(node) + offsetof(node, dominant);
+      common::mpi_atomic_put_value(true, nr.owner_rank, disp, win_.win());
+    }
+  }
+
+  node& get_local_node(node_ref nr) {
+    ITYR_CHECK(nr.owner_rank == common::topology::my_rank());
+    return local_node(nr.local_depth);
+  }
+
+private:
+  node& local_node(int local_depth) {
+    ITYR_CHECK(0 <= local_depth);
+    ITYR_CHECK(local_depth < max_local_depth_);
+    return win_.local_buf()[local_depth];
+  }
+
+  int                           max_local_depth_;
+  common::mpi_win_manager<node> win_;
 };
 
 template <typename Entry>
@@ -132,11 +196,12 @@ public:
   };
 
   struct thread_local_storage {
-    distrange drange;
+    dist_range          drange;         // distribution range of this thread
+    dist_tree::node_ref dtree_node_ref; // distribution tree node of the cross-worker task group that this thread belongs to
   };
 
   struct task_group_data {
-    distrange drange;
+    dist_range drange;
   };
 
   scheduler_adws()
@@ -157,8 +222,9 @@ public:
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
 
-        distrange root_drange {common::topology::n_ranks()};
-        tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{.drange = root_drange};
+        dist_range root_drange {common::topology::n_ranks()};
+        tls_ = new (alloca(sizeof(thread_local_storage)))
+               thread_local_storage{.drange = root_drange, .dtree_node_ref = {}};
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
@@ -189,8 +255,10 @@ public:
     task_group_data tgdata {.drange = tls_->drange};
 
     if (tls_->drange.is_cross_worker()) {
-      common::verbose("Begin a task group of distribution range [%f, %f)",
-                      tls_->drange.begin(), tls_->drange.end());
+      tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange);
+
+      common::verbose("Begin a cross-worker task group of distribution range [%f, %f) at depth %d",
+                      tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
     }
 
     return tgdata;
@@ -200,11 +268,11 @@ public:
     // restore the original distributed range of this thread at the beginning of the task group
     tls_->drange = tgdata.drange;
 
-    // migrate the cross-worker-task to the owner
     if (tls_->drange.is_cross_worker()) {
-      common::verbose("Restore distribution range [%f, %f) of completed task group",
-                      tls_->drange.begin(), tls_->drange.end());
+      common::verbose("End a cross-worker task group of distribution range [%f, %f) at depth %d",
+                      tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
 
+      // migrate the cross-worker-task to the owner
       auto target_rank = tls_->drange.owner();
       if (target_rank != common::topology::my_rank()) {
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_migrate>();
@@ -224,6 +292,10 @@ public:
 
         common::profiler::switch_phase<prof_phase_sched_resume_migrate, prof_phase_thread>();
       }
+
+      // Set the parent dist_tree node to the current thread
+      auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
+      tls_->dtree_node_ref = dtree_node.parent;
     }
   }
 
@@ -240,7 +312,7 @@ public:
     th.state = ts;
     th.serialized = false;
 
-    distrange new_drange;
+    dist_range new_drange;
     common::topology::rank_t target_rank;
     if (tls_->drange.is_cross_worker()) {
       auto [dr1, dr2] = tls_->drange.divide(w1, w2);
@@ -267,14 +339,15 @@ public:
       suspend([&, ts, fn, args...](context_frame* cf) mutable {
         common::verbose("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
-        tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{.drange = new_drange};
+        tls_ = new (alloca(sizeof(thread_local_storage)))
+               thread_local_storage{.drange = new_drange, .dtree_node_ref = tls_->dtree_node_ref};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
         if (use_primary_wsq_) {
-          primary_wsq_.push({cf, cf_size});
+          primary_wsq_.push({cf, cf_size}, tls_->dtree_node_ref.depth);
         } else {
-          migration_wsq_.push({true, nullptr, cf, cf_size});
+          migration_wsq_.push({true, nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
         }
 
         common::verbose("Starting new thread %p", ts);
@@ -285,6 +358,7 @@ public:
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Thread %p is completed", ts);
 
+        on_die_reached();
         on_die_workfirst(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
         common::verbose("Thread %p is serialized (fast path)", ts);
@@ -317,11 +391,13 @@ public:
     } else {
       /* Pass the new task to another worker and execute the continuation */
 
-      auto new_task_fn = [&, my_rank, ts, new_drange, on_drift_fork_cb, on_drift_die_cb, fn, args...]() mutable {
+      auto new_task_fn = [&, my_rank, ts, new_drange, dtree_node_ref = tls_->dtree_node_ref,
+                          on_drift_fork_cb, on_drift_die_cb, fn, args...]() mutable {
         common::verbose("Starting a migrated thread %p [%f, %f)",
                         ts, new_drange.begin(), new_drange.end());
 
-        tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{.drange = new_drange};
+        tls_ = new (alloca(sizeof(thread_local_storage)))
+               thread_local_storage{.drange = new_drange, .dtree_node_ref = dtree_node_ref};
 
         if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
           // If the new task is executed on another process
@@ -339,10 +415,10 @@ public:
         T retval = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
-
         common::verbose("A migrated thread %p [%f, %f) is completed",
                         ts, new_drange.begin(), new_drange.end());
 
+        on_die_reached();
         on_die_drifted(ts, retval, on_drift_die_cb);
       };
 
@@ -360,7 +436,8 @@ public:
         common::verbose("Migrate non-cross-worker-task %p [%f, %f) to process %d",
                         ts, new_drange.begin(), new_drange.end(), target_rank);
 
-        migration_wsq_.pass({false, nullptr, t, task_size}, target_rank);
+        migration_wsq_.pass({false, nullptr, t, task_size}, target_rank,
+                            tls_->dtree_node_ref.depth);
       }
 
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
@@ -455,7 +532,7 @@ public:
         continue;
       }
 
-      auto mwe = migration_wsq_.pop();
+      auto mwe = pop_from_migration_queues();
       if (mwe.has_value()) {
         use_primary_wsq_ = false;
         execute_migrated_task(*mwe);
@@ -508,14 +585,25 @@ private:
     return retval;
   }
 
+  void on_die_reached() {
+    if (tls_->drange.is_cross_worker()) {
+      // Set the parent cross-worker task group as "dominant" task group, which allows for
+      // work stealing within the range of workers within the task group.
+      common::verbose("Distribution tree node (owner=%d, depth=%d) becomes dominant",
+                      tls_->dtree_node_ref.owner_rank, tls_->dtree_node_ref.depth);
+
+      dtree_.set_dominant(tls_->dtree_node_ref);
+    }
+  }
+
   template <typename T, typename OnDriftDieCallback>
   void on_die_workfirst(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
     bool serialized;
     if (use_primary_wsq_) {
-      auto qe = primary_wsq_.pop();
+      auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
       serialized = qe.has_value();
     } else {
-      auto qe = migration_wsq_.pop();
+      auto qe = migration_wsq_.pop(tls_->dtree_node_ref.depth);
       serialized = qe.has_value();
       if (serialized) {
         ITYR_CHECK(qe->is_continuation);
@@ -735,6 +823,26 @@ private:
     }
   }
 
+  std::optional<primary_wsq_entry> pop_from_primary_queues(int depth_from) {
+    for (int d = depth_from; d >= 0; d--) {
+      auto pwe = primary_wsq_.pop(d);
+      if (pwe.has_value()) {
+        return pwe;
+      }
+    }
+    return std::nullopt;
+  }
+
+  std::optional<migration_wsq_entry> pop_from_migration_queues() {
+    for (int d = 0; d < migration_wsq_.n_queues(); d++) {
+      auto mwe = migration_wsq_.pop(d);
+      if (mwe.has_value()) {
+        return mwe;
+      }
+    }
+    return std::nullopt;
+  }
+
   suspended_state evacuate(context_frame* cf) {
     std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
     void* evacuation_ptr = suspended_thread_allocator_.allocate(cf_size);
@@ -778,11 +886,12 @@ private:
   wsqueue<migration_wsq_entry, true> migration_wsq_;
   common::remotable_resource         thread_state_allocator_;
   common::remotable_resource         suspended_thread_allocator_;
-  context_frame*                     cf_top_               = nullptr;
-  context_frame*                     sched_cf_             = nullptr;
-  thread_local_storage*              tls_                  = nullptr;
-  MPI_Request                        sched_loop_exit_req_  = MPI_REQUEST_NULL;
-  bool                               use_primary_wsq_      = true;
+  context_frame*                     cf_top_              = nullptr;
+  context_frame*                     sched_cf_            = nullptr;
+  thread_local_storage*              tls_                 = nullptr;
+  MPI_Request                        sched_loop_exit_req_ = MPI_REQUEST_NULL;
+  bool                               use_primary_wsq_     = true;
+  dist_tree                          dtree_;
 };
 
 }
