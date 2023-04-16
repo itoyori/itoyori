@@ -45,6 +45,24 @@ public:
   value_type begin() const { return begin_; }
   value_type end() const { return end_; }
 
+  common::topology::rank_t begin_rank() const {
+    return static_cast<common::topology::rank_t>(begin_);
+  }
+
+  common::topology::rank_t end_rank() const {
+    auto end_rank = static_cast<common::topology::rank_t>(end_);
+    if (static_cast<value_type>(end_rank) == end_) {
+      // If the range is at the boundary of the end point, i.e., range = [x, y.0),
+      // the end rank is determined to y-1.
+      end_rank--;
+    }
+    return end_rank;
+  }
+
+  bool is_at_end_boundary() const {
+    return static_cast<value_type>(static_cast<common::topology::rank_t>(end_)) == end_;
+  }
+
   template <typename T>
   std::pair<dist_range, dist_range> divide(T r1, T r2) const {
     value_type at = begin_ + (end_ - begin_) * r1 / (r1 + r2);
@@ -86,10 +104,13 @@ public:
     node_ref   parent;
     dist_range drange;
     bool       dominant;
+
+    int depth() const { return parent.depth + 1; }
   };
 
   dist_tree()
     : max_local_depth_(adws_max_dist_tree_depth_option::value()),
+      remote_buf_(max_local_depth_),
       win_(common::topology::mpicomm(), max_local_depth_) {}
 
   node_ref append(node_ref parent, dist_range drange) {
@@ -122,6 +143,39 @@ public:
     }
   }
 
+  std::optional<node> get_topmost_dominant(node_ref nr) {
+    // TODO: reduce comm
+    std::optional<node> ret;
+
+    node_ref parent;
+
+    if (nr.owner_rank == common::topology::my_rank()) {
+      for (int d = 0; d <= nr.local_depth; d++) {
+        if (local_node(d).dominant) {
+          ret = local_node(d);
+          break;
+        }
+      }
+      parent = local_node(0).parent;
+    } else {
+      parent = nr;
+    }
+
+    while (parent.owner_rank != -1) {
+      common::mpi_get(remote_buf_.data(), parent.local_depth + 1,
+                      parent.owner_rank, 0, win_.win());
+      for (int d = 0; d <= parent.local_depth; d++) {
+        if (remote_buf_[d].dominant) {
+          ret = remote_buf_[d];
+          break;
+        }
+      }
+      parent = remote_buf_[0].parent;
+    }
+
+    return ret;
+  }
+
   node& get_local_node(node_ref nr) {
     ITYR_CHECK(nr.owner_rank == common::topology::my_rank());
     return local_node(nr.local_depth);
@@ -135,6 +189,7 @@ private:
   }
 
   int                           max_local_depth_;
+  std::vector<node>             remote_buf_;
   common::mpi_win_manager<node> win_;
 };
 
@@ -256,6 +311,7 @@ public:
 
     if (tls_->drange.is_cross_worker()) {
       tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange);
+      dtree_local_bottom_ref_ = tls_->dtree_node_ref;
 
       common::verbose("Begin a cross-worker task group of distribution range [%f, %f) at depth %d",
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
@@ -296,6 +352,7 @@ public:
       // Set the parent dist_tree node to the current thread
       auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
       tls_->dtree_node_ref = dtree_node.parent;
+      dtree_local_bottom_ref_ = tls_->dtree_node_ref;
     }
   }
 
@@ -337,7 +394,7 @@ public:
       /* Put the continuation into the local queue and execute the new task (work-first) */
 
       suspend([&, ts, fn, args...](context_frame* cf) mutable {
-        common::verbose("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
+        common::verbose<3>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange = new_drange, .dtree_node_ref = tls_->dtree_node_ref};
@@ -350,18 +407,18 @@ public:
           migration_wsq_.push({true, nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
         }
 
-        common::verbose("Starting new thread %p", ts);
+        common::verbose<3>("Starting new thread %p", ts);
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
         T retval = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
-        common::verbose("Thread %p is completed", ts);
+        common::verbose<3>("Thread %p is completed", ts);
 
         on_die_reached();
         on_die_workfirst(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
-        common::verbose("Thread %p is serialized (fast path)", ts);
+        common::verbose<3>("Thread %p is serialized (fast path)", ts);
 
         // The following is executed only when the thread is serialized
         std::destroy_at(ts);
@@ -370,7 +427,7 @@ public:
         th.serialized = true;
         th.retval_ser = retval;
 
-        common::verbose("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
+        common::verbose<3>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
         common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
       });
@@ -450,7 +507,7 @@ public:
 
     T retval;
     if (th.serialized) {
-      common::verbose("Skip join for serialized thread (fast path)");
+      common::verbose<3>("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
       // when the thread is serialized (i.e., at a fork)
       retval = th.retval_ser;
@@ -481,7 +538,7 @@ public:
             // threads can block while their parents are in the local callstack, which does not
             // happen with the work-first policy alone.
             if (use_primary_wsq_) {
-              auto qe = primary_wsq_.pop();
+              auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
               if (qe.has_value()) {
                 common::profiler::switch_phase<prof_phase_sched_join, prof_phase_sched_resume_parent>();
 
@@ -525,9 +582,9 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
+      // TODO: immediately execute cross-worker tasks upon arrival
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
-        use_primary_wsq_ = true;
         execute_cross_worker_task(*cwt);
         continue;
       }
@@ -536,10 +593,13 @@ public:
       if (mwe.has_value()) {
         use_primary_wsq_ = false;
         execute_migrated_task(*mwe);
+        use_primary_wsq_ = true;
         continue;
       }
 
-      /* steal(); */
+      if (adws_enable_steal_option::value()) {
+        steal();
+      }
 
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
         cb();
@@ -586,6 +646,8 @@ private:
   }
 
   void on_die_reached() {
+    // TODO: handle corner cases where cross-worker tasks finish without distributing
+    // child cross-worker tasks to their owners
     if (tls_->drange.is_cross_worker()) {
       // Set the parent cross-worker task group as "dominant" task group, which allows for
       // work stealing within the range of workers within the task group.
@@ -651,60 +713,170 @@ private:
     resume_sched();
   }
 
-  common::topology::rank_t get_random_rank() {
-    ITYR_CHECK(common::topology::n_ranks() > 1);
+  common::topology::rank_t get_random_rank(common::topology::rank_t a, common::topology::rank_t b) {
     static std::mt19937 engine(std::random_device{}());
-    static std::uniform_int_distribution<common::topology::rank_t> dist(0, common::topology::n_ranks() - 2);
 
-    auto rank = dist(engine);
-    if (rank >= common::topology::my_rank()) rank++;
+    ITYR_CHECK(0 <= a);
+    ITYR_CHECK(a <= b);
+    ITYR_CHECK(b < common::topology::n_ranks());
+    std::uniform_int_distribution<common::topology::rank_t> dist(a, b);
 
-    ITYR_CHECK(0 <= rank);
+    common::topology::rank_t rank;
+    do {
+      rank = dist(engine);
+    } while (rank == common::topology::my_rank());
+
+    ITYR_CHECK(a <= rank);
     ITYR_CHECK(rank != common::topology::my_rank());
-    ITYR_CHECK(rank < common::topology::n_ranks());
+    ITYR_CHECK(rank <= b);
     return rank;
   }
 
-  /* void steal() { */
-  /*   auto target_rank = get_random_rank(); */
+  void steal() {
+    auto ne = dtree_.get_topmost_dominant(dtree_local_bottom_ref_);
+    if (!ne.has_value()) {
+      common::verbose<2>("Dominant dist_tree node not found");
+      return;
+    }
+    dist_tree::node dominant_node = *ne;
+    dist_range steal_range = dominant_node.drange;
 
-  /*   auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank); */
+    common::verbose<2>("Dominant dist_tree node found: drange=[%f, %f), depth=%d",
+                       steal_range.begin(), steal_range.end(), dominant_node.depth());
 
-  /*   if (wsq_.empty(target_rank)) { */
-  /*     common::profiler::interval_end<prof_event_sched_steal>(ibd, false); */
-  /*     return; */
-  /*   } */
+    auto my_rank = common::topology::my_rank();
 
-  /*   if (!wsq_.lock().trylock(target_rank)) { */
-  /*     common::profiler::interval_end<prof_event_sched_steal>(ibd, false); */
-  /*     return; */
-  /*   } */
+    auto begin_rank = steal_range.begin_rank();
+    auto end_rank   = steal_range.end_rank();
+    if (begin_rank == end_rank) {
+      return;
+    }
 
-  /*   auto we = wsq_.steal_nolock(target_rank); */
-  /*   if (!we.has_value()) { */
-  /*     wsq_.lock().unlock(target_rank); */
-  /*     common::profiler::interval_end<prof_event_sched_steal>(ibd, false); */
-  /*     return; */
-  /*   } */
+    ITYR_CHECK((begin_rank <= my_rank || my_rank <= end_rank));
 
-  /*   common::verbose("Steal context frame [%p, %p) from rank %d", */
-  /*                   we->frame_base, reinterpret_cast<std::byte*>(we->frame_base) + we->frame_size, target_rank); */
+    common::verbose<2>("Start work stealing for dominant task group [%f, %f)",
+                    steal_range.begin(), steal_range.end());
 
-  /*   stack_.direct_copy_from(we->frame_base, we->frame_size, target_rank); */
+    auto target_rank = get_random_rank(begin_rank, end_rank);
 
-  /*   wsq_.lock().unlock(target_rank); */
+    common::verbose<2>("Target rank: %d", target_rank);
 
-  /*   common::profiler::interval_end<prof_event_sched_steal>(ibd, true); */
+    if (target_rank != begin_rank) {
+      bool success = steal_from_migration_queues(target_rank, dominant_node.depth());
+      if (success) {
+        return;
+      }
+    }
 
-  /*   common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>(); */
+    if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
+      bool success = steal_from_primary_queues(target_rank, dominant_node.depth());
+      if (success) {
+        return;
+      }
+    }
+  }
 
-  /*   context_frame* next_cf = reinterpret_cast<context_frame*>(we->frame_base); */
-  /*   suspend([&](context_frame* cf) { */
-  /*     sched_cf_ = cf; */
-  /*     context::clear_parent_frame(next_cf); */
-  /*     resume(next_cf); */
-  /*   }); */
-  /* } */
+  bool steal_from_primary_queues(common::topology::rank_t target_rank, int max_depth) {
+    // TODO: quick check for the entire wsqueue array
+    for (int d = max_depth; d < primary_wsq_.n_queues(); d++) {
+      if (primary_wsq_.empty(target_rank, d)) {
+        continue;
+      }
+
+      if (!primary_wsq_.lock().trylock(target_rank, d)) {
+        continue;
+      }
+
+      auto pwe = primary_wsq_.steal_nolock(target_rank, d);
+      if (!pwe.has_value()) {
+        primary_wsq_.lock().unlock(target_rank, d);
+        continue;
+      }
+
+      common::verbose("Steal context frame [%p, %p) from primary wsqueue (depth=%d) on rank %d",
+                      pwe->frame_base, reinterpret_cast<std::byte*>(pwe->frame_base) + pwe->frame_size,
+                      d, target_rank);
+
+      stack_.direct_copy_from(pwe->frame_base, pwe->frame_size, target_rank);
+
+      primary_wsq_.lock().unlock(target_rank, d);
+
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+
+      context_frame* next_cf = reinterpret_cast<context_frame*>(pwe->frame_base);
+      suspend([&](context_frame* cf) {
+        sched_cf_ = cf;
+        context::clear_parent_frame(next_cf);
+        resume(next_cf);
+      });
+
+      return true;
+    }
+
+    common::verbose<2>("Steal failed for primary queues on rank %d", target_rank);
+    return false;
+  }
+
+  bool steal_from_migration_queues(common::topology::rank_t target_rank, int max_depth) {
+    // TODO: quick check for the entire wsqueue array
+    for (int d = migration_wsq_.n_queues() - 1; d >= max_depth; d--) {
+      if (migration_wsq_.empty(target_rank, d)) {
+        continue;
+      }
+
+      if (!migration_wsq_.lock().trylock(target_rank, d)) {
+        continue;
+      }
+
+      auto mwe = migration_wsq_.steal_nolock(target_rank, d);
+      if (!mwe.has_value()) {
+        migration_wsq_.lock().unlock(target_rank, d);
+        continue;
+      }
+
+      if (!mwe->is_continuation) {
+        // This task is a new task
+        common::verbose("Steal a new task from migration wsqueue (depth=%d) on rank %d",
+                        d, target_rank);
+
+        migration_wsq_.lock().unlock(target_rank, d);
+
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
+
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          start_new_task(mwe->frame_base, mwe->frame_size);
+        });
+
+      } else if (mwe->evacuation_ptr) {
+        migration_wsq_.lock().unlock(target_rank, d);
+        common::die("unimplenented");
+
+      } else {
+        // This task is a continuation on the stack
+        common::verbose("Steal context frame [%p, %p) from migration wsqueue (depth=%d) on rank %d",
+                        mwe->frame_base, reinterpret_cast<std::byte*>(mwe->frame_base) + mwe->frame_size,
+                        d, target_rank);
+
+        stack_.direct_copy_from(mwe->frame_base, mwe->frame_size, target_rank);
+
+        migration_wsq_.lock().unlock(target_rank, d);
+
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          context_frame* next_cf = reinterpret_cast<context_frame*>(mwe->frame_base);
+          resume(next_cf);
+        });
+      }
+
+      return true;
+    }
+
+    common::verbose<2>("Steal failed for migration queues on rank %d", target_rank);
+    return false;
+  }
 
   template <typename Fn>
   void suspend(Fn&& fn) {
@@ -773,6 +945,7 @@ private:
   void execute_cross_worker_task(const cross_worker_task& cwt) {
     if (cwt.evacuation_ptr == nullptr) {
       // This task is a new task
+      common::verbose("Received a new cross-worker task");
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
 
       suspend([&](context_frame* cf) {
@@ -782,6 +955,7 @@ private:
 
     } else {
       // This task is an evacuated continuation
+      common::verbose("Received a continuation of a cross-worker task");
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_migrate>();
 
       suspend([&](context_frame* cf) {
@@ -794,6 +968,7 @@ private:
   void execute_migrated_task(const migration_wsq_entry& mwe) {
     if (!mwe.is_continuation) {
       // This task is a new task
+      common::verbose("Popped a new task from local migration queues");
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
 
       suspend([&](context_frame* cf) {
@@ -813,6 +988,7 @@ private:
 
     } else {
       // This task is a continuation on the stack
+      common::verbose("Popped a continuation from local migration queues");
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_parent>();
 
       suspend([&](context_frame* cf) {
@@ -824,6 +1000,7 @@ private:
   }
 
   std::optional<primary_wsq_entry> pop_from_primary_queues(int depth_from) {
+    // TODO: upper bound for depth can be tracked
     for (int d = depth_from; d >= 0; d--) {
       auto pwe = primary_wsq_.pop(d);
       if (pwe.has_value()) {
@@ -892,6 +1069,7 @@ private:
   MPI_Request                        sched_loop_exit_req_ = MPI_REQUEST_NULL;
   bool                               use_primary_wsq_     = true;
   dist_tree                          dtree_;
+  dist_tree::node_ref                dtree_local_bottom_ref_;
 };
 
 }

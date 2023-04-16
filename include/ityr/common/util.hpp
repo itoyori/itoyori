@@ -186,7 +186,6 @@ public:
 
   template <typename... Args>
   static void init(Args&&... args) {
-    ITYR_CHECK(!initialized());
     get_optional().emplace(std::forward<Args>(args)...);
   }
 

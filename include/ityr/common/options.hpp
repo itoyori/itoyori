@@ -51,7 +51,6 @@ public:
   }
 
   static void set(value_type val) {
-    ITYR_CHECK(!base_t::initialized());
     base_t::init(val);
   }
 

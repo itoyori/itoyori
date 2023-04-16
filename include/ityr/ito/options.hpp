@@ -36,6 +36,12 @@ struct suspended_thread_allocator_size_option : public common::option<suspended_
   static std::size_t default_value() { return std::size_t(2) * 1024 * 1024; }
 };
 
+struct adws_enable_steal_option : public common::option<adws_enable_steal_option, bool> {
+  using option::option;
+  static std::string name() { return "ITYR_ITO_ADWS_ENABLE_STEAL"; }
+  static bool default_value() { return true; }
+};
+
 struct adws_wsqueue_capacity_option : public common::option<adws_wsqueue_capacity_option, std::size_t> {
   using option::option;
   static std::string name() { return "ITYR_ITO_ADWS_WSQUEUE_CAPACITY"; }
@@ -59,6 +65,7 @@ struct runtime_options {
   common::option_initializer<wsqueue_capacity_option>                ITYR_ANON_VAR;
   common::option_initializer<thread_state_allocator_size_option>     ITYR_ANON_VAR;
   common::option_initializer<suspended_thread_allocator_size_option> ITYR_ANON_VAR;
+  common::option_initializer<adws_enable_steal_option>               ITYR_ANON_VAR;
   common::option_initializer<adws_wsqueue_capacity_option>           ITYR_ANON_VAR;
   common::option_initializer<adws_max_num_queue_option>              ITYR_ANON_VAR;
   common::option_initializer<adws_max_dist_tree_depth_option>        ITYR_ANON_VAR;

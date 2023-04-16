@@ -30,18 +30,47 @@ void assert_handler(const doctest::AssertData& ad) {
 }
 
 void adws_test() {
-  ityr::root_exec([=] {
-    int n_tasks_per_rank = 1024;
-    int n_tasks = ityr::n_ranks() * n_tasks_per_rank;
+  int n_tasks_per_rank = 1024;
+  int n_tasks = ityr::n_ranks() * n_tasks_per_rank;
 
+  ityr::ito::adws_enable_steal_option::set(false);
+
+  ityr::root_exec([=] {
     int n_repeats = 3;
     for (int i = 0; i < n_repeats; i++) {
       parallel_for_each({.cutoff_count = 1},
                         ityr::count_iterator<int>(0),
                         ityr::count_iterator<int>(n_tasks),
                         [=](int i) {
+        /* printf("%d\n", i); */
         ITYR_CHECK(i / n_tasks_per_rank == (ityr::n_ranks() - ityr::my_rank() - 1));
       });
+    }
+  });
+
+  ityr::ito::adws_enable_steal_option::set(true);
+
+  ityr::root_exec([=] {
+    int n_repeats = 3;
+    for (int i = 0; i < n_repeats; i++) {
+      int n_migrated =
+        parallel_reduce({.cutoff_count = 1},
+                        ityr::count_iterator<int>(0),
+                        ityr::count_iterator<int>(n_tasks),
+                        0,
+                        std::plus<int>{},
+                        [=](int i) {
+          usleep(i);
+          ityr::common::mpi_make_progress();
+          /* printf("%d\n", i); */
+          if (i / n_tasks_per_rank != (ityr::n_ranks() - ityr::my_rank() - 1)) {
+            return 1;
+          } else {
+            return 0;
+          }
+        });
+      ITYR_CHECK(n_migrated > 0);
+      printf("Migrated: %d/%d\n", n_migrated, n_tasks);
     }
   });
 }
