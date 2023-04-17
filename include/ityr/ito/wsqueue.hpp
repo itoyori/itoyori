@@ -84,6 +84,9 @@ public:
     }
 
     if (qs.empty()) {
+      // Wait until the thief releases the lock because the stack copy might be ongoing
+      // TODO: any better way to handle this ordering?
+      while (queue_lock_.is_locked(common::topology::my_rank(), idx));
       return std::nullopt;
     }
 

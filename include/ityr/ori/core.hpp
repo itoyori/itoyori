@@ -92,8 +92,8 @@ public:
 
     void* addr = noncoll_allocator_.allocate(size);
 
-    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes)",
-                    addr, reinterpret_cast<std::byte*>(addr) + size, size);
+    common::verbose<2>("Allocate noncollective memory [%p, %p) (%ld bytes)",
+                       addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     return addr;
   }
@@ -132,8 +132,8 @@ public:
     if (target_rank == common::topology::my_rank()) {
       noncoll_allocator_.local_deallocate(addr, size);
 
-      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
-                      addr, reinterpret_cast<std::byte*>(addr) + size, size);
+      common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
+                         addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     } else {
       // ensure dirty data of this memory object are discarded
@@ -145,8 +145,8 @@ public:
 
       noncoll_allocator_.remote_deallocate(addr, size, target_rank);
 
-      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
-                      addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
+      common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
+                         addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
     }
   }
 
@@ -193,8 +193,8 @@ public:
     }
 
     ITYR_PROFILER_RECORD(prof_event_checkout);
-    common::verbose("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
-                    str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+    common::verbose<2>("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
+                       str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     checkout_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
@@ -208,8 +208,8 @@ public:
     }
 
     ITYR_PROFILER_RECORD(prof_event_checkin);
-    common::verbose("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
-                    str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+    common::verbose<2>("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
+                       str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     checkin_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
@@ -225,7 +225,7 @@ public:
   using release_handler = typename cache_manager<BlockSize>::release_handler;
 
   release_handler release_lazy() {
-    common::verbose("Lazy release handler is created");
+    common::verbose<2>("Lazy release handler is created");
 
     return cache_manager_.release_lazy();
   }
@@ -554,8 +554,8 @@ public:
 
     void* addr = noncoll_allocator_.allocate(size);
 
-    common::verbose("Allocate noncollective memory [%p, %p) (%ld bytes)",
-                    addr, reinterpret_cast<std::byte*>(addr) + size, size);
+    common::verbose<2>("Allocate noncollective memory [%p, %p) (%ld bytes)",
+                       addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     return addr;
   }
@@ -583,14 +583,14 @@ public:
     if (target_rank == common::topology::my_rank()) {
       noncoll_allocator_.local_deallocate(addr, size);
 
-      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
-                      addr, reinterpret_cast<std::byte*>(addr) + size, size);
+      common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
+                         addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     } else {
       noncoll_allocator_.remote_deallocate(addr, size, target_rank);
 
-      common::verbose("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
-                      addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
+      common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
+                         addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
     }
   }
 

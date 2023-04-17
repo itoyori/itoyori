@@ -93,22 +93,22 @@ public:
     th.serialized = false;
 
     suspend([&, ts, fn, args...](context_frame* cf) mutable {
-      common::verbose("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
+      common::verbose<2>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
       std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
       wsq_.push(wsqueue_entry{cf, cf_size});
 
-      common::verbose("Starting new thread %p", ts);
+      common::verbose<2>("Starting new thread %p", ts);
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
       T retval = invoke_fn<T>(fn, args...);
 
       common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
-      common::verbose("Thread %p is completed", ts);
+      common::verbose<2>("Thread %p is completed", ts);
 
       on_die(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
-      common::verbose("Thread %p is serialized (fast path)", ts);
+      common::verbose<2>("Thread %p is serialized (fast path)", ts);
 
       // The following is executed only when the thread is serialized
       std::destroy_at(ts);
@@ -117,7 +117,7 @@ public:
       th.serialized = true;
       th.retval_ser = retval;
 
-      common::verbose("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
+      common::verbose<2>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
       common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
     });
@@ -141,7 +141,7 @@ public:
 
     T retval;
     if (th.serialized) {
-      common::verbose("Skip join for serialized thread (fast path)");
+      common::verbose<2>("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
       // when the thread is serialized (i.e., at a fork)
       retval = th.retval_ser;

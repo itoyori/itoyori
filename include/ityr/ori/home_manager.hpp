@@ -183,14 +183,14 @@ private:
 
   void update_mapping(mmap_entry& me) {
     if (me.mapped_addr) {
-      common::verbose("Unmap home segment [%p, %p) (size=%ld)",
-                      me.mapped_addr, me.mapped_addr + me.mapped_size, me.mapped_size);
+      common::verbose<3>("Unmap home segment [%p, %p) (size=%ld)",
+                         me.mapped_addr, me.mapped_addr + me.mapped_size, me.mapped_size);
       common::mmap_no_physical_mem(me.mapped_addr, me.mapped_size, true);
     }
     ITYR_CHECK(me.pm);
     ITYR_CHECK(me.addr);
-    common::verbose("Map home segment [%p, %p) (size=%ld)",
-                    me.addr, me.addr + me.size, me.size);
+    common::verbose<3>("Map home segment [%p, %p) (size=%ld)",
+                       me.addr, me.addr + me.size, me.size);
     me.pm->map_to_vm(me.addr, me.size, me.pm_offset);
     me.mapped_addr = me.addr;
     me.mapped_size = me.size;

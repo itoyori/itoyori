@@ -337,8 +337,8 @@ private:
       fresh_regions.clear();
       ITYR_CHECK(is_evictable());
 
-      common::verbose("Cache block %ld for [%p, %p) invalidated",
-                      entry_idx, addr, addr + BlockSize);
+      common::verbose<3>("Cache block %ld for [%p, %p) invalidated",
+                         entry_idx, addr, addr + BlockSize);
     }
 
     /* Callback functions for cache_system class */
@@ -405,13 +405,13 @@ private:
   void update_mapping(cache_block& cb) {
     // save the number of mmap entries by unmapping previous virtual memory
     if (cb.mapped_addr) {
-      common::verbose("Unmap cache block %d from [%p, %p) (size=%ld)",
-                      cb.entry_idx, cb.mapped_addr, cb.mapped_addr + BlockSize, BlockSize);
+      common::verbose<3>("Unmap cache block %d from [%p, %p) (size=%ld)",
+                         cb.entry_idx, cb.mapped_addr, cb.mapped_addr + BlockSize, BlockSize);
       common::mmap_no_physical_mem(cb.mapped_addr, BlockSize, true);
     }
     ITYR_CHECK(cb.addr);
-    common::verbose("Map cache block %d to [%p, %p) (size=%ld)",
-                    cb.entry_idx, cb.addr, cb.addr + BlockSize, BlockSize);
+    common::verbose<3>("Map cache block %d to [%p, %p) (size=%ld)",
+                       cb.entry_idx, cb.addr, cb.addr + BlockSize, BlockSize);
     pm_.map_to_vm(cb.addr, BlockSize, cb.entry_idx * BlockSize);
     cb.mapped_addr = cb.addr;
   }
@@ -436,9 +436,9 @@ private:
       std::size_t size      = blk_offset_e - blk_offset_b;
       std::size_t pm_offset = cb.pm_offset + blk_offset_b;
 
-      common::verbose("Fetching [%p, %p) (%ld bytes) to cache block %d from rank %d (win=%p, disp=%ld)",
-                      cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
-                      cb.entry_idx, cb.owner, cb.win, pm_offset);
+      common::verbose<3>("Fetching [%p, %p) (%ld bytes) to cache block %d from rank %d (win=%p, disp=%ld)",
+                         cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
+                         cb.entry_idx, cb.owner, cb.win, pm_offset);
 
       common::mpi_get_nb(addr, size, cb.owner, pm_offset, cb.win);
     }
@@ -450,7 +450,7 @@ private:
 
   void fetch_complete(MPI_Win win) {
     common::mpi_win_flush_all(win);
-    common::verbose("Fetch complete (win=%p)", win);
+    common::verbose<3>("Fetch complete (win=%p)", win);
   }
 
   void add_dirty_region(cache_block& cb, block_region br) {
@@ -498,9 +498,9 @@ private:
       std::size_t size      = blk_offset_e - blk_offset_b;
       std::size_t pm_offset = cb.pm_offset + blk_offset_b;
 
-      common::verbose("Writing back [%p, %p) (%ld bytes) to rank %d (win=%p, disp=%ld)",
-                      cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
-                      cb.owner, cb.win, pm_offset);
+      common::verbose<3>("Writing back [%p, %p) (%ld bytes) to rank %d (win=%p, disp=%ld)",
+                         cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
+                         cb.owner, cb.win, pm_offset);
 
       common::mpi_put_nb(addr, size, cb.owner, pm_offset, cb.win);
     }
@@ -521,7 +521,7 @@ private:
 
       for (auto win : writing_back_wins_) {
         MPI_Win_flush_all(win);
-        common::verbose("Writing back complete (win=%p)", win);
+        common::verbose<3>("Writing back complete (win=%p)", win);
       }
       writing_back_wins_.clear();
 

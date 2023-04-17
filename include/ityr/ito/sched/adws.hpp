@@ -344,7 +344,6 @@ public:
           cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
 
           common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
-
           resume_sched();
         });
 
@@ -584,6 +583,8 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
+      ITYR_CHECK(!pop_from_primary_queues(primary_wsq_.n_queues() - 1).has_value());
+
       // TODO: immediately execute cross-worker tasks upon arrival
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
@@ -662,21 +663,21 @@ private:
 
   template <typename T, typename OnDriftDieCallback>
   void on_die_workfirst(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
-    bool serialized;
     if (use_primary_wsq_) {
-      auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
-      serialized = qe.has_value();
+      auto qe = primary_wsq_.pop(tls_->dtree_node_ref.depth);
+      if (qe.has_value()) {
+        ITYR_CHECK_MESSAGE(qe->frame_base == cf_top_, "parent frame should be popped");
+        return;
+      }
     } else {
       auto qe = migration_wsq_.pop(tls_->dtree_node_ref.depth);
-      serialized = qe.has_value();
-      if (serialized) {
+      if (qe.has_value()) {
         ITYR_CHECK(qe->is_continuation);
+        return;
       }
     }
 
-    if (!serialized) {
-      on_die_drifted(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
-    }
+    on_die_drifted(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
   }
 
   template <typename T, typename OnDriftDieCallback>
@@ -694,6 +695,17 @@ private:
     // race
     if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
       common::verbose("Win the join race for thread %p (joined thread)", ts);
+
+      if (use_primary_wsq_) {
+        auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
+        if (qe.has_value()) {
+          common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
+
+          context_frame* next_cf = reinterpret_cast<context_frame*>(qe->frame_base);
+          resume(next_cf);
+        }
+      }
+
       common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
       resume_sched();
     } else {
@@ -928,6 +940,7 @@ private:
     context::jump_to_stack(ss.frame_base, [](void* this_, void* evacuation_ptr, void* frame_base, void* frame_size_) {
       scheduler_adws& this_sched = *reinterpret_cast<scheduler_adws*>(this_);
       std::size_t     frame_size = reinterpret_cast<std::size_t>(frame_size_);
+
       common::remote_get(this_sched.suspended_thread_allocator_,
                          reinterpret_cast<std::byte*>(frame_base),
                          reinterpret_cast<std::byte*>(evacuation_ptr),
@@ -935,7 +948,7 @@ private:
       this_sched.suspended_thread_allocator_.deallocate(evacuation_ptr, frame_size);
 
       context_frame* cf = reinterpret_cast<context_frame*>(frame_base);
-      context::clear_parent_frame(cf);
+      /* context::clear_parent_frame(cf); */
       context::resume(cf);
     }, this, ss.evacuation_ptr, ss.frame_base, reinterpret_cast<void*>(ss.frame_size));
   }
