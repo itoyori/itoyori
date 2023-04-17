@@ -195,6 +195,8 @@ public:
   }
 
   void pass(const Entry& entry, common::topology::rank_t target_rank, int idx = 0) {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_pass, target_rank);
+
     ITYR_CHECK(idx < n_queues_);
     while (!trypass(entry, target_rank, idx));
   }

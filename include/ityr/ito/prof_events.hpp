@@ -79,6 +79,11 @@ private:
   bool                           success_mode_;
 };
 
+struct prof_event_sched_adws_scan_tree : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "sched_adws_scan_tree"; }
+};
+
 struct prof_event_wsqueue_push : public common::profiler::event {
   using event::event;
   std::string str() const override { return "wsqueue_push"; }
@@ -92,6 +97,11 @@ struct prof_event_wsqueue_pop : public common::profiler::event {
 struct prof_event_wsqueue_steal : public common::prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
   std::string str() const override { return "wsqueue_steal"; }
+};
+
+struct prof_event_wsqueue_pass : public common::prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "wsqueue_pass"; }
 };
 
 struct prof_event_wsqueue_empty : public common::prof_event_target_base {
@@ -175,9 +185,11 @@ public:
 
 private:
   common::profiler::event_initializer<prof_event_sched_steal>          ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_sched_adws_scan_tree> ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_push>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_pop>          ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_steal>        ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_pass>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_empty>        ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_loop>           ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_fork>           ITYR_ANON_VAR;

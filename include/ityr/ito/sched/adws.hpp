@@ -144,6 +144,8 @@ public:
   }
 
   std::optional<node> get_topmost_dominant(node_ref nr) {
+    ITYR_PROFILER_RECORD(prof_event_sched_adws_scan_tree);
+
     // TODO: reduce comm
     std::optional<node> ret;
 
@@ -755,7 +757,7 @@ private:
     ITYR_CHECK((begin_rank <= my_rank || my_rank <= end_rank));
 
     common::verbose<2>("Start work stealing for dominant task group [%f, %f)",
-                    steal_range.begin(), steal_range.end());
+                       steal_range.begin(), steal_range.end());
 
     auto target_rank = get_random_rank(begin_rank, end_rank);
 
@@ -779,17 +781,22 @@ private:
   bool steal_from_primary_queues(common::topology::rank_t target_rank, int max_depth) {
     // TODO: quick check for the entire wsqueue array
     for (int d = max_depth; d < primary_wsq_.n_queues(); d++) {
+      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
+
       if (primary_wsq_.empty(target_rank, d)) {
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
       if (!primary_wsq_.lock().trylock(target_rank, d)) {
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
       auto pwe = primary_wsq_.steal_nolock(target_rank, d);
       if (!pwe.has_value()) {
         primary_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
@@ -800,6 +807,8 @@ private:
       stack_.direct_copy_from(pwe->frame_base, pwe->frame_size, target_rank);
 
       primary_wsq_.lock().unlock(target_rank, d);
+
+      common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
 
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
 
@@ -820,17 +829,22 @@ private:
   bool steal_from_migration_queues(common::topology::rank_t target_rank, int max_depth) {
     // TODO: quick check for the entire wsqueue array
     for (int d = migration_wsq_.n_queues() - 1; d >= max_depth; d--) {
+      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
+
       if (migration_wsq_.empty(target_rank, d)) {
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
       if (!migration_wsq_.lock().trylock(target_rank, d)) {
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
       auto mwe = migration_wsq_.steal_nolock(target_rank, d);
       if (!mwe.has_value()) {
         migration_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         continue;
       }
 
@@ -841,6 +855,8 @@ private:
 
         migration_wsq_.lock().unlock(target_rank, d);
 
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
+
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
 
         suspend([&](context_frame* cf) {
@@ -850,6 +866,7 @@ private:
 
       } else if (mwe->evacuation_ptr) {
         migration_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
         common::die("unimplenented");
 
       } else {
@@ -861,6 +878,8 @@ private:
         stack_.direct_copy_from(mwe->frame_base, mwe->frame_size, target_rank);
 
         migration_wsq_.lock().unlock(target_rank, d);
+
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
 
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
 
