@@ -119,11 +119,11 @@ public:
 
       common::verbose<2>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
-      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_popped>();
     });
 
     if (th.serialized) {
-      common::profiler::switch_phase<prof_phase_sched_resume_parent, prof_phase_thread>();
+      common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
     } else {
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
         common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();

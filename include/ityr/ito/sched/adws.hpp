@@ -219,6 +219,10 @@ public:
     }
   }
 
+  bool arrived() const {
+    return win_.local_buf()[0].arrived;
+  }
+
 private:
   struct mailbox {
     Entry entry;
@@ -281,7 +285,8 @@ public:
 
         dist_range root_drange {common::topology::n_ranks()};
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange = root_drange, .dtree_node_ref = {}};
+               thread_local_storage{.drange         = root_drange,
+                                    .dtree_node_ref = {}};
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
@@ -343,6 +348,7 @@ public:
 
           cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
 
+          evacuate_all();
           common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
           resume_sched();
         });
@@ -362,7 +368,14 @@ public:
   void fork(thread_handler<T>& th,
             OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
             WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
-    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
+    /* common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>(); */
+    if (check_cross_worker_task_arrival<prof_phase_thread, prof_phase_sched_fork>()) {
+      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
+        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_sched_drift_fork_cb>();
+        on_drift_fork_cb();
+        common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_sched_fork>();
+      }
+    }
 
     auto my_rank = common::topology::my_rank();
 
@@ -398,12 +411,13 @@ public:
         common::verbose<3>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange = new_drange, .dtree_node_ref = tls_->dtree_node_ref};
+               thread_local_storage{.drange         = new_drange,
+                                    .dtree_node_ref = tls_->dtree_node_ref};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
         if (use_primary_wsq_) {
-          primary_wsq_.push({cf, cf_size}, tls_->dtree_node_ref.depth);
+          primary_wsq_.push({nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
         } else {
           migration_wsq_.push({true, nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
         }
@@ -430,12 +444,12 @@ public:
 
         common::verbose<3>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
+        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_popped>();
       });
 
       // reload my_rank because this thread might have been migrated
       if (target_rank == common::topology::my_rank()) {
-        common::profiler::switch_phase<prof_phase_sched_resume_parent, prof_phase_thread>();
+        common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
       } else {
         if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
           common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();
@@ -455,7 +469,8 @@ public:
                         ts, new_drange.begin(), new_drange.end());
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange = new_drange, .dtree_node_ref = dtree_node_ref};
+               thread_local_storage{.drange         = new_drange,
+                                    .dtree_node_ref = dtree_node_ref};
 
         if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
           // If the new task is executed on another process
@@ -533,21 +548,7 @@ public:
           // race
           if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
             common::verbose("Win the join race for thread %p (joining thread)", ts);
-
-            // This procedure is not needed for purely work-first work stealing.
-            // If it is combined with the help-first policy (migration of newly created tasks),
-            // threads can block while their parents are in the local callstack, which does not
-            // happen with the work-first policy alone.
-            if (use_primary_wsq_) {
-              auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
-              if (qe.has_value()) {
-                common::profiler::switch_phase<prof_phase_sched_join, prof_phase_sched_resume_parent>();
-
-                context_frame* next_cf = reinterpret_cast<context_frame*>(qe->frame_base);
-                resume(next_cf);
-              }
-            }
-
+            evacuate_all();
             common::profiler::switch_phase<prof_phase_sched_join, prof_phase_sched_loop>();
             resume_sched();
 
@@ -583,12 +584,23 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
-      ITYR_CHECK(!pop_from_primary_queues(primary_wsq_.n_queues() - 1).has_value());
-
       // TODO: immediately execute cross-worker tasks upon arrival
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
         execute_cross_worker_task(*cwt);
+        continue;
+      }
+
+      auto pwe = pop_from_primary_queues(primary_wsq_.n_queues() - 1);
+      if (pwe.has_value()) {
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_popped>();
+
+        // No on-stack thread can exist while the scheduler thread is running
+        ITYR_CHECK(pwe->evacuation_ptr);
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          resume(suspended_state{pwe->evacuation_ptr, pwe->frame_base, pwe->frame_size});
+        });
         continue;
       }
 
@@ -626,6 +638,7 @@ private:
   };
 
   struct primary_wsq_entry {
+    void*       evacuation_ptr;
     void*       frame_base;
     std::size_t frame_size;
   };
@@ -666,14 +679,28 @@ private:
     if (use_primary_wsq_) {
       auto qe = primary_wsq_.pop(tls_->dtree_node_ref.depth);
       if (qe.has_value()) {
-        ITYR_CHECK_MESSAGE(qe->frame_base == cf_top_, "parent frame should be popped");
-        return;
+        if (!qe->evacuation_ptr) {
+          // parent is popped
+          ITYR_CHECK(qe->frame_base == cf_top_);
+          return;
+        } else {
+          // If it might not be its parent, return it to the queue.
+          // This is a conservative approach because the popped task can be its evacuated parent
+          // (if qe->frame_base == cf_top_), but it is not guaranteed because multiple threads
+          // can have the same base frame address due to the uni-address scheme.
+          primary_wsq_.push(*qe, tls_->dtree_node_ref.depth);
+        }
       }
     } else {
       auto qe = migration_wsq_.pop(tls_->dtree_node_ref.depth);
       if (qe.has_value()) {
         ITYR_CHECK(qe->is_continuation);
-        return;
+        if (!qe->evacuation_ptr) {
+          ITYR_CHECK(qe->frame_base == cf_top_);
+          return;
+        } else {
+          migration_wsq_.push(*qe, tls_->dtree_node_ref.depth);
+        }
       }
     }
 
@@ -695,19 +722,14 @@ private:
     // race
     if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
       common::verbose("Win the join race for thread %p (joined thread)", ts);
-
-      if (use_primary_wsq_) {
-        auto qe = pop_from_primary_queues(tls_->dtree_node_ref.depth);
-        if (qe.has_value()) {
-          common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_parent>();
-
-          context_frame* next_cf = reinterpret_cast<context_frame*>(qe->frame_base);
-          resume(next_cf);
-        }
-      }
-
+      // Ancestor threads can remain on the stack here because ADWS no longer follows the work-first policy.
+      // Threads that are in the middle of the call stack can be stolen because of the task depth management.
+      // Therefore, we conservatively evacuate them before switching to the scheduler here.
+      // Note that a fast path exists when the immediate parent thread is popped from the queue.
+      evacuate_all();
       common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
       resume_sched();
+
     } else {
       common::verbose("Lose the join race for thread %p (joined thread)", ts);
       common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_join>();
@@ -812,24 +834,45 @@ private:
         continue;
       }
 
-      common::verbose("Steal context frame [%p, %p) from primary wsqueue (depth=%d) on rank %d",
-                      pwe->frame_base, reinterpret_cast<std::byte*>(pwe->frame_base) + pwe->frame_size,
-                      d, target_rank);
+      // TODO: commonize implementation for primary and migration queues
+      if (pwe->evacuation_ptr) {
+        // This task is an evacuated continuation
+        common::verbose("Steal an evacuated context frame [%p, %p) from primary wsqueue (depth=%d) on rank %d",
+                        pwe->frame_base, reinterpret_cast<std::byte*>(pwe->frame_base) + pwe->frame_size,
+                        d, target_rank);
 
-      stack_.direct_copy_from(pwe->frame_base, pwe->frame_size, target_rank);
+        primary_wsq_.lock().unlock(target_rank, d);
 
-      primary_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
 
-      common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
 
-      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          resume(suspended_state{pwe->evacuation_ptr, pwe->frame_base, pwe->frame_size});
+        });
 
-      context_frame* next_cf = reinterpret_cast<context_frame*>(pwe->frame_base);
-      suspend([&](context_frame* cf) {
-        sched_cf_ = cf;
-        context::clear_parent_frame(next_cf);
-        resume(next_cf);
-      });
+      } else {
+        // This task is a context frame on the stack
+        common::verbose("Steal context frame [%p, %p) from primary wsqueue (depth=%d) on rank %d",
+                        pwe->frame_base, reinterpret_cast<std::byte*>(pwe->frame_base) + pwe->frame_size,
+                        d, target_rank);
+
+        stack_.direct_copy_from(pwe->frame_base, pwe->frame_size, target_rank);
+
+        primary_wsq_.lock().unlock(target_rank, d);
+
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
+
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+
+        context_frame* next_cf = reinterpret_cast<context_frame*>(pwe->frame_base);
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          context::clear_parent_frame(next_cf);
+          resume(next_cf);
+        });
+      }
 
       return true;
     }
@@ -877,13 +920,25 @@ private:
         });
 
       } else if (mwe->evacuation_ptr) {
+        // This task is an evacuated continuation
+        common::verbose("Steal an evacuated context frame [%p, %p) from migration wsqueue (depth=%d) on rank %d",
+                        mwe->frame_base, reinterpret_cast<std::byte*>(mwe->frame_base) + mwe->frame_size,
+                        d, target_rank);
+
         migration_wsq_.lock().unlock(target_rank, d);
+
         common::profiler::interval_end<prof_event_sched_steal>(ibd, true);
-        common::die("unimplenented");
+
+        common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_stolen>();
+
+        suspend([&](context_frame* cf) {
+          sched_cf_ = cf;
+          resume(suspended_state{mwe->evacuation_ptr, mwe->frame_base, mwe->frame_size});
+        });
 
       } else {
         // This task is a continuation on the stack
-        common::verbose("Steal context frame [%p, %p) from migration wsqueue (depth=%d) on rank %d",
+        common::verbose("Steal a context frame [%p, %p) from migration wsqueue (depth=%d) on rank %d",
                         mwe->frame_base, reinterpret_cast<std::byte*>(mwe->frame_base) + mwe->frame_size,
                         d, target_rank);
 
@@ -933,7 +988,7 @@ private:
 
   void resume(suspended_state ss) {
     common::verbose("Resume context frame [%p, %p) evacuated at %p",
-                    ss.frame_base, ss.frame_size, ss.evacuation_ptr);
+                    ss.frame_base, reinterpret_cast<std::byte*>(ss.frame_base) + ss.frame_size, ss.evacuation_ptr);
 
     // We pass the suspended thread states *by value* because the current local variables can be overwritten by the
     // new stack we will bring from remote nodes.
@@ -1010,24 +1065,17 @@ private:
 
     } else if (mwe.evacuation_ptr) {
       // This task is an evacuated continuation
-      /* common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_evac>(); */
-
-      /* suspend([&](context_frame* cf) { */
-      /*   sched_cf_ = cf; */
-      /*   resume(suspended_state{mwe.evacuation_ptr, mwe.frame_base, mwe.frame_size}); */
-      /* }); */
-      common::die("unimplenented");
-
-    } else {
-      // This task is a continuation on the stack
-      common::verbose("Popped a continuation from local migration queues");
-      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_parent>();
+      common::verbose("Popped an evacuated continuation from local migration queues");
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_popped>();
 
       suspend([&](context_frame* cf) {
         sched_cf_ = cf;
-        context_frame* next_cf = reinterpret_cast<context_frame*>(mwe.frame_base);
-        resume(next_cf);
+        resume(suspended_state{mwe.evacuation_ptr, mwe.frame_base, mwe.frame_size});
       });
+
+    } else {
+      // This task is a continuation on the stack
+      common::die("On-stack threads cannot remain after switching to the scheduler. Something went wrong.");
     }
   }
 
@@ -1061,6 +1109,66 @@ private:
                     cf, cf->parent_frame, evacuation_ptr);
 
     return {evacuation_ptr, cf, cf_size};
+  }
+
+  void evacuate_all() {
+    if (use_primary_wsq_) {
+      for (int d = tls_->dtree_node_ref.depth; d >= 0; d--) {
+        primary_wsq_.for_each_entry([&](primary_wsq_entry& pwe) {
+          if (!pwe.evacuation_ptr) {
+            context_frame* cf = reinterpret_cast<context_frame*>(pwe.frame_base);
+            suspended_state ss = evacuate(cf);
+            pwe = {ss.evacuation_ptr, ss.frame_base, ss.frame_size};
+          }
+        }, d);
+      }
+    } else {
+      migration_wsq_.for_each_entry([&](migration_wsq_entry& mwe) {
+        if (mwe.is_continuation && !mwe.evacuation_ptr) {
+          context_frame* cf = reinterpret_cast<context_frame*>(mwe.frame_base);
+          suspended_state ss = evacuate(cf);
+          mwe = {true, ss.evacuation_ptr, ss.frame_base, ss.frame_size};
+        }
+      }, tls_->dtree_node_ref.depth);
+    }
+  }
+
+  template <typename PhaseFrom, typename PhaseTo>
+  bool check_cross_worker_task_arrival() {
+    if (cross_worker_mailbox_.arrived()) {
+      common::profiler::switch_phase<PhaseFrom, prof_phase_sched_evacuate>();
+
+      auto my_rank = common::topology::my_rank();
+
+      evacuate_all();
+
+      suspend([&](context_frame* cf) {
+        suspended_state ss = evacuate(cf);
+
+        if (use_primary_wsq_) {
+          primary_wsq_.push({ss.evacuation_ptr, ss.frame_base, ss.frame_size},
+                            tls_->dtree_node_ref.depth);
+        } else {
+          migration_wsq_.push({true, ss.evacuation_ptr, ss.frame_base, ss.frame_size},
+                              tls_->dtree_node_ref.depth);
+        }
+
+        common::profiler::switch_phase<prof_phase_sched_evacuate, prof_phase_sched_loop>();
+        resume_sched();
+      });
+
+      if (my_rank == common::topology::my_rank()) {
+        common::profiler::switch_phase<prof_phase_sched_resume_popped, PhaseTo>();
+      } else {
+        common::profiler::switch_phase<prof_phase_sched_resume_stolen, PhaseTo>();
+      }
+      return true;
+    } else {
+      if constexpr (!std::is_same_v<PhaseTo, PhaseFrom>) {
+        common::profiler::switch_phase<PhaseFrom, PhaseTo>();
+      }
+    }
+    return false;
   }
 
   template <typename Fn>

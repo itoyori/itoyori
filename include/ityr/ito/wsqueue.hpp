@@ -204,6 +204,28 @@ public:
     while (!trypass(entry, target_rank, idx));
   }
 
+  template <typename Fn>
+  void for_each_entry(Fn fn, int idx = 0) {
+    ITYR_CHECK(idx < n_queues_);
+
+    queue_state& qs = local_queue_state(idx);
+    if (qs.empty()) {
+      return;
+    }
+
+    auto entries = local_entries(idx);
+
+    queue_lock_.lock(common::topology::my_rank(), idx);
+
+    int t = qs.top.load(std::memory_order_relaxed);
+    int b = qs.base.load(std::memory_order_relaxed);
+    for (int i = b; i < t; i++) {
+      fn(entries[i]);
+    }
+
+    queue_lock_.unlock(common::topology::my_rank(), idx);
+  }
+
   int size(int idx = 0) const {
     ITYR_CHECK(idx < n_queues_);
     return local_queue_state(idx).size();

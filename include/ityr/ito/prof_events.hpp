@@ -134,6 +134,11 @@ struct prof_phase_sched_migrate : public common::profiler::event {
   std::string str() const override { return "P_sched_migrate"; }
 };
 
+struct prof_phase_sched_evacuate : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "P_sched_evacuate"; }
+};
+
 struct prof_phase_sched_drift_fork_cb : public common::profiler::event {
   using event::event;
   std::string str() const override { return "P_sched_drift_fork_cb"; }
@@ -144,9 +149,9 @@ struct prof_phase_sched_drift_die_cb : public common::profiler::event {
   std::string str() const override { return "P_sched_drift_die_cb"; }
 };
 
-struct prof_phase_sched_resume_parent : public common::profiler::event {
+struct prof_phase_sched_resume_popped : public common::profiler::event {
   using event::event;
-  std::string str() const override { return "P_sched_resume_parent"; }
+  std::string str() const override { return "P_sched_resume_popped"; }
 };
 
 struct prof_phase_sched_resume_join : public common::profiler::event {
@@ -196,9 +201,10 @@ private:
   common::profiler::event_initializer<prof_phase_sched_join>           ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_die>            ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_migrate>        ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_evacuate>       ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_drift_fork_cb>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_drift_die_cb>   ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_phase_sched_resume_parent>  ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_phase_sched_resume_popped>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_resume_join>    ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_resume_stolen>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_resume_migrate> ITYR_ANON_VAR;
