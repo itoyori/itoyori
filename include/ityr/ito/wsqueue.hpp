@@ -209,9 +209,9 @@ public:
     ITYR_CHECK(idx < n_queues_);
 
     queue_state& qs = local_queue_state(idx);
-    if (qs.empty()) {
-      return;
-    }
+    /* if (qs.empty()) { */
+    /*   return; */
+    /* } */
 
     auto entries = local_entries(idx);
 
