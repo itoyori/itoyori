@@ -126,9 +126,9 @@ public:
       common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
     } else {
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
-        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();
+        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_cb_drift_fork>();
         on_drift_fork_cb();
-        common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
+        common::profiler::switch_phase<prof_phase_cb_drift_fork, prof_phase_thread>();
       } else {
         common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
       }
@@ -210,6 +210,9 @@ public:
     common::verbose("Exit scheduling loop");
   }
 
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
+
   template <typename T>
   static bool is_serialized(thread_handler<T> th) {
     return th.serialized;
@@ -217,7 +220,8 @@ public:
 
   struct task_group_data {};
   task_group_data task_group_begin() { return {}; }
-  void task_group_end(task_group_data&) {}
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
 
 private:
   template <typename T, typename Fn, typename... Args>
@@ -238,9 +242,9 @@ private:
 
     if (!serialized) {
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_die_cb>();
+        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_cb_drift_die>();
         on_drift_die_cb();
-        common::profiler::switch_phase<prof_phase_sched_drift_die_cb, prof_phase_sched_die>();
+        common::profiler::switch_phase<prof_phase_cb_drift_die, prof_phase_sched_die>();
       }
 
       if constexpr (!std::is_same_v<T, no_retval_t>) {

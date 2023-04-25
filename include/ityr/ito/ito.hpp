@@ -62,14 +62,27 @@ inline bool is_spmd() {
   return w.is_spmd();
 }
 
+template <typename PreSuspendCallback, typename PostSuspendCallback>
+inline void poll(PreSuspendCallback&&  pre_suspend_cb,
+                 PostSuspendCallback&& post_suspend_cb) {
+  auto& w = worker::instance::get();
+  w.sched().poll(std::forward<PreSuspendCallback>(pre_suspend_cb),
+                 std::forward<PostSuspendCallback>(post_suspend_cb));
+}
+
 inline scheduler::task_group_data task_group_begin() {
   auto& w = worker::instance::get();
   return w.sched().task_group_begin();
 }
 
-inline void task_group_end(scheduler::task_group_data& tgdata) {
+template <typename PreSuspendCallback, typename PostSuspendCallback>
+inline void task_group_end(scheduler::task_group_data& tgdata,
+                           PreSuspendCallback&&        pre_suspend_cb,
+                           PostSuspendCallback&&       post_suspend_cb) {
   auto& w = worker::instance::get();
-  w.sched().task_group_end(tgdata);
+  w.sched().task_group_end(tgdata,
+                           std::forward<PreSuspendCallback>(pre_suspend_cb),
+                           std::forward<PostSuspendCallback>(post_suspend_cb));
 }
 
 ITYR_TEST_CASE("[ityr::ito] fib") {

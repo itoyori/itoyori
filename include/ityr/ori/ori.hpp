@@ -219,9 +219,14 @@ inline auto release_lazy() {
   return core::instance::get().release_lazy();
 }
 
-template <typename... Args>
-inline void acquire(Args&&... args) {
-  core::instance::get().acquire(std::forward<Args>(args)...);
+using release_handler = core::instance::instance_type::release_handler;
+
+inline void acquire() {
+  core::instance::get().acquire();
+}
+
+inline void acquire(release_handler rh) {
+  core::instance::get().acquire(rh);
 }
 
 inline void poll() {

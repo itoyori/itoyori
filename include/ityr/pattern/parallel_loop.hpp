@@ -212,6 +212,10 @@ parallel_loop_generic_aux(parallel_loop_options opts,
                                         ForwardIterator, ForwardIterator, ForwardIterators...>;
   ori::poll();
 
+  // for immediately executing cross-worker tasks in ADWS
+  ito::poll([]() { return ori::release_lazy(); },
+            [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
+
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= opts.cutoff_count) {
     return serial_fn(serial_loop_options{.checkout_count = opts.checkout_count},
@@ -246,7 +250,9 @@ parallel_loop_generic_aux(parallel_loop_options opts,
 
       th.join();
 
-      ito::task_group_end(tgdata);
+      ito::task_group_end(tgdata,
+                          []() { ori::release(); },
+                          []() { ori::acquire(); });
 
       if (!th.serialized()) {
         ori::acquire();
@@ -260,7 +266,9 @@ parallel_loop_generic_aux(parallel_loop_options opts,
 
       auto ret1 = th.join();
 
-      ito::task_group_end(tgdata);
+      ito::task_group_end(tgdata,
+                          []() { ori::release(); },
+                          []() { ori::acquire(); });
 
       if (!th.serialized()) {
         ori::acquire();

@@ -35,6 +35,9 @@ public:
   template <typename SchedLoopCallback, typename CondFn>
   void sched_loop(SchedLoopCallback&&, CondFn&&) {}
 
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
+
   template <typename T>
   static bool is_serialized(thread_handler<T>) {
     return true;
@@ -42,7 +45,8 @@ public:
 
   struct task_group_data {};
   task_group_data task_group_begin() { return {}; }
-  void task_group_end(task_group_data&) {}
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
 
 private:
   template <typename T, typename Fn, typename... Args>

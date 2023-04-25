@@ -99,6 +99,11 @@ public:
 
     ori::poll();
 
+    // for immediately executing cross-worker tasks in ADWS
+    // TODO: remove one of these two acquire calls?
+    ito::poll([&]() { all_serialized_ = false; return ori::release_lazy(); },
+              [&](ori::release_handler rh) { ori::acquire(rh); ori::acquire(rh_); });
+
     ito::thread<retval_t> th(ito::with_callback,
                              [rh = rh_]() { ori::acquire(rh); },
                              []() { ori::release(); },
@@ -141,8 +146,13 @@ inline auto parallel_invoke(Args&&... args) {
   parallel_invoke_state s(rh);
   auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
 
-  ito::task_group_end(tgdata);
+  // No lazy release here because the suspended thread (cross-worker tasks in ADWS) is
+  // always resumed by another process.
+  ito::task_group_end(tgdata,
+                      []() { ori::release(); },
+                      []() { ori::acquire(); });
 
+  // TODO: avoid duplicated acquire calls
   if (!s.all_serialized()) {
     ori::acquire();
   }

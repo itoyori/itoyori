@@ -327,7 +327,10 @@ public:
     return tgdata;
   }
 
-  void task_group_end(task_group_data& tgdata) {
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void task_group_end(task_group_data&      tgdata,
+                      PreSuspendCallback&&  pre_suspend_cb,
+                      PostSuspendCallback&& post_suspend_cb) {
     // restore the original distributed range of this thread at the beginning of the task group
     tls_->drange = tgdata.drange;
 
@@ -338,7 +341,8 @@ public:
       // migrate the cross-worker-task to the owner
       auto target_rank = tls_->drange.owner();
       if (target_rank != common::topology::my_rank()) {
-        common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_migrate>();
+        auto cb_ret = call_cb<prof_phase_thread, prof_phase_sched_migrate,
+                              prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
 
         suspend([&](context_frame* cf) {
           suspended_state ss = evacuate(cf);
@@ -353,7 +357,8 @@ public:
           resume_sched();
         });
 
-        common::profiler::switch_phase<prof_phase_sched_resume_migrate, prof_phase_thread>();
+        call_cb<prof_phase_sched_resume_migrate, prof_phase_thread,
+                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
 
       // Set the parent dist_tree node to the current thread
@@ -368,14 +373,7 @@ public:
   void fork(thread_handler<T>& th,
             OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
             WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
-    /* common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>(); */
-    if (check_cross_worker_task_arrival<prof_phase_thread, prof_phase_sched_fork>()) {
-      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
-        common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_sched_drift_fork_cb>();
-        on_drift_fork_cb();
-        common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_sched_fork>();
-      }
-    }
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     auto my_rank = common::topology::my_rank();
 
@@ -451,13 +449,8 @@ public:
       if (target_rank == common::topology::my_rank()) {
         common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
       } else {
-        if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
-          common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_sched_drift_fork_cb>();
-          on_drift_fork_cb();
-          common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
-        } else {
-          common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
-        }
+        call_cb<prof_phase_sched_resume_stolen, prof_phase_thread,
+                prof_phase_cb_drift_fork>(std::forward<OnDriftForkCallback>(on_drift_fork_cb));
       }
 
     } else {
@@ -472,15 +465,10 @@ public:
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = dtree_node_ref};
 
-        if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
-          // If the new task is executed on another process
-          if (my_rank != common::topology::my_rank()) {
-            common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_sched_drift_fork_cb>();
-            on_drift_fork_cb();
-            common::profiler::switch_phase<prof_phase_sched_drift_fork_cb, prof_phase_thread>();
-          } else {
-            common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
-          }
+        // If the new task is executed on another process
+        if (my_rank != common::topology::my_rank()) {
+          call_cb<prof_phase_sched_start_new, prof_phase_thread,
+                  prof_phase_cb_drift_fork>(std::forward<OnDriftForkCallback>(on_drift_fork_cb));
         } else {
           common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
         }
@@ -625,6 +613,14 @@ public:
     common::verbose("Exit scheduling loop");
   }
 
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void poll(PreSuspendCallback&&  pre_suspend_cb,
+            PostSuspendCallback&& post_suspend_cb) {
+    check_cross_worker_task_arrival<prof_phase_thread, prof_phase_thread>(
+        std::forward<PreSuspendCallback>(pre_suspend_cb),
+        std::forward<PostSuspendCallback>(post_suspend_cb));
+  }
+
   template <typename T>
   static bool is_serialized(thread_handler<T> th) {
     return th.serialized;
@@ -710,9 +706,8 @@ private:
   template <typename T, typename OnDriftDieCallback>
   void on_die_drifted(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
     if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
-      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_drift_die_cb>();
-      on_drift_die_cb();
-      common::profiler::switch_phase<prof_phase_sched_drift_die_cb, prof_phase_sched_die>();
+      call_cb<prof_phase_sched_die, prof_phase_sched_die,
+              prof_phase_cb_drift_die>(std::forward<OnDriftDieCallback>(on_drift_die_cb));
     }
 
     if constexpr (!std::is_same_v<T, no_retval_t>) {
@@ -1133,10 +1128,13 @@ private:
     }
   }
 
-  template <typename PhaseFrom, typename PhaseTo>
-  bool check_cross_worker_task_arrival() {
+  template <typename PhaseFrom, typename PhaseTo,
+            typename PreSuspendCallback, typename PostSuspendCallback>
+  bool check_cross_worker_task_arrival(PreSuspendCallback&&  pre_suspend_cb,
+                                       PostSuspendCallback&& post_suspend_cb) {
     if (cross_worker_mailbox_.arrived()) {
-      common::profiler::switch_phase<PhaseFrom, prof_phase_sched_evacuate>();
+      auto cb_ret = call_cb<PhaseFrom, prof_phase_sched_evacuate,
+                            prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
 
       auto my_rank = common::topology::my_rank();
 
@@ -1158,17 +1156,70 @@ private:
       });
 
       if (my_rank == common::topology::my_rank()) {
-        common::profiler::switch_phase<prof_phase_sched_resume_popped, PhaseTo>();
+        call_cb<prof_phase_sched_resume_popped, PhaseTo,
+                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       } else {
-        common::profiler::switch_phase<prof_phase_sched_resume_stolen, PhaseTo>();
+        call_cb<prof_phase_sched_resume_stolen, PhaseTo,
+                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
+
       return true;
-    } else {
-      if constexpr (!std::is_same_v<PhaseTo, PhaseFrom>) {
-        common::profiler::switch_phase<PhaseFrom, PhaseTo>();
-      }
+
+    } else if constexpr (!std::is_same_v<PhaseTo, PhaseFrom>) {
+      common::profiler::switch_phase<PhaseFrom, PhaseTo>();
     }
+
     return false;
+  }
+
+  template <typename Callback, typename... CallbackArgs>
+  struct callback_retval {
+    using type = std::invoke_result_t<Callback, CallbackArgs...>;
+  };
+
+  template <typename... CallbackArgs>
+  struct callback_retval<std::nullptr_t, CallbackArgs...> {
+    using type = void;
+  };
+
+  template <typename Callback, typename... CallbackArgs>
+  using callback_retval_t = typename callback_retval<Callback, CallbackArgs...>::type;
+
+  template <typename PhaseFrom, typename PhaseTo, typename PhaseCB,
+            typename Callback, typename... CallbackArgs>
+  auto call_cb(Callback&& cb, CallbackArgs&&... cb_args) {
+    using retval_t = callback_retval_t<Callback, CallbackArgs...>;
+
+    if constexpr (!std::is_null_pointer_v<std::remove_reference_t<Callback>>) {
+      common::profiler::switch_phase<PhaseFrom, PhaseCB>();
+
+      if constexpr (!std::is_void_v<retval_t>) {
+        auto ret = std::forward<Callback>(cb)(std::forward<CallbackArgs>(cb_args)...);
+        common::profiler::switch_phase<PhaseCB, PhaseTo>();
+        return ret;
+
+      } else {
+        std::forward<Callback>(cb)(std::forward<CallbackArgs>(cb_args)...);
+        common::profiler::switch_phase<PhaseCB, PhaseTo>();
+      }
+
+    } else if constexpr (!std::is_same_v<PhaseFrom, PhaseTo>) {
+      common::profiler::switch_phase<PhaseFrom, PhaseTo>();
+    }
+
+    if constexpr (!std::is_void_v<retval_t>) {
+      return retval_t{};
+    } else {
+      return no_retval_t{};
+    }
+  }
+
+  template <typename PhaseFrom, typename PhaseTo, typename PhaseCB,
+            typename Callback, typename... CallbackArgs>
+  auto call_cb(Callback&& cb, no_retval_t, CallbackArgs&&... cb_args) {
+    // skip no_retval_t args
+    return call_cb<PhaseFrom, PhaseTo, PhaseCB>(
+        std::forward<Callback>(cb), std::forward<CallbackArgs>(cb_args)...);
   }
 
   template <typename Fn>
