@@ -95,9 +95,8 @@ private:
 class dist_tree {
 public:
   struct node_ref {
-    common::topology::rank_t owner_rank  = -1;
-    int                      local_depth = -1;
-    int                      depth       = -1; // piggy-back to reduce communication
+    common::topology::rank_t owner_rank = -1;
+    int                      depth      = -1;
   };
 
   struct node {
@@ -108,37 +107,26 @@ public:
     int depth() const { return parent.depth + 1; }
   };
 
-  dist_tree()
-    : max_local_depth_(adws_max_dist_tree_depth_option::value()),
-      remote_buf_(max_local_depth_),
-      win_(common::topology::mpicomm(), max_local_depth_) {}
+  dist_tree(int max_depth)
+    : max_depth_(max_depth),
+      win_(common::topology::mpicomm(), max_depth_) {}
 
   node_ref append(node_ref parent, dist_range drange) {
-    auto my_rank = common::topology::my_rank();
+    int depth = parent.depth + 1;
 
-    int local_depth;
-    if (parent.owner_rank != my_rank) {
-      // Append the top local node to the remote parent node
-      local_depth = 0;
-    } else {
-      local_depth = parent.local_depth + 1;
-      ITYR_REQUIRE_MESSAGE(parent.local_depth + 1 < max_local_depth_,
-                           "Reached maximum local depth (%d) for dist_tree", max_local_depth_);
-    }
-
-    node& new_node = local_node(local_depth);
+    node& new_node = local_node(depth);
     new_node.parent   = parent;
     new_node.drange   = drange;
     new_node.dominant = false;
 
-    return {my_rank, local_depth, parent.depth + 1};
+    return {common::topology::my_rank(), depth};
   }
 
   void set_dominant(node_ref nr) {
     if (nr.owner_rank == common::topology::my_rank()) {
       get_local_node(nr).dominant = true;
     } else {
-      std::size_t disp = nr.local_depth * sizeof(node) + offsetof(node, dominant);
+      std::size_t disp = nr.depth * sizeof(node) + offsetof(node, dominant);
       common::mpi_atomic_put_value(true, nr.owner_rank, disp, win_.win());
     }
   }
@@ -149,30 +137,22 @@ public:
     // TODO: reduce comm
     std::optional<node> ret;
 
-    node_ref parent;
-
-    if (nr.owner_rank == common::topology::my_rank()) {
-      for (int d = 0; d <= nr.local_depth; d++) {
-        if (local_node(d).dominant) {
-          ret = local_node(d);
-          break;
-        }
+    while (nr.depth >= 0) {
+      if (nr.owner_rank != common::topology::my_rank()) {
+        std::size_t disp = nr.depth * sizeof(node);
+        common::mpi_get(&local_node(nr.depth), 1, nr.owner_rank, disp, win_.win());
       }
-      parent = local_node(0).parent;
-    } else {
-      parent = nr;
-    }
 
-    while (parent.owner_rank != -1) {
-      common::mpi_get(remote_buf_.data(), parent.local_depth + 1,
-                      parent.owner_rank, 0, win_.win());
-      for (int d = 0; d <= parent.local_depth; d++) {
-        if (remote_buf_[d].dominant) {
-          ret = remote_buf_[d];
-          break;
-        }
+      node& n = local_node(nr.depth);
+
+      // TODO: handle for corner cases where the parent nodes are obsolete
+      // (by managing node versions, for example)
+      if (n.dominant) {
+        ret = n;
       }
-      parent = remote_buf_[0].parent;
+
+      ITYR_CHECK(n.parent.depth == nr.depth - 1);
+      nr = n.parent;
     }
 
     return ret;
@@ -180,18 +160,17 @@ public:
 
   node& get_local_node(node_ref nr) {
     ITYR_CHECK(nr.owner_rank == common::topology::my_rank());
-    return local_node(nr.local_depth);
+    return local_node(nr.depth);
   }
 
 private:
-  node& local_node(int local_depth) {
-    ITYR_CHECK(0 <= local_depth);
-    ITYR_CHECK(local_depth < max_local_depth_);
-    return win_.local_buf()[local_depth];
+  node& local_node(int depth) {
+    ITYR_CHECK(0 <= depth);
+    ITYR_CHECK(depth < max_depth_);
+    return win_.local_buf()[depth];
   }
 
-  int                           max_local_depth_;
-  std::vector<node>             remote_buf_;
+  int                           max_depth_;
   common::mpi_win_manager<node> win_;
 };
 
@@ -266,11 +245,13 @@ public:
   };
 
   scheduler_adws()
-    : stack_(stack_size_option::value()),
-      primary_wsq_(adws_wsqueue_capacity_option::value(), adws_max_num_queue_option::value()),
-      migration_wsq_(adws_wsqueue_capacity_option::value(), adws_max_num_queue_option::value()),
+    : max_depth_(adws_max_depth_option::value()),
+      stack_(stack_size_option::value()),
+      primary_wsq_(adws_wsqueue_capacity_option::value(), max_depth_),
+      migration_wsq_(adws_wsqueue_capacity_option::value(), max_depth_),
       thread_state_allocator_(thread_state_allocator_size_option::value()),
-      suspended_thread_allocator_(suspended_thread_allocator_size_option::value()) {}
+      suspended_thread_allocator_(suspended_thread_allocator_size_option::value()),
+      dtree_(max_depth_) {}
 
   template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
   T root_exec(SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
@@ -1248,6 +1229,7 @@ private:
     return false;
   }
 
+  int                                max_depth_;
   callstack                          stack_;
   oneslot_mailbox<cross_worker_task> cross_worker_mailbox_;
   wsqueue<primary_wsq_entry, false>  primary_wsq_;

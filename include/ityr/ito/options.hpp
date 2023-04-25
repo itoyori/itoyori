@@ -48,15 +48,9 @@ struct adws_wsqueue_capacity_option : public common::option<adws_wsqueue_capacit
   static std::size_t default_value() { return 256; }
 };
 
-struct adws_max_num_queue_option : public common::option<adws_max_num_queue_option, int> {
+struct adws_max_depth_option : public common::option<adws_max_depth_option, int> {
   using option::option;
-  static std::string name() { return "ITYR_ITO_ADWS_MAX_NUM_QUEUE"; }
-  static int default_value() { return 50; }
-};
-
-struct adws_max_dist_tree_depth_option : public common::option<adws_max_dist_tree_depth_option, int> {
-  using option::option;
-  static std::string name() { return "ITYR_ITO_ADWS_MAX_DIST_TREE_DEPTH"; }
+  static std::string name() { return "ITYR_ITO_ADWS_MAX_DEPTH"; }
   static int default_value() { return 50; }
 };
 
@@ -67,8 +61,7 @@ struct runtime_options {
   common::option_initializer<suspended_thread_allocator_size_option> ITYR_ANON_VAR;
   common::option_initializer<adws_enable_steal_option>               ITYR_ANON_VAR;
   common::option_initializer<adws_wsqueue_capacity_option>           ITYR_ANON_VAR;
-  common::option_initializer<adws_max_num_queue_option>              ITYR_ANON_VAR;
-  common::option_initializer<adws_max_dist_tree_depth_option>        ITYR_ANON_VAR;
+  common::option_initializer<adws_max_depth_option>                  ITYR_ANON_VAR;
 };
 
 }
