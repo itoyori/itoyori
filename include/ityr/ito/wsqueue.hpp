@@ -28,7 +28,7 @@ public:
     : n_entries_(n_entries),
       n_queues_(n_queues),
       initial_pos_(EnablePass ? n_entries / 2 : 0),
-      queue_state_win_(common::topology::mpicomm(), n_queues_, initial_pos_),
+      queue_state_win_(common::topology::mpicomm(), n_queues_ * 2, initial_pos_),
       entries_win_(common::topology::mpicomm(), n_entries_ * n_queues_),
       queue_lock_(n_queues_) {}
 
@@ -58,6 +58,7 @@ public:
     qs.top.store(t + 1, std::memory_order_release);
   }
 
+  template <bool EnsureEmpty = true>
   std::optional<Entry> pop(int idx = 0) {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_pop);
 
@@ -84,9 +85,11 @@ public:
     }
 
     if (qs.empty()) {
-      // Wait until the thief releases the lock because the stack copy might be ongoing
-      // TODO: any better way to handle this ordering?
-      while (queue_lock_.is_locked(common::topology::my_rank(), idx));
+      if constexpr (EnsureEmpty) {
+        // Wait until the thief releases the lock because the stack copy might be ongoing
+        // TODO: any better way to handle this ordering?
+        while (queue_lock_.is_locked(common::topology::my_rank(), idx));
+      }
       return std::nullopt;
     }
 
@@ -240,6 +243,30 @@ public:
     return remote_qs.empty();
   }
 
+  template <typename Fn>
+  void for_each_nonempty_queue(common::topology::rank_t target_rank,
+                               int idx_begin, int idx_end, bool reverse, Fn fn) {
+    {
+      ITYR_PROFILER_RECORD(prof_event_wsqueue_empty_batch, target_rank);
+      common::mpi_get(&local_queue_state_buf(idx_begin), idx_end - idx_begin,
+                      target_rank, queue_state_disp(idx_begin), queue_state_win_.win());
+    }
+    if (reverse) {
+      for (int idx = idx_end - 1; idx >= idx_begin; idx--) {
+        if (!local_queue_state_buf(idx).empty()) {
+          // `fn` should return a boolean (whether to break the loop or not)
+          if (fn(idx)) break;
+        }
+      }
+    } else {
+      for (int idx = idx_begin; idx < idx_end; idx++) {
+        if (!local_queue_state_buf(idx).empty()) {
+          if (fn(idx)) break;
+        }
+      }
+    }
+  }
+
   const common::global_lock& lock() const { return queue_lock_; }
   int n_queues() const { return n_queues_; }
 
@@ -281,7 +308,10 @@ private:
   //        Thus, strictly speaking, using MPI RMA for queue_state is illegal.
   // static_assert(std::is_trivially_copyable_v<queue_state>);
 
-  struct alignas(common::hardware_destructive_interference_size) queue_state_wrapper {
+  /* static constexpr std::size_t queue_state_align = common::hardware_destructive_interference_size; */
+  static constexpr std::size_t queue_state_align = sizeof(queue_state);
+
+  struct alignas(queue_state_align) queue_state_wrapper {
     template <typename... Args>
     queue_state_wrapper(Args&&... args) : value(std::forward<Args>(args)...) {}
     queue_state value;
@@ -305,6 +335,11 @@ private:
 
   queue_state& local_queue_state(int idx) const {
     return queue_state_win_.local_buf()[idx].value;
+  }
+
+  queue_state& local_queue_state_buf(int idx) const {
+    // Memory twice as large as the local queue states is allocated for the MPI window
+    return queue_state_win_.local_buf()[n_queues_ + idx].value;
   }
 
   auto local_entries(int idx) const {

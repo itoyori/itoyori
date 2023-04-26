@@ -51,7 +51,7 @@ struct adws_wsqueue_capacity_option : public common::option<adws_wsqueue_capacit
 struct adws_max_depth_option : public common::option<adws_max_depth_option, int> {
   using option::option;
   static std::string name() { return "ITYR_ITO_ADWS_MAX_DEPTH"; }
-  static int default_value() { return 50; }
+  static int default_value() { return 20; }
 };
 
 struct runtime_options {

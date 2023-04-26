@@ -109,6 +109,11 @@ struct prof_event_wsqueue_empty : public common::prof_event_target_base {
   std::string str() const override { return "wsqueue_empty"; }
 };
 
+struct prof_event_wsqueue_empty_batch : public common::prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "wsqueue_empty_batch"; }
+};
+
 struct prof_phase_sched_loop : public common::profiler::event {
   using event::event;
   std::string str() const override { return "P_sched_loop"; }
@@ -206,6 +211,7 @@ private:
   common::profiler::event_initializer<prof_event_wsqueue_steal>        ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_pass>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_empty>        ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_empty_batch>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_loop>           ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_fork>           ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_phase_sched_join>           ITYR_ANON_VAR;

@@ -774,40 +774,36 @@ private:
     common::verbose<2>("Target rank: %d", target_rank);
 
     if (target_rank != begin_rank) {
-      bool success = steal_from_migration_queues(target_rank, dominant_node.depth());
+      bool success = steal_from_migration_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
       if (success) {
         return;
       }
     }
 
     if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
-      bool success = steal_from_primary_queues(target_rank, dominant_node.depth());
+      bool success = steal_from_primary_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
       if (success) {
         return;
       }
     }
   }
 
-  bool steal_from_primary_queues(common::topology::rank_t target_rank, int max_depth) {
-    // TODO: quick check for the entire wsqueue array
-    for (int d = max_depth; d < primary_wsq_.n_queues(); d++) {
-      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
+  bool steal_from_primary_queues(common::topology::rank_t target_rank, int min_depth, int max_depth) {
+    bool steal_success = false;
 
-      if (primary_wsq_.empty(target_rank, d)) {
-        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
-      }
+    primary_wsq_.for_each_nonempty_queue(target_rank, min_depth, max_depth, false, [&](int d) {
+      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
 
       if (!primary_wsq_.lock().trylock(target_rank, d)) {
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
+        return false;
       }
 
       auto pwe = primary_wsq_.steal_nolock(target_rank, d);
       if (!pwe.has_value()) {
         primary_wsq_.lock().unlock(target_rank, d);
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
+        return false;
       }
 
       // TODO: commonize implementation for primary and migration queues
@@ -850,33 +846,32 @@ private:
         });
       }
 
+      steal_success = true;
       return true;
-    }
+    });
 
-    common::verbose<2>("Steal failed for primary queues on rank %d", target_rank);
-    return false;
+    if (!steal_success) {
+      common::verbose<2>("Steal failed for primary queues on rank %d", target_rank);
+    }
+    return steal_success;
   }
 
-  bool steal_from_migration_queues(common::topology::rank_t target_rank, int max_depth) {
-    // TODO: quick check for the entire wsqueue array
-    for (int d = migration_wsq_.n_queues() - 1; d >= max_depth; d--) {
-      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
+  bool steal_from_migration_queues(common::topology::rank_t target_rank, int min_depth, int max_depth) {
+    bool steal_success = false;
 
-      if (migration_wsq_.empty(target_rank, d)) {
-        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
-      }
+    migration_wsq_.for_each_nonempty_queue(target_rank, min_depth, max_depth, true, [&](int d) {
+      auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
 
       if (!migration_wsq_.lock().trylock(target_rank, d)) {
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
+        return false;
       }
 
       auto mwe = migration_wsq_.steal_nolock(target_rank, d);
       if (!mwe.has_value()) {
         migration_wsq_.lock().unlock(target_rank, d);
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
-        continue;
+        return false;
       }
 
       if (!mwe->is_continuation) {
@@ -933,11 +928,14 @@ private:
         });
       }
 
+      steal_success = true;
       return true;
-    }
+    });
 
-    common::verbose<2>("Steal failed for migration queues on rank %d", target_rank);
-    return false;
+    if (!steal_success) {
+      common::verbose<2>("Steal failed for migration queues on rank %d", target_rank);
+    }
+    return steal_success;
   }
 
   template <typename Fn>
@@ -1058,7 +1056,7 @@ private:
   std::optional<primary_wsq_entry> pop_from_primary_queues(int depth_from) {
     // TODO: upper bound for depth can be tracked
     for (int d = depth_from; d >= 0; d--) {
-      auto pwe = primary_wsq_.pop(d);
+      auto pwe = primary_wsq_.pop<false>(d);
       if (pwe.has_value()) {
         return pwe;
       }
@@ -1068,7 +1066,7 @@ private:
 
   std::optional<migration_wsq_entry> pop_from_migration_queues() {
     for (int d = 0; d < migration_wsq_.n_queues(); d++) {
-      auto mwe = migration_wsq_.pop(d);
+      auto mwe = migration_wsq_.pop<false>(d);
       if (mwe.has_value()) {
         return mwe;
       }
