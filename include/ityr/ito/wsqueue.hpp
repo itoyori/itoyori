@@ -308,17 +308,13 @@ private:
     queue_state(int initial_pos = 0) : top(initial_pos), base(initial_pos) {}
 
     // Copy constructors for std::atomic are deleted
-    queue_state(const queue_state& qs) {
-      top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    }
+    queue_state(const queue_state& qs)
+      : top(qs.top.load(std::memory_order_relaxed)),
+        base(qs.base.load(std::memory_order_relaxed)) {}
     queue_state& operator=(const queue_state& qs) {
       top.store(qs.top.load(std::memory_order_relaxed), std::memory_order_relaxed);
       base.store(qs.base.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
-
-    queue_state(queue_state&& wm) = default;
-    queue_state& operator=(queue_state&& wm) = default;
 
     int size() const {
       return std::max(0, top.load(std::memory_order_relaxed) -

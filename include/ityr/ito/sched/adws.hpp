@@ -122,6 +122,8 @@ private:
 };
 
 class dist_tree {
+  using version_t = int;
+
 public:
   struct node_ref {
     common::topology::rank_t owner_rank = -1;
@@ -129,64 +131,99 @@ public:
   };
 
   struct node {
-    node_ref   parent;
-    dist_range drange;
-    flipper    tg_version;
-    int        dominant;
+    node() {}
+
+    // Copy constructors for std::atomic are deleted
+    node(const node& n)
+      : parent(n.parent), drange(n.drange), tg_version(n.tg_version), version(n.version),
+        dominant(n.dominant.load(std::memory_order_relaxed)) {}
+    node& operator=(const node& n) {
+      parent     = n.parent;
+      drange     = n.drange;
+      tg_version = n.tg_version;
+      version    = n.version;
+      dominant.store(n.dominant.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      return *this;
+    }
 
     int depth() const { return parent.depth + 1; }
+
+    node_ref         parent;
+    dist_range       drange;
+    flipper          tg_version;
+    version_t        version = 0;
+    std::atomic<int> dominant; // TODO: better to use std::atomic_ref in C++20
   };
 
   dist_tree(int max_depth)
     : max_depth_(max_depth),
-      win_(common::topology::mpicomm(), max_depth_) {}
+      win_(common::topology::mpicomm(), max_depth_),
+      versions_(max_depth_, common::topology::my_rank()) {}
 
   node_ref append(node_ref parent, dist_range drange, flipper tg_version) {
     int depth = parent.depth + 1;
+
+    // handle version overflow
+    auto n_ranks = common::topology::n_ranks();
+    if (versions_[depth] >= std::numeric_limits<version_t>::max() - n_ranks) {
+      versions_[depth] = common::topology::my_rank();
+    }
 
     node& new_node = local_node(depth);
     new_node.parent     = parent;
     new_node.drange     = drange;
     new_node.tg_version = tg_version;
-    new_node.dominant   = 0;
+    new_node.version    = (versions_[depth] += n_ranks);
+
+    new_node.dominant.store(0, std::memory_order_release);
 
     return {common::topology::my_rank(), depth};
   }
 
   void set_dominant(node_ref nr) {
     if (nr.owner_rank == common::topology::my_rank()) {
-      get_local_node(nr).dominant = 1;
+      get_local_node(nr).dominant.store(1, std::memory_order_release);
     } else {
-      std::size_t disp = nr.depth * sizeof(node) + offsetof(node, dominant);
-      common::mpi_atomic_put_value(1, nr.owner_rank, disp, win_.win());
+      std::size_t disp_dominant = nr.depth * sizeof(node) + offsetof(node, dominant);
+      common::mpi_atomic_put_value(1, nr.owner_rank, disp_dominant, win_.win());
     }
   }
 
   std::optional<node> get_topmost_dominant(node_ref nr) {
     ITYR_PROFILER_RECORD(prof_event_sched_adws_scan_tree);
 
-    // TODO: reduce comm
-    std::optional<node> ret;
+    for (int d = 0; d <= nr.depth; d++) {
+      auto owner_rank = (d == nr.depth) ? nr.owner_rank
+                                        : local_node(d + 1).parent.owner_rank;
 
-    while (nr.depth >= 0) {
-      if (nr.owner_rank != common::topology::my_rank()) {
-        std::size_t disp = nr.depth * sizeof(node);
-        common::mpi_get(&local_node(nr.depth), 1, nr.owner_rank, disp, win_.win());
+      node& n = local_node(d);
+
+      ITYR_CHECK(n.parent.depth == d - 1);
+
+      if (owner_rank != common::topology::my_rank() &&
+          n.dominant.load(std::memory_order_relaxed) != -1) {
+        std::size_t disp_dominant = d * sizeof(node) + offsetof(node, dominant);
+        int dominant = common::mpi_atomic_get_value<int>(owner_rank, disp_dominant, win_.win());
+
+        std::size_t disp_version = d * sizeof(node) + offsetof(node, version);
+        version_t version = common::mpi_get_value<version_t>(owner_rank, disp_version, win_.win());
+
+        // If the version is already updated, the node is marked obsolete (-1)
+        n.dominant.store((n.version == version) ? dominant : -1,
+                         std::memory_order_relaxed);
       }
 
-      node& n = local_node(nr.depth);
-
-      // TODO: handle for corner cases where the parent nodes are obsolete
-      // (by managing node versions, for example)
-      if (n.dominant) {
-        ret = n;
+      if (n.dominant.load(std::memory_order_relaxed) == 1) {
+        // return the topmost dominant node
+        return n;
       }
-
-      ITYR_CHECK(n.parent.depth == nr.depth - 1);
-      nr = n.parent;
     }
 
-    return ret;
+    return std::nullopt;
+  }
+
+  void copy_parents(node_ref nr) {
+    common::mpi_get(&local_node(0), nr.depth + 1, nr.owner_rank, 0, win_.win());
   }
 
   node& get_local_node(node_ref nr) {
@@ -203,6 +240,7 @@ private:
 
   int                           max_depth_;
   common::mpi_win_manager<node> win_;
+  std::vector<version_t>        versions_;
 };
 
 template <typename Entry>
@@ -487,6 +525,10 @@ public:
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = dtree_node_ref,
                                     .tg_version     = tg_version};
+
+        if (new_drange.is_cross_worker()) {
+          dtree_.copy_parents(dtree_node_ref);
+        }
 
         // If the new task is executed on another process
         if (my_rank != common::topology::my_rank()) {
