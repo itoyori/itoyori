@@ -427,7 +427,7 @@ public:
             typename WorkHint, typename Fn, typename... Args>
   void fork(thread_handler<T>& th,
             OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
-            WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
+            WorkHint w_new, WorkHint w_rest, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
     auto my_rank = common::topology::my_rank();
@@ -439,15 +439,15 @@ public:
     dist_range new_drange;
     common::topology::rank_t target_rank;
     if (tls_->drange.is_cross_worker()) {
-      auto [dr1, dr2] = tls_->drange.divide(w1, w2);
+      auto [dr_rest, dr_new] = tls_->drange.divide(w_rest, w_new);
 
       common::verbose("Distribution range [%f, %f) is divided into [%f, %f) and [%f, %f)",
                       tls_->drange.begin(), tls_->drange.end(),
-                      dr1.begin(), dr1.end(), dr2.begin(), dr2.end());
+                      dr_rest.begin(), dr_rest.end(), dr_new.begin(), dr_new.end());
 
-      tls_->drange = dr1;
-      new_drange = dr2;
-      target_rank = dr2.owner();
+      tls_->drange = dr_rest;
+      new_drange = dr_new;
+      target_rank = dr_new.owner();
 
     } else {
       // quick path for non-cross-worker tasks (without dividing the distribution range)
@@ -885,7 +885,7 @@ private:
       }
 
       if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
-        bool success = steal_from_primary_queues(target_rank, depth, migration_wsq_.n_queues(),
+        bool success = steal_from_primary_queues(target_rank, depth, primary_wsq_.n_queues(),
             [=](primary_wsq_entry& pwe) { return pwe.tg_version.match(tg_version, depth); });
         if (success) {
           return;
