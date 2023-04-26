@@ -106,7 +106,7 @@ public:
   struct node {
     node_ref   parent;
     dist_range drange;
-    bool       dominant;
+    int        dominant;
 
     int depth() const { return parent.depth + 1; }
   };
@@ -121,17 +121,17 @@ public:
     node& new_node = local_node(depth);
     new_node.parent   = parent;
     new_node.drange   = drange;
-    new_node.dominant = false;
+    new_node.dominant = 0;
 
     return {common::topology::my_rank(), depth};
   }
 
   void set_dominant(node_ref nr) {
     if (nr.owner_rank == common::topology::my_rank()) {
-      get_local_node(nr).dominant = true;
+      get_local_node(nr).dominant = 1;
     } else {
       std::size_t disp = nr.depth * sizeof(node) + offsetof(node, dominant);
-      common::mpi_atomic_put_value(true, nr.owner_rank, disp, win_.win());
+      common::mpi_atomic_put_value(1, nr.owner_rank, disp, win_.win());
     }
   }
 
