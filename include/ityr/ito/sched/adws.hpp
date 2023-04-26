@@ -87,6 +87,10 @@ public:
     return static_cast<common::topology::rank_t>(begin_) != static_cast<common::topology::rank_t>(end_);
   }
 
+  void make_non_cross_worker() {
+    end_ = begin_;
+  }
+
 private:
   value_type begin_;
   value_type end_;
@@ -312,7 +316,7 @@ public:
   void task_group_end(task_group_data&      tgdata,
                       PreSuspendCallback&&  pre_suspend_cb,
                       PostSuspendCallback&& post_suspend_cb) {
-    // restore the original distributed range of this thread at the beginning of the task group
+    // restore the original distribution range of this thread at the beginning of the task group
     tls_->drange = tgdata.drange;
 
     if (tls_->drange.is_cross_worker()) {
@@ -409,7 +413,7 @@ public:
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose<3>("Thread %p is completed", ts);
 
-        on_die_reached();
+        on_task_die();
         on_die_workfirst(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
         common::verbose<3>("Thread %p is serialized (fast path)", ts);
@@ -460,7 +464,7 @@ public:
         common::verbose("A migrated thread %p [%f, %f) is completed",
                         ts, new_drange.begin(), new_drange.end());
 
-        on_die_reached();
+        on_task_die();
         on_die_drifted(ts, retval, on_drift_die_cb);
       };
 
@@ -489,6 +493,10 @@ public:
   template <typename T>
   T join(thread_handler<T>& th) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_join>();
+
+    // Note that this point is also considered the end of the last task of a task group
+    // (the last task of a task group may not be spawned as a thread)
+    on_task_die();
 
     T retval;
     if (th.serialized) {
@@ -638,7 +646,7 @@ private:
     return retval;
   }
 
-  void on_die_reached() {
+  void on_task_die() {
     // TODO: handle corner cases where cross-worker tasks finish without distributing
     // child cross-worker tasks to their owners
     if (tls_->drange.is_cross_worker()) {
@@ -648,6 +656,13 @@ private:
                       tls_->dtree_node_ref.owner_rank, tls_->dtree_node_ref.depth);
 
       dtree_.set_dominant(tls_->dtree_node_ref);
+
+      // Temporarily make this thread a non-cross-worker task, so that the thread does not enter
+      // this scope multiple times. When a task group has multiple child tasks, the entering thread
+      // makes multiple join calls, which causes this function to be called multiple times.
+      // Even if we discard the current dist range, the task group's dist range is anyway restored
+      // when the task group is completed after those join calls.
+      tls_->drange.make_non_cross_worker();
     }
   }
 
