@@ -32,6 +32,31 @@ private:
   std::tuple<Args...> arg_;
 };
 
+class flipper {
+public:
+  using value_type = uint64_t;
+
+  value_type value() const { return val_; }
+
+  void flip(int at) {
+    ITYR_CHECK(0 <= at);
+    ITYR_CHECK(at < sizeof(value_type) * 8);
+
+    val_ ^= (value_type(1) << at);
+  }
+
+  bool match(flipper f, int until) const {
+    ITYR_CHECK(0 <= until);
+    ITYR_CHECK(until < sizeof(value_type) * 8);
+
+    value_type mask = (value_type(1) << (until + 1)) - 1;
+    return (val_ & mask) == (f.value() & mask);
+  }
+
+private:
+  value_type val_ = 0;
+};
+
 class dist_range {
 public:
   using value_type = double;
@@ -106,6 +131,7 @@ public:
   struct node {
     node_ref   parent;
     dist_range drange;
+    flipper    tg_version;
     int        dominant;
 
     int depth() const { return parent.depth + 1; }
@@ -115,13 +141,14 @@ public:
     : max_depth_(max_depth),
       win_(common::topology::mpicomm(), max_depth_) {}
 
-  node_ref append(node_ref parent, dist_range drange) {
+  node_ref append(node_ref parent, dist_range drange, flipper tg_version) {
     int depth = parent.depth + 1;
 
     node& new_node = local_node(depth);
-    new_node.parent   = parent;
-    new_node.drange   = drange;
-    new_node.dominant = 0;
+    new_node.parent     = parent;
+    new_node.drange     = drange;
+    new_node.tg_version = tg_version;
+    new_node.dominant   = 0;
 
     return {common::topology::my_rank(), depth};
   }
@@ -242,6 +269,7 @@ public:
   struct thread_local_storage {
     dist_range          drange;         // distribution range of this thread
     dist_tree::node_ref dtree_node_ref; // distribution tree node of the cross-worker task group that this thread belongs to
+    flipper             tg_version;
   };
 
   struct task_group_data {
@@ -271,7 +299,8 @@ public:
         dist_range root_drange {common::topology::n_ranks()};
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = root_drange,
-                                    .dtree_node_ref = {}};
+                                    .dtree_node_ref = {},
+                                    .tg_version     = {}};
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
@@ -302,7 +331,7 @@ public:
     task_group_data tgdata {.drange = tls_->drange};
 
     if (tls_->drange.is_cross_worker()) {
-      tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange);
+      tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange, tls_->tg_version);
       dtree_local_bottom_ref_ = tls_->dtree_node_ref;
 
       common::verbose("Begin a cross-worker task group of distribution range [%f, %f) at depth %d",
@@ -350,6 +379,9 @@ public:
       auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
       tls_->dtree_node_ref = dtree_node.parent;
       dtree_local_bottom_ref_ = tls_->dtree_node_ref;
+
+      // Flip the next version of the task group at this depth
+      tls_->tg_version.flip(dtree_node.depth());
     }
   }
 
@@ -395,14 +427,17 @@ public:
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = new_drange,
-                                    .dtree_node_ref = tls_->dtree_node_ref};
+                                    .dtree_node_ref = tls_->dtree_node_ref,
+                                    .tg_version     = tls_->tg_version};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
         if (use_primary_wsq_) {
-          primary_wsq_.push({nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
+          primary_wsq_.push({nullptr, cf, cf_size, tls_->tg_version},
+                            tls_->dtree_node_ref.depth);
         } else {
-          migration_wsq_.push({true, nullptr, cf, cf_size}, tls_->dtree_node_ref.depth);
+          migration_wsq_.push({true, nullptr, cf, cf_size, tls_->tg_version},
+                              tls_->dtree_node_ref.depth);
         }
 
         common::verbose<3>("Starting new thread %p", ts);
@@ -441,14 +476,17 @@ public:
     } else {
       /* Pass the new task to another worker and execute the continuation */
 
-      auto new_task_fn = [&, my_rank, ts, new_drange, dtree_node_ref = tls_->dtree_node_ref,
+      auto new_task_fn = [&, my_rank, ts, new_drange,
+                          dtree_node_ref = tls_->dtree_node_ref,
+                          tg_version = tls_->tg_version,
                           on_drift_fork_cb, on_drift_die_cb, fn, args...]() mutable {
         common::verbose("Starting a migrated thread %p [%f, %f)",
                         ts, new_drange.begin(), new_drange.end());
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = new_drange,
-                                    .dtree_node_ref = dtree_node_ref};
+                                    .dtree_node_ref = dtree_node_ref,
+                                    .tg_version     = tg_version};
 
         // If the new task is executed on another process
         if (my_rank != common::topology::my_rank()) {
@@ -482,8 +520,8 @@ public:
         common::verbose("Migrate non-cross-worker-task %p [%f, %f) to process %d",
                         ts, new_drange.begin(), new_drange.end(), target_rank);
 
-        migration_wsq_.pass({false, nullptr, t, task_size}, target_rank,
-                            tls_->dtree_node_ref.depth);
+        migration_wsq_.pass({false, nullptr, t, task_size, tls_->tg_version},
+                            target_rank, tls_->dtree_node_ref.depth);
       }
 
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
@@ -628,6 +666,7 @@ private:
     void*       evacuation_ptr;
     void*       frame_base;
     std::size_t frame_size;
+    flipper     tg_version;
   };
 
   struct migration_wsq_entry {
@@ -635,6 +674,7 @@ private:
     void*       evacuation_ptr;
     void*       frame_base;
     std::size_t frame_size;
+    flipper     tg_version;
   };
 
   template <typename T, typename Fn, typename... Args>
@@ -767,11 +807,12 @@ private:
       common::verbose<2>("Dominant dist_tree node not found");
       return;
     }
-    dist_tree::node dominant_node = *ne;
-    dist_range steal_range = dominant_node.drange;
+    dist_range steal_range = ne->drange;
+    flipper    tg_version  = ne->tg_version;
+    int        depth       = ne->depth();
 
     common::verbose<2>("Dominant dist_tree node found: drange=[%f, %f), depth=%d",
-                       steal_range.begin(), steal_range.end(), dominant_node.depth());
+                       steal_range.begin(), steal_range.end(), depth);
 
     auto my_rank = common::topology::my_rank();
 
@@ -794,14 +835,16 @@ private:
       common::verbose<2>("Target rank: %d", target_rank);
 
       if (target_rank != begin_rank) {
-        bool success = steal_from_migration_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
+        bool success = steal_from_migration_queues(target_rank, depth, migration_wsq_.n_queues(),
+            [=](migration_wsq_entry& mwe) { return mwe.tg_version.match(tg_version, depth); });
         if (success) {
           return;
         }
       }
 
       if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
-        bool success = steal_from_primary_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
+        bool success = steal_from_primary_queues(target_rank, depth, migration_wsq_.n_queues(),
+            [=](primary_wsq_entry& pwe) { return pwe.tg_version.match(tg_version, depth); });
         if (success) {
           return;
         }
@@ -816,7 +859,9 @@ private:
     }
   }
 
-  bool steal_from_primary_queues(common::topology::rank_t target_rank, int min_depth, int max_depth) {
+  template <typename StealCondFn>
+  bool steal_from_primary_queues(common::topology::rank_t target_rank,
+                                 int min_depth, int max_depth, StealCondFn&& steal_cond_fn) {
     bool steal_success = false;
 
     primary_wsq_.for_each_nonempty_queue(target_rank, min_depth, max_depth, false, [&](int d) {
@@ -829,6 +874,13 @@ private:
 
       auto pwe = primary_wsq_.steal_nolock(target_rank, d);
       if (!pwe.has_value()) {
+        primary_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
+        return false;
+      }
+
+      if (!steal_cond_fn(*pwe)) {
+        primary_wsq_.abort_steal(target_rank, d);
         primary_wsq_.lock().unlock(target_rank, d);
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         return false;
@@ -884,7 +936,9 @@ private:
     return steal_success;
   }
 
-  bool steal_from_migration_queues(common::topology::rank_t target_rank, int min_depth, int max_depth) {
+  template <typename StealCondFn>
+  bool steal_from_migration_queues(common::topology::rank_t target_rank,
+                                   int min_depth, int max_depth, StealCondFn&& steal_cond_fn) {
     bool steal_success = false;
 
     migration_wsq_.for_each_nonempty_queue(target_rank, min_depth, max_depth, true, [&](int d) {
@@ -897,6 +951,13 @@ private:
 
       auto mwe = migration_wsq_.steal_nolock(target_rank, d);
       if (!mwe.has_value()) {
+        migration_wsq_.lock().unlock(target_rank, d);
+        common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
+        return false;
+      }
+
+      if (!steal_cond_fn(*mwe)) {
+        migration_wsq_.abort_steal(target_rank, d);
         migration_wsq_.lock().unlock(target_rank, d);
         common::profiler::interval_end<prof_event_sched_steal>(ibd, false);
         return false;
@@ -1120,7 +1181,7 @@ private:
           if (!pwe.evacuation_ptr) {
             context_frame* cf = reinterpret_cast<context_frame*>(pwe.frame_base);
             suspended_state ss = evacuate(cf);
-            pwe = {ss.evacuation_ptr, ss.frame_base, ss.frame_size};
+            pwe = {ss.evacuation_ptr, ss.frame_base, ss.frame_size, pwe.tg_version};
           }
         }, d);
       }
@@ -1129,7 +1190,7 @@ private:
         if (mwe.is_continuation && !mwe.evacuation_ptr) {
           context_frame* cf = reinterpret_cast<context_frame*>(mwe.frame_base);
           suspended_state ss = evacuate(cf);
-          mwe = {true, ss.evacuation_ptr, ss.frame_base, ss.frame_size};
+          mwe = {true, ss.evacuation_ptr, ss.frame_base, ss.frame_size, mwe.tg_version};
         }
       }, tls_->dtree_node_ref.depth);
     }
@@ -1151,10 +1212,10 @@ private:
         suspended_state ss = evacuate(cf);
 
         if (use_primary_wsq_) {
-          primary_wsq_.push({ss.evacuation_ptr, ss.frame_base, ss.frame_size},
+          primary_wsq_.push({ss.evacuation_ptr, ss.frame_base, ss.frame_size, tls_->tg_version},
                             tls_->dtree_node_ref.depth);
         } else {
-          migration_wsq_.push({true, ss.evacuation_ptr, ss.frame_base, ss.frame_size},
+          migration_wsq_.push({true, ss.evacuation_ptr, ss.frame_base, ss.frame_size, tls_->tg_version},
                               tls_->dtree_node_ref.depth);
         }
 

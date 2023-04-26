@@ -94,9 +94,14 @@ struct prof_event_wsqueue_pop : public common::profiler::event {
   std::string str() const override { return "wsqueue_pop"; }
 };
 
-struct prof_event_wsqueue_steal : public common::prof_event_target_base {
+struct prof_event_wsqueue_steal_nolock : public common::prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "wsqueue_steal"; }
+  std::string str() const override { return "wsqueue_steal_nolock"; }
+};
+
+struct prof_event_wsqueue_steal_abort : public common::prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "wsqueue_steal_abort"; }
 };
 
 struct prof_event_wsqueue_pass : public common::prof_event_target_base {
@@ -208,7 +213,8 @@ private:
   common::profiler::event_initializer<prof_event_sched_adws_scan_tree> ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_push>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_pop>          ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_wsqueue_steal>        ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_steal_nolock> ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_wsqueue_steal_abort>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_pass>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_empty>        ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_empty_batch>  ITYR_ANON_VAR;

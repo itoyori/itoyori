@@ -30,7 +30,8 @@ public:
       initial_pos_(EnablePass ? n_entries / 2 : 0),
       queue_state_win_(common::topology::mpicomm(), n_queues_ * 2, initial_pos_),
       entries_win_(common::topology::mpicomm(), n_entries_ * n_queues_),
-      queue_lock_(n_queues_) {}
+      queue_lock_(n_queues_),
+      local_empty_(n_queues_, false) {}
 
   void push(const Entry& entry, int idx = 0) {
     ITYR_PROFILER_RECORD(prof_event_wsqueue_push);
@@ -56,6 +57,10 @@ public:
     entries[t] = entry;
 
     qs.top.store(t + 1, std::memory_order_release);
+
+    if constexpr (!EnablePass) {
+      local_empty_[idx] = false;
+    }
   }
 
   template <bool EnsureEmpty = true>
@@ -84,13 +89,20 @@ public:
       }
     }
 
-    if (qs.empty()) {
-      if constexpr (EnsureEmpty) {
-        // Wait until the thief releases the lock because the stack copy might be ongoing
-        // TODO: any better way to handle this ordering?
-        while (queue_lock_.is_locked(common::topology::my_rank(), idx));
+    if constexpr (!EnablePass) {
+      if (local_empty_[idx]) {
+        return std::nullopt;
       }
-      return std::nullopt;
+    }
+
+    // We often need to ensure the queue is truly empty because the thief might be concurrently
+    // operating on the queue (the stack copy might be ongoing) and can abort stealing after
+    // updating the `base` variable.
+    // TODO: any better way to handle this ordering?
+    if constexpr (!EnsureEmpty) {
+      if (qs.empty()) {
+        return std::nullopt;
+      }
     }
 
     std::optional<Entry> ret;
@@ -120,11 +132,21 @@ public:
 
         qs.top.store(initial_pos_, std::memory_order_relaxed);
         qs.base.store(initial_pos_, std::memory_order_relaxed);
+
+        // Once we confirm that this queue is empty by taking the lock, later pop operations will
+        // always fail if the "pass" operation is not allowed for the queue
+        if constexpr (!EnablePass) {
+          local_empty_[idx] = true;
+        }
       } else {
         ret = std::nullopt;
 
         qs.top.store(initial_pos_, std::memory_order_relaxed);
         qs.base.store(initial_pos_, std::memory_order_relaxed);
+
+        if constexpr (!EnablePass) {
+          local_empty_[idx] = true;
+        }
       }
 
       queue_lock_.unlock(common::topology::my_rank(), idx);
@@ -134,7 +156,7 @@ public:
   }
 
   std::optional<Entry> steal_nolock(common::topology::rank_t target_rank, int idx = 0) {
-    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal, target_rank);
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal_nolock, target_rank);
 
     ITYR_CHECK(idx < n_queues_);
 
@@ -164,15 +186,13 @@ public:
     return ret;
   }
 
-  std::optional<Entry> steal_aborting(common::topology::rank_t target_rank, int idx = 0) {
-    ITYR_CHECK(idx < n_queues_);
+  void abort_steal(common::topology::rank_t target_rank, int idx = 0) {
+    ITYR_PROFILER_RECORD(prof_event_wsqueue_steal_abort, target_rank);
 
-    if (!queue_lock_.trylock(target_rank, idx)) {
-      return std::nullopt;
-    }
-    auto ret = steal_nolock(target_rank, idx);
-    queue_lock_.unlock(target_rank, idx);
-    return ret;
+    ITYR_CHECK(idx < n_queues_);
+    ITYR_CHECK(queue_lock_.is_locked(target_rank, idx));
+
+    common::mpi_atomic_faa_value<int>(-1, target_rank, queue_state_base_disp(idx), queue_state_win_.win());
   }
 
   bool trypass(const Entry& entry, common::topology::rank_t target_rank, int idx = 0) {
@@ -207,14 +227,22 @@ public:
     while (!trypass(entry, target_rank, idx));
   }
 
-  template <typename Fn>
+  template <typename Fn, bool EnsureEmpty = true>
   void for_each_entry(Fn fn, int idx = 0) {
     ITYR_CHECK(idx < n_queues_);
 
+    if constexpr (!EnablePass) {
+      if (local_empty_[idx]) {
+        return;
+      }
+    }
+
     queue_state& qs = local_queue_state(idx);
-    /* if (qs.empty()) { */
-    /*   return; */
-    /* } */
+    if constexpr (!EnsureEmpty) {
+      if (qs.empty()) {
+        return;
+      }
+    }
 
     auto entries = local_entries(idx);
 
@@ -376,7 +404,7 @@ private:
   common::mpi_win_manager<queue_state_wrapper> queue_state_win_;
   common::mpi_win_manager<Entry>               entries_win_;
   common::global_lock                          queue_lock_;
-  bool                                         local_empty_ = false;
+  std::vector<bool>                            local_empty_;
 };
 
 ITYR_TEST_CASE("[ityr::ito::wsqueue] single queue") {
@@ -463,7 +491,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] single queue") {
           }
         } else {
           while (!wsq.empty(target_rank)) {
-            auto result = wsq.steal_aborting(target_rank);
+            auto result = wsq.steal(target_rank);
             if (result.has_value()) {
               local_sum += *result;
             }
@@ -522,7 +550,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] single queue") {
 
         auto req = common::mpi_ibarrier(common::topology::mpicomm());
         while (!common::mpi_test(req)) {
-          auto result = wsq.steal_aborting(target_rank);
+          auto result = wsq.steal(target_rank);
           if (result.has_value()) {
             local_sum += *result;
           }
@@ -594,7 +622,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] single queue") {
 
         auto req = common::mpi_ibarrier(common::topology::mpicomm());
         while (!common::mpi_test(req) || !wsq.empty(my_rank)) {
-          auto result = wsq.steal_aborting(target_rank);
+          auto result = wsq.steal(target_rank);
           if (result.has_value()) {
             sum += *result;
           }
@@ -672,7 +700,7 @@ ITYR_TEST_CASE("[ityr::ito::wsqueue] multiple queues") {
       auto req = common::mpi_ibarrier(common::topology::mpicomm());
       while (!common::mpi_test(req)) {
         for (int q = 0; q < n_queues; q++) {
-          auto result = wsq.steal_aborting(target_rank, q);
+          auto result = wsq.steal(target_rank, q);
           if (result.has_value()) {
             local_sum += *result;
           }
