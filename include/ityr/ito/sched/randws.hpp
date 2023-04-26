@@ -205,6 +205,10 @@ public:
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
         cb();
       }
+
+      if (sched_loop_make_mpi_progress_option::value()) {
+        common::mpi_make_progress();
+      }
     }
 
     common::verbose("Exit scheduling loop");

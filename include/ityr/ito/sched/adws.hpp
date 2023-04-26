@@ -561,7 +561,6 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
-      // TODO: immediately execute cross-worker tasks upon arrival
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
         execute_cross_worker_task(*cwt);
@@ -596,7 +595,10 @@ public:
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
         cb();
       }
-      common::mpi_make_progress();
+
+      if (sched_loop_make_mpi_progress_option::value()) {
+        common::mpi_make_progress();
+      }
     }
 
     common::verbose("Exit scheduling loop");
@@ -784,20 +786,31 @@ private:
     common::verbose<2>("Start work stealing for dominant task group [%f, %f)",
                        steal_range.begin(), steal_range.end());
 
-    auto target_rank = get_random_rank(begin_rank, end_rank);
+    // reuse the dist tree information multiple times
+    int max_reuse = std::max(1, adws_max_dtree_reuse_option::value());
+    for (int i = 0; i < max_reuse; i++) {
+      auto target_rank = get_random_rank(begin_rank, end_rank);
 
-    common::verbose<2>("Target rank: %d", target_rank);
+      common::verbose<2>("Target rank: %d", target_rank);
 
-    if (target_rank != begin_rank) {
-      bool success = steal_from_migration_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
-      if (success) {
-        return;
+      if (target_rank != begin_rank) {
+        bool success = steal_from_migration_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
+        if (success) {
+          return;
+        }
       }
-    }
 
-    if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
-      bool success = steal_from_primary_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
-      if (success) {
+      if (target_rank != end_rank || (target_rank == end_rank && steal_range.is_at_end_boundary())) {
+        bool success = steal_from_primary_queues(target_rank, dominant_node.depth(), migration_wsq_.n_queues());
+        if (success) {
+          return;
+        }
+      }
+
+      // Periodic check for cross-worker task arrival
+      auto cwt = cross_worker_mailbox_.pop();
+      if (cwt.has_value()) {
+        execute_cross_worker_task(*cwt);
         return;
       }
     }
