@@ -182,4 +182,37 @@ ITYR_TEST_CASE("[ityr::ori::mem_mapper::cyclic] get block information at specifi
   ITYR_CHECK(get_segment(ss * 11   , ss * 12 - 1, 4) == (segment{3, ss * 11, ss * 12 - 1, ss * 2}));
 }
 
+template <block_size_t BlockSize>
+class block_adws : public base {
+public:
+  using base::base;
+
+  std::size_t block_size() const override { return BlockSize; }
+
+  std::size_t local_size(int rank [[maybe_unused]]) const override {
+    return local_size_impl();
+  }
+
+  std::size_t effective_size() const override {
+    return local_size_impl() * n_ranks_;
+  }
+
+  segment get_segment(std::size_t offset) const override {
+    ITYR_CHECK(offset < effective_size());
+    std::size_t size_l   = local_size_impl();
+    int         seg_idx  = offset / size_l;
+    std::size_t offset_b = seg_idx * size_l;
+    std::size_t offset_e = std::min((seg_idx + 1) * size_l, size_);
+    return segment{n_ranks_ - seg_idx - 1, offset_b, offset_e, 0};
+  }
+
+private:
+  // non-virtual common part
+  std::size_t local_size_impl() const {
+    std::size_t nblock_g = (size_ + BlockSize - 1) / BlockSize;
+    std::size_t nblock_l = (nblock_g + n_ranks_ - 1) / n_ranks_;
+    return nblock_l * BlockSize;
+  }
+};
+
 }
