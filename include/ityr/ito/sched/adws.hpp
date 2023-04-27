@@ -312,6 +312,7 @@ public:
 
   struct task_group_data {
     dist_range drange;
+    bool       owns_dtree_node;
   };
 
   scheduler_adws()
@@ -366,12 +367,14 @@ public:
   }
 
   task_group_data task_group_begin() {
-    task_group_data tgdata {.drange = tls_->drange};
+    task_group_data tgdata {.drange = tls_->drange, .owns_dtree_node = false};
 
     if (tls_->drange.is_cross_worker()) {
-      tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange, tls_->tg_version);
-      dtree_local_bottom_ref_ = tls_->dtree_node_ref;
-
+      if (tls_->dtree_node_ref.depth + 1 < max_depth_) {
+        tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange, tls_->tg_version);
+        dtree_local_bottom_ref_ = tls_->dtree_node_ref;
+        tgdata.owns_dtree_node = true;
+      }
       common::verbose("Begin a cross-worker task group of distribution range [%f, %f) at depth %d",
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
     }
@@ -413,13 +416,15 @@ public:
                 prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
 
-      // Set the parent dist_tree node to the current thread
-      auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
-      tls_->dtree_node_ref = dtree_node.parent;
-      dtree_local_bottom_ref_ = tls_->dtree_node_ref;
+      if (tgdata.owns_dtree_node) {
+        // Set the parent dist_tree node to the current thread
+        auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
+        tls_->dtree_node_ref = dtree_node.parent;
+        dtree_local_bottom_ref_ = tls_->dtree_node_ref;
 
-      // Flip the next version of the task group at this depth
-      tls_->tg_version.flip(dtree_node.depth());
+        // Flip the next version of the task group at this depth
+        tls_->tg_version.flip(dtree_node.depth());
+      }
     }
   }
 
@@ -528,6 +533,7 @@ public:
 
         if (new_drange.is_cross_worker()) {
           dtree_.copy_parents(dtree_node_ref);
+          dtree_local_bottom_ref_ = dtree_node_ref;
         }
 
         // If the new task is executed on another process
@@ -772,8 +778,7 @@ private:
     } else {
       auto qe = migration_wsq_.pop(tls_->dtree_node_ref.depth);
       if (qe.has_value()) {
-        ITYR_CHECK(qe->is_continuation);
-        if (!qe->evacuation_ptr) {
+        if (qe->is_continuation && !qe->evacuation_ptr) {
           ITYR_CHECK(qe->frame_base == cf_top_);
           return;
         } else {
