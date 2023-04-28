@@ -53,8 +53,8 @@ inline global_ptr<T> malloc_coll(std::size_t count) {
 
 template <typename T, template <block_size_t> typename MemMapper, typename... MemMapperArgs>
 inline global_ptr<T> malloc_coll(std::size_t count, MemMapperArgs&&... mmargs) {
-  return global_ptr<T>(core::instance::get().malloc_coll<MemMapper>(count * sizeof(T),
-                                                                    std::forward<MemMapperArgs>(mmargs)...));
+  return global_ptr<T>(reinterpret_cast<T*>(core::instance::get().malloc_coll<MemMapper>(count * sizeof(T),
+                                                                                         std::forward<MemMapperArgs>(mmargs)...)));
 }
 
 template <typename T>
