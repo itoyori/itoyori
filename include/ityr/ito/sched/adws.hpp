@@ -180,12 +180,12 @@ public:
     return {common::topology::my_rank(), depth};
   }
 
-  void set_dominant(node_ref nr) {
+  void set_dominant(node_ref nr, int value) {
     if (nr.owner_rank == common::topology::my_rank()) {
-      get_local_node(nr).dominant.store(1, std::memory_order_release);
+      get_local_node(nr).dominant.store(value, std::memory_order_release);
     } else {
       std::size_t disp_dominant = nr.depth * sizeof(node) + offsetof(node, dominant);
-      common::mpi_atomic_put_value(1, nr.owner_rank, disp_dominant, win_.win());
+      common::mpi_atomic_put_value(value, nr.owner_rank, disp_dominant, win_.win());
     }
   }
 
@@ -417,6 +417,9 @@ public:
       }
 
       if (tgdata.owns_dtree_node) {
+        // Set the completed current task group as non-dominant to reduce steal requests
+        dtree_.set_dominant(tls_->dtree_node_ref, 0);
+
         // Set the parent dist_tree node to the current thread
         auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
         tls_->dtree_node_ref = dtree_node.parent;
@@ -747,7 +750,7 @@ private:
       common::verbose("Distribution tree node (owner=%d, depth=%d) becomes dominant",
                       tls_->dtree_node_ref.owner_rank, tls_->dtree_node_ref.depth);
 
-      dtree_.set_dominant(tls_->dtree_node_ref);
+      dtree_.set_dominant(tls_->dtree_node_ref, 1);
 
       // Temporarily make this thread a non-cross-worker task, so that the thread does not enter
       // this scope multiple times. When a task group has multiple child tasks, the entering thread
