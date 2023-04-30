@@ -252,15 +252,17 @@ public:
     : win_(common::topology::mpicomm(), 1) {}
 
   void put(const Entry& entry, common::topology::rank_t target_rank) {
-    ITYR_CHECK(!common::mpi_get_value<bool>(target_rank, offsetof(mailbox, arrived), win_.win()));
+    ITYR_PROFILER_RECORD(prof_event_sched_adws_mail_put, target_rank);
+
+    ITYR_CHECK(!common::mpi_get_value<int>(target_rank, offsetof(mailbox, arrived), win_.win()));
     common::mpi_put_value(entry, target_rank, offsetof(mailbox, entry), win_.win());
-    common::mpi_put_value(true, target_rank, offsetof(mailbox, arrived), win_.win());
+    common::mpi_atomic_put_value(1, target_rank, offsetof(mailbox, arrived), win_.win());
   }
 
   std::optional<Entry> pop() {
     mailbox& mb = win_.local_buf()[0];
-    if (mb.arrived) {
-      mb.arrived = false;
+    if (mb.arrived.load(std::memory_order_acquire)) {
+      mb.arrived.store(0, std::memory_order_relaxed);
       return mb.entry;
     } else {
       return std::nullopt;
@@ -268,13 +270,13 @@ public:
   }
 
   bool arrived() const {
-    return win_.local_buf()[0].arrived;
+    return win_.local_buf()[0].arrived.load(std::memory_order_relaxed);
   }
 
 private:
   struct mailbox {
-    Entry entry;
-    bool  arrived;
+    Entry            entry;
+    std::atomic<int> arrived = 0; // TODO: better to use std::atomic_ref in C++20
   };
 
   common::mpi_win_manager<mailbox> win_;
