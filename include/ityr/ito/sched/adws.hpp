@@ -16,6 +16,26 @@
 
 namespace ityr::ito {
 
+inline common::topology::rank_t get_random_rank(common::topology::rank_t a,
+                                                common::topology::rank_t b) {
+  static std::mt19937 engine(std::random_device{}());
+
+  ITYR_CHECK(0 <= a);
+  ITYR_CHECK(a <= b);
+  ITYR_CHECK(b < common::topology::n_ranks());
+  std::uniform_int_distribution<common::topology::rank_t> dist(a, b);
+
+  common::topology::rank_t rank;
+  do {
+    rank = dist(engine);
+  } while (rank == common::topology::my_rank());
+
+  ITYR_CHECK(a <= rank);
+  ITYR_CHECK(rank != common::topology::my_rank());
+  ITYR_CHECK(rank <= b);
+  return rank;
+}
+
 class task_general {
 public:
   virtual ~task_general() = default;
@@ -75,13 +95,7 @@ public:
   }
 
   common::topology::rank_t end_rank() const {
-    auto end_rank = static_cast<common::topology::rank_t>(end_);
-    if (static_cast<value_type>(end_rank) == end_) {
-      // If the range is at the boundary of the end point, i.e., range = [x, y.0),
-      // the end rank is determined to y-1.
-      end_rank--;
-    }
-    return end_rank;
+    return static_cast<common::topology::rank_t>(end_);
   }
 
   bool is_at_end_boundary() const {
@@ -133,32 +147,19 @@ public:
   struct node {
     node() {}
 
-    // Copy constructors for std::atomic are deleted
-    node(const node& n)
-      : parent(n.parent), drange(n.drange), tg_version(n.tg_version), version(n.version),
-        dominant(n.dominant.load(std::memory_order_relaxed)) {}
-    node& operator=(const node& n) {
-      parent     = n.parent;
-      drange     = n.drange;
-      tg_version = n.tg_version;
-      version    = n.version;
-      dominant.store(n.dominant.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      return *this;
-    }
-
     int depth() const { return parent.depth + 1; }
 
-    node_ref         parent;
-    dist_range       drange;
-    flipper          tg_version;
-    version_t        version = 0;
-    std::atomic<int> dominant; // TODO: better to use std::atomic_ref in C++20
+    node_ref   parent;
+    dist_range drange;
+    flipper    tg_version;
+    version_t  version = 0;
   };
 
   dist_tree(int max_depth)
     : max_depth_(max_depth),
-      win_(common::topology::mpicomm(), max_depth_),
-      versions_(max_depth_, common::topology::my_rank()) {}
+      node_win_(common::topology::mpicomm(), max_depth_),
+      dominant_flag_win_(common::topology::mpicomm(), max_depth_, 0),
+      versions_(max_depth_, common::topology::my_rank() + 1) {}
 
   node_ref append(node_ref parent, dist_range drange, flipper tg_version) {
     int depth = parent.depth + 1;
@@ -166,8 +167,10 @@ public:
     // handle version overflow
     auto n_ranks = common::topology::n_ranks();
     if (versions_[depth] >= std::numeric_limits<version_t>::max() - n_ranks) {
-      versions_[depth] = common::topology::my_rank();
+      versions_[depth] = common::topology::my_rank() + 1;
     }
+
+    local_dominant_flag(depth).store(0, std::memory_order_relaxed);
 
     node& new_node = local_node(depth);
     new_node.parent     = parent;
@@ -175,21 +178,25 @@ public:
     new_node.tg_version = tg_version;
     new_node.version    = (versions_[depth] += n_ranks);
 
-    new_node.dominant.store(0, std::memory_order_release);
-
     return {common::topology::my_rank(), depth};
   }
 
-  void set_dominant(node_ref nr, int value) {
-    if (nr.owner_rank == common::topology::my_rank()) {
-      get_local_node(nr).dominant.store(value, std::memory_order_release);
-    } else {
-      std::size_t disp_dominant = nr.depth * sizeof(node) + offsetof(node, dominant);
-      common::mpi_atomic_put_value(value, nr.owner_rank, disp_dominant, win_.win());
+  void set_dominant(node_ref nr, bool dominant) {
+    // Store the version as the flag if dominant
+    // To disable steals from this dist range, set -version as the special dominant flag value
+    version_t value = (dominant ? 1 : -1) * local_node(nr.depth).version;
+
+    local_dominant_flag(nr.depth).store(value, std::memory_order_relaxed);
+
+    if (nr.owner_rank != common::topology::my_rank()) {
+      std::size_t disp_dominant = nr.depth * sizeof(version_t);
+      common::mpi_atomic_put_value(value, nr.owner_rank, disp_dominant, dominant_flag_win_.win());
     }
   }
 
   std::optional<node> get_topmost_dominant(node_ref nr) {
+    if (nr.depth < 0) return std::nullopt;
+
     ITYR_PROFILER_RECORD(prof_event_sched_adws_scan_tree);
 
     for (int d = 0; d <= nr.depth; d++) {
@@ -197,23 +204,28 @@ public:
                                         : local_node(d + 1).parent.owner_rank;
 
       node& n = local_node(d);
+      auto& dominant_flag = local_dominant_flag(d);
 
       ITYR_CHECK(n.parent.depth == d - 1);
+      ITYR_CHECK(n.version != 0);
 
       if (owner_rank != common::topology::my_rank() &&
-          n.dominant.load(std::memory_order_relaxed) != -1) {
-        std::size_t disp_dominant = d * sizeof(node) + offsetof(node, dominant);
-        int dominant = common::mpi_atomic_get_value<int>(owner_rank, disp_dominant, win_.win());
+          dominant_flag.load(std::memory_order_relaxed) != -n.version) {
+        // To avoid network contention on the owner rank, we randomly choose a worker within the
+        // distribution range to query the dominant flag
+        ITYR_CHECK(owner_rank == n.drange.begin_rank());
+        int target_rank = get_random_rank(owner_rank, n.drange.end_rank() - 1);
 
-        std::size_t disp_version = d * sizeof(node) + offsetof(node, version);
-        version_t version = common::mpi_get_value<version_t>(owner_rank, disp_version, win_.win());
+        std::size_t disp_dominant = d * sizeof(version_t);
+        version_t dominant_val = common::mpi_atomic_get_value<version_t>(
+            target_rank, disp_dominant, dominant_flag_win_.win());
 
-        // If the version is already updated, the node is marked obsolete (-1)
-        n.dominant.store((n.version == version) ? dominant : -1,
-                         std::memory_order_relaxed);
+        if (dominant_val == n.version || dominant_val == -n.version) {
+          dominant_flag.store(dominant_val, std::memory_order_relaxed);
+        }
       }
 
-      if (n.dominant.load(std::memory_order_relaxed) == 1) {
+      if (dominant_flag.load(std::memory_order_relaxed) == n.version) {
         // return the topmost dominant node
         return n;
       }
@@ -223,7 +235,11 @@ public:
   }
 
   void copy_parents(node_ref nr) {
-    common::mpi_get(&local_node(0), nr.depth + 1, nr.owner_rank, 0, win_.win());
+    for (int d = 0; d <= nr.depth; d++) {
+      // non-owners write 0 as a non-dominant flag
+      local_dominant_flag(d).store(0, std::memory_order_relaxed);
+    }
+    common::mpi_get(&local_node(0), nr.depth + 1, nr.owner_rank, 0, node_win_.win());
   }
 
   node& get_local_node(node_ref nr) {
@@ -235,12 +251,19 @@ private:
   node& local_node(int depth) {
     ITYR_CHECK(0 <= depth);
     ITYR_CHECK(depth < max_depth_);
-    return win_.local_buf()[depth];
+    return node_win_.local_buf()[depth];
   }
 
-  int                           max_depth_;
-  common::mpi_win_manager<node> win_;
-  std::vector<version_t>        versions_;
+  std::atomic<version_t>& local_dominant_flag(int depth) {
+    ITYR_CHECK(0 <= depth);
+    ITYR_CHECK(depth < max_depth_);
+    return dominant_flag_win_.local_buf()[depth];
+  }
+
+  int                                             max_depth_;
+  common::mpi_win_manager<node>                   node_win_;
+  common::mpi_win_manager<std::atomic<version_t>> dominant_flag_win_;
+  std::vector<version_t>                          versions_;
 };
 
 template <typename Entry>
@@ -419,8 +442,9 @@ public:
       }
 
       if (tgdata.owns_dtree_node) {
+        // TODO: this may not be very effective with the decentralized dominant node detection
         // Set the completed current task group as non-dominant to reduce steal requests
-        dtree_.set_dominant(tls_->dtree_node_ref, 0);
+        dtree_.set_dominant(tls_->dtree_node_ref, false);
 
         // Set the parent dist_tree node to the current thread
         auto& dtree_node = dtree_.get_local_node(tls_->dtree_node_ref);
@@ -752,7 +776,7 @@ private:
       common::verbose("Distribution tree node (owner=%d, depth=%d) becomes dominant",
                       tls_->dtree_node_ref.owner_rank, tls_->dtree_node_ref.depth);
 
-      dtree_.set_dominant(tls_->dtree_node_ref, 1);
+      dtree_.set_dominant(tls_->dtree_node_ref, true);
 
       // Temporarily make this thread a non-cross-worker task, so that the thread does not enter
       // this scope multiple times. When a task group has multiple child tasks, the entering thread
@@ -836,25 +860,6 @@ private:
     resume_sched();
   }
 
-  common::topology::rank_t get_random_rank(common::topology::rank_t a, common::topology::rank_t b) {
-    static std::mt19937 engine(std::random_device{}());
-
-    ITYR_CHECK(0 <= a);
-    ITYR_CHECK(a <= b);
-    ITYR_CHECK(b < common::topology::n_ranks());
-    std::uniform_int_distribution<common::topology::rank_t> dist(a, b);
-
-    common::topology::rank_t rank;
-    do {
-      rank = dist(engine);
-    } while (rank == common::topology::my_rank());
-
-    ITYR_CHECK(a <= rank);
-    ITYR_CHECK(rank != common::topology::my_rank());
-    ITYR_CHECK(rank <= b);
-    return rank;
-  }
-
   void steal() {
     auto ne = dtree_.get_topmost_dominant(dtree_local_bottom_ref_);
     if (!ne.has_value()) {
@@ -872,6 +877,11 @@ private:
 
     auto begin_rank = steal_range.begin_rank();
     auto end_rank   = steal_range.end_rank();
+
+    if (steal_range.is_at_end_boundary()) {
+      end_rank--;
+    }
+
     if (begin_rank == end_rank) {
       return;
     }
