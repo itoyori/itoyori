@@ -170,8 +170,6 @@ public:
       versions_[depth] = common::topology::my_rank() + 1;
     }
 
-    local_dominant_flag(depth).store(0, std::memory_order_relaxed);
-
     node& new_node = local_node(depth);
     new_node.parent     = parent;
     new_node.drange     = drange;
@@ -194,6 +192,10 @@ public:
     }
   }
 
+  // The meaning of a dominant flag value:
+  //          0 : undetermined
+  //    version : the node with this "version" is dominant
+  //   -version : the node with this "version" is removed and non-dominant
   std::optional<node> get_topmost_dominant(node_ref nr) {
     if (nr.depth < 0) return std::nullopt;
 
@@ -212,16 +214,29 @@ public:
       if (owner_rank != common::topology::my_rank() &&
           dominant_flag.load(std::memory_order_relaxed) != -n.version) {
         // To avoid network contention on the owner rank, we randomly choose a worker within the
-        // distribution range to query the dominant flag
+        // distribution range to query the dominant flag (decentralized dominant node propagation)
         ITYR_CHECK(owner_rank == n.drange.begin_rank());
-        int target_rank = get_random_rank(owner_rank, n.drange.end_rank() - 1);
+        auto target_rank = get_random_rank(owner_rank, n.drange.end_rank() - 1);
 
-        std::size_t disp_dominant = d * sizeof(version_t);
-        version_t dominant_val = common::mpi_atomic_get_value<version_t>(
-            target_rank, disp_dominant, dominant_flag_win_.win());
+        if (target_rank != owner_rank &&
+            dominant_flag.load(std::memory_order_relaxed) == n.version) {
+          // If the remote value is 0, propagate the dominant flag to remote
+          std::size_t disp_dominant = d * sizeof(version_t);
+          version_t dominant_val = common::mpi_atomic_cas_value(n.version, 0,
+              target_rank, disp_dominant, dominant_flag_win_.win());
 
-        if (dominant_val == n.version || dominant_val == -n.version) {
-          dominant_flag.store(dominant_val, std::memory_order_relaxed);
+          if (dominant_val == -n.version) {
+            dominant_flag.store(dominant_val, std::memory_order_relaxed);
+          }
+        } else {
+          // Read the remote dominant flag
+          std::size_t disp_dominant = d * sizeof(version_t);
+          version_t dominant_val = common::mpi_atomic_get_value<version_t>(
+              target_rank, disp_dominant, dominant_flag_win_.win());
+
+          if (dominant_val == n.version || dominant_val == -n.version) {
+            dominant_flag.store(dominant_val, std::memory_order_relaxed);
+          }
         }
       }
 
@@ -442,7 +457,6 @@ public:
       }
 
       if (tgdata.owns_dtree_node) {
-        // TODO: this may not be very effective with the decentralized dominant node detection
         // Set the completed current task group as non-dominant to reduce steal requests
         dtree_.set_dominant(tls_->dtree_node_ref, false);
 
