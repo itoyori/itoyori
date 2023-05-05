@@ -91,12 +91,21 @@ public:
       if (topology::my_rank() == 0) {
         print_stats_per_rank(0, acc_time_, t_total, count_);
         for (topology::rank_t i = 1; i < topology::n_ranks(); i++) {
+          mpi_barrier(topology::mpicomm());
+
           auto [a, t, c] = mpi_recv_value<
             std::tuple<wallclock::wallclock_t, wallclock::wallclock_t, counter_t>>(i, 0, topology::mpicomm());
           print_stats_per_rank(i, a, t, c);
         }
       } else {
-        mpi_send_value(std::make_tuple(acc_time_, t_total, count_), 0, 0, topology::mpicomm());
+        for (topology::rank_t i = 1; i < topology::n_ranks(); i++) {
+          // Insert a barrier to each iteration so that too many send requests do not go to rank 0 at the same time
+          mpi_barrier(topology::mpicomm());
+
+          if (i == topology::my_rank()) {
+            mpi_send_value(std::make_tuple(acc_time_, t_total, count_), 0, 0, topology::mpicomm());
+          }
+        }
       }
     } else {
       auto acc_time_sum = mpi_reduce_value(acc_time_, 0, topology::mpicomm());
