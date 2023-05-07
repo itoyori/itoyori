@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <sys/mman.h>
 
 #define ITYR_HAS_MEMORY_RESOURCE __has_include(<memory_resource>)
@@ -191,7 +192,7 @@ public:
     ITYR_CHECK(ret + bytes <= p + real_bytes);
     ITYR_CHECK(p + sizeof(header) <= ret);
 
-    header* h = new(p) header {
+    header* h = new (p) header {
       .prev = allocated_list_end_, .next = nullptr,
       .size = real_bytes, .alignment = alignment, .freed = 0};
     ITYR_CHECK(allocated_list_end_->next == nullptr);
@@ -225,11 +226,11 @@ public:
     std::size_t real_bytes = bytes + pad_bytes;
 
     header* h = reinterpret_cast<header*>(reinterpret_cast<std::byte*>(p) - pad_bytes);
-    remove_header_from_list(h);
+    ITYR_CHECK(h->size == real_bytes);
+    ITYR_CHECK(h->alignment == alignment);
+    ITYR_CHECK(h->freed == 0);
 
-    std_pool_mr_.deallocate(h, real_bytes, alignment);
-
-    allocated_size_ -= real_bytes;
+    local_deallocate_impl(h, real_bytes, alignment);
   }
 
   void remote_deallocate(void* p, std::size_t bytes [[maybe_unused]], int target_rank, std::size_t alignment = alignof(max_align_t)) {
@@ -255,12 +256,10 @@ public:
 
     header *h = allocated_list_.next;
     while (h) {
-      if (h->freed) {
-        header h_copy = *h;
-        remove_header_from_list(h);
-        std_pool_mr_.deallocate(reinterpret_cast<void*>(h), h_copy.size, h_copy.alignment);
-        allocated_size_ -= h_copy.size;
-        h = h_copy.next;
+      if (h->freed.load(std::memory_order_acquire)) {
+        header* h_next = h->next;
+        local_deallocate_impl(h, h->size, h->alignment);
+        h = h_next;
       } else {
         h = h->next;
       }
@@ -269,6 +268,19 @@ public:
 
   bool is_locally_accessible(const void* p) const {
     return topology::is_locally_accessible(get_owner(p));
+  }
+
+  bool is_remotely_freed(void* p, std::size_t alignment = alignof(max_align_t)) {
+    ITYR_CHECK(get_owner(p) == topology::my_rank());
+
+    std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
+    header* h = reinterpret_cast<header*>(reinterpret_cast<std::byte*>(p) - pad_bytes);
+
+    if (h->freed.load(std::memory_order_acquire)) {
+      local_deallocate_impl(h, h->size, h->alignment);
+      return true;
+    }
+    return false;
   }
 
   // mainly for debugging
@@ -330,11 +342,11 @@ private:
   }
 
   struct header {
-    header*     prev      = nullptr;
-    header*     next      = nullptr;
-    std::size_t size      = 0;
-    std::size_t alignment = 0;
-    int         freed     = 0;
+    header*          prev      = nullptr;
+    header*          next      = nullptr;
+    std::size_t      size      = 0;
+    std::size_t      alignment = 0;
+    std::atomic<int> freed     = 0;
   };
 
   void remove_header_from_list(header* h) {
@@ -355,6 +367,13 @@ private:
     const void* flag_addr = &h->freed;
 
     return get_disp(flag_addr);
+  }
+
+  void local_deallocate_impl(header* h, std::size_t size, std::size_t alignment) {
+    remove_header_from_list(h);
+    std::destroy_at(h);
+    std_pool_mr_.deallocate(h, size, alignment);
+    allocated_size_ -= size;
   }
 
   std::size_t                       local_max_size_;

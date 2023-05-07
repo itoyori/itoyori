@@ -348,6 +348,7 @@ public:
     dist_range          drange;         // distribution range of this thread
     dist_tree::node_ref dtree_node_ref; // distribution tree node of the cross-worker task group that this thread belongs to
     flipper             tg_version;
+    bool                undistributed;
   };
 
   struct task_group_data {
@@ -379,7 +380,8 @@ public:
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = root_drange,
                                     .dtree_node_ref = {},
-                                    .tg_version     = {}};
+                                    .tg_version     = {},
+                                    .undistributed  = true};
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
@@ -415,6 +417,9 @@ public:
         dtree_local_bottom_ref_ = tls_->dtree_node_ref;
         tgdata.owns_dtree_node = true;
       }
+
+      tls_->undistributed = true;
+
       common::verbose("Begin a cross-worker task group of distribution range [%f, %f) at depth %d",
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
     }
@@ -468,6 +473,8 @@ public:
         // Flip the next version of the task group at this depth
         tls_->tg_version.flip(dtree_node.depth());
       }
+
+      tls_->undistributed = false;
     }
   }
 
@@ -514,7 +521,8 @@ public:
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = tls_->dtree_node_ref,
-                                    .tg_version     = tls_->tg_version};
+                                    .tg_version     = tls_->tg_version,
+                                    .undistributed  = true};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
@@ -572,7 +580,8 @@ public:
         tls_ = new (alloca(sizeof(thread_local_storage)))
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = dtree_node_ref,
-                                    .tg_version     = tg_version};
+                                    .tg_version     = tg_version,
+                                    .undistributed  = true};
 
         if (new_drange.is_cross_worker()) {
           dtree_.copy_parents(dtree_node_ref);
@@ -791,6 +800,45 @@ private:
                       tls_->dtree_node_ref.owner_rank, tls_->dtree_node_ref.depth);
 
       dtree_.set_dominant(tls_->dtree_node_ref, true);
+
+      if (tls_->undistributed &&
+          tls_->drange.begin_rank() + 1 < tls_->drange.end_rank()) {
+        std::vector<std::pair<cross_worker_task, common::topology::rank_t>> tasks;
+
+        // If a cross-worker task with range [i.xxx, j.xxx) is completed without distributing
+        // child cross-worker tasks to workers i+1, i+2, ..., j-1, it should pass the dist node
+        // tree reference to them, so that they can perform work stealing.
+        for (common::topology::rank_t target_rank = tls_->drange.begin_rank() + 1;
+             target_rank < tls_->drange.end_rank();
+             target_rank++) {
+          // Create a dummy task to set the parent dtree nodes
+          // TODO: we can reduce communication as only dtree_node_ref needs to be passed
+          auto new_task_fn = [&, dtree_node_ref = tls_->dtree_node_ref]() {
+            dtree_.copy_parents(dtree_node_ref);
+            dtree_local_bottom_ref_ = dtree_node_ref;
+
+            common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_sched_loop>();
+            resume_sched();
+          };
+
+          size_t task_size = sizeof(callable_task<decltype(new_task_fn)>);
+          void* task_ptr = suspended_thread_allocator_.allocate(task_size);
+
+          auto t = new (task_ptr) callable_task(new_task_fn);
+          tasks.push_back({{nullptr, t, task_size}, target_rank});
+        }
+
+        // allocate memory then put
+        for (auto [t, target_rank] : tasks) {
+          cross_worker_mailbox_.put(t, target_rank);
+        }
+
+        // Wait until all tasks are completed on remote workers
+        // TODO: barrier is a better solution to avoid network contention when many workers are involved
+        for (auto [t, target_rank] : tasks) {
+          while (!suspended_thread_allocator_.is_remotely_freed(t.frame_base));
+        }
+      }
 
       // Temporarily make this thread a non-cross-worker task, so that the thread does not enter
       // this scope multiple times. When a task group has multiple child tasks, the entering thread
