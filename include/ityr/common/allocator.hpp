@@ -86,8 +86,8 @@ public:
   }
 
 private:
-  const MPI_Win win_;
-  freelist      freelist_;
+  MPI_Win  win_;
+  freelist freelist_;
 };
 
 class block_resource final : public pmr::memory_resource {
@@ -118,6 +118,7 @@ public:
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override {
     if (bytes >= block_size_) {
       upstream_mr_->deallocate(p, bytes, std::max(alignment, block_size_));
+      return;
     }
 
     freelist_.add(reinterpret_cast<uintptr_t>(p), bytes);
@@ -131,7 +132,7 @@ public:
 
 private:
   pmr::memory_resource* upstream_mr_;
-  const std::size_t     block_size_;
+  std::size_t           block_size_;
   freelist              freelist_;
 };
 
@@ -149,7 +150,8 @@ public:
       std_pool_mr_(my_std_pool_options(), &block_mr_),
       max_unflushed_free_objs_(allocator_max_unflushed_free_objs_option::value()),
       allocated_size_(0),
-      allocated_size_threshold_(std::size_t(16) * 1024) {}
+      collect_threshold_(std::size_t(16) * 1024),
+      collect_threshold_max_(local_max_size_ * 8 / 10) {}
 
   MPI_Win win() const { return win_.win(); }
 
@@ -175,9 +177,12 @@ public:
     std::size_t pad_bytes = round_up_pow2(sizeof(header), alignment);
     std::size_t real_bytes = bytes + pad_bytes;
 
-    if (allocated_size_ >= allocated_size_threshold_) {
+    if (allocated_size_ >= collect_threshold_) {
       collect_deallocated();
-      allocated_size_threshold_ = allocated_size_ * 2;
+      collect_threshold_ = allocated_size_ * 2;
+      if (collect_threshold_ > collect_threshold_max_) {
+        collect_threshold_ = (collect_threshold_max_ + allocated_size_) / 2;
+      }
     }
 
     std::byte* p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
@@ -352,8 +357,8 @@ private:
     return get_disp(flag_addr);
   }
 
-  const std::size_t                 local_max_size_;
-  const std::size_t                 global_max_size_;
+  std::size_t                       local_max_size_;
+  std::size_t                       global_max_size_;
   virtual_mem                       vm_;
   physical_mem                      pm_;
   void*                             local_base_addr_;
@@ -365,7 +370,8 @@ private:
   header                            allocated_list_;
   header*                           allocated_list_end_ = &allocated_list_;
   std::size_t                       allocated_size_;
-  std::size_t                       allocated_size_threshold_;
+  std::size_t                       collect_threshold_;
+  std::size_t                       collect_threshold_max_;
 };
 
 template <typename T>
