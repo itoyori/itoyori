@@ -698,8 +698,6 @@ public:
   void sched_loop(SchedLoopCallback&& cb, CondFn&& cond_fn) {
     common::verbose("Enter scheduling loop");
 
-    dtree_local_bottom_ref_ = {};
-
     while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
       auto cwt = cross_worker_mailbox_.pop();
       if (cwt.has_value()) {
@@ -740,6 +738,8 @@ public:
         common::mpi_make_progress();
       }
     }
+
+    dtree_local_bottom_ref_ = {};
 
     common::verbose("Exit scheduling loop");
   }
