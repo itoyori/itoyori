@@ -76,6 +76,11 @@ struct prof_event_global_lock_trylock : public common::prof_event_target_base {
   std::string str() const override { return "global_lock_trylock"; }
 };
 
+struct prof_event_global_lock_priolock : public common::prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "global_lock_priolock"; }
+};
+
 struct prof_event_global_lock_unlock : public common::prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
   std::string str() const override { return "global_lock_unlock"; }
@@ -114,6 +119,7 @@ private:
   profiler::event_initializer<prof_event_rma_atomic_put>        ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_rma_flush>             ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_global_lock_trylock>   ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_global_lock_priolock>  ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_global_lock_unlock>    ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_allocator_alloc>       ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_allocator_free_local>  ITYR_ANON_VAR;

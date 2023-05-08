@@ -44,7 +44,7 @@ public:
     int t = qs.top.load(std::memory_order_relaxed);
 
     if (t == n_entries_) {
-      queue_lock_.lock(common::topology::my_rank(), idx);
+      queue_lock_.priolock(common::topology::my_rank(), idx);
 
       int b = qs.base.load(std::memory_order_relaxed);
       int offset = -(b + 1) / 2;
@@ -78,7 +78,7 @@ public:
       if (b < n_entries_ / 10) {
         int t = qs.top.load(std::memory_order_relaxed);
         if (n_entries_ - t > n_entries_ / 10) {
-          queue_lock_.lock(common::topology::my_rank(), idx);
+          queue_lock_.priolock(common::topology::my_rank(), idx);
 
           int t = qs.top.load(std::memory_order_relaxed);
           int offset = (n_entries_ - t + 1) / 2;
@@ -120,7 +120,7 @@ public:
     } else {
       qs.top.store(t + 1, std::memory_order_relaxed);
 
-      queue_lock_.lock(common::topology::my_rank(), idx);
+      queue_lock_.priolock(common::topology::my_rank(), idx);
 
       qs.top.store(t, std::memory_order_relaxed);
       int b = qs.base.load(std::memory_order_relaxed);
@@ -246,7 +246,7 @@ public:
 
     auto entries = local_entries(idx);
 
-    queue_lock_.lock(common::topology::my_rank(), idx);
+    queue_lock_.priolock(common::topology::my_rank(), idx);
 
     int t = qs.top.load(std::memory_order_relaxed);
     int b = qs.base.load(std::memory_order_relaxed);
