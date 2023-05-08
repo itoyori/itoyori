@@ -207,7 +207,7 @@ public:
   std::size_t local_size(int rank) const override {
     int seg_id = n_ranks_ - rank - 1;
     auto [blk_id_b, blk_id_e] = get_seg_range(seg_id);
-    return (blk_id_e - blk_id_b) * BlockSize;
+    return std::max(std::size_t(1), blk_id_e - blk_id_b) * BlockSize;
   }
 
   std::size_t effective_size() const override {
