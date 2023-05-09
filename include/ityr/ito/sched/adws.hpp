@@ -13,44 +13,9 @@
 #include "ityr/ito/callstack.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/prof_events.hpp"
+#include "ityr/ito/sched/util.hpp"
 
 namespace ityr::ito {
-
-inline common::topology::rank_t get_random_rank(common::topology::rank_t a,
-                                                common::topology::rank_t b) {
-  static std::mt19937 engine(std::random_device{}());
-
-  ITYR_CHECK(0 <= a);
-  ITYR_CHECK(a <= b);
-  ITYR_CHECK(b < common::topology::n_ranks());
-  std::uniform_int_distribution<common::topology::rank_t> dist(a, b);
-
-  common::topology::rank_t rank;
-  do {
-    rank = dist(engine);
-  } while (rank == common::topology::my_rank());
-
-  ITYR_CHECK(a <= rank);
-  ITYR_CHECK(rank != common::topology::my_rank());
-  ITYR_CHECK(rank <= b);
-  return rank;
-}
-
-class task_general {
-public:
-  virtual ~task_general() = default;
-  virtual void execute() = 0;
-};
-
-template <typename Fn, typename... Args>
-class callable_task : task_general {
-public:
-  callable_task(Fn fn, Args... args) : fn_(fn), arg_(args...) {}
-  void execute() { std::apply(fn_, arg_); }
-private:
-  Fn                  fn_;
-  std::tuple<Args...> arg_;
-};
 
 class flipper {
 public:
@@ -322,8 +287,6 @@ private:
 
 class scheduler_adws {
 public:
-  struct no_retval_t {};
-
   struct suspended_state {
     void*       evacuation_ptr;
     void*       frame_base;
@@ -331,17 +294,23 @@ public:
   };
 
   template <typename T>
+  struct thread_retval {
+    T            value;
+    dag_profiler dag_prof;
+  };
+
+  template <typename T>
   struct thread_state {
-    T               retval;
-    int             resume_flag = 0;
-    suspended_state suspended;
+    thread_retval<T> retval;
+    int              resume_flag = 0;
+    suspended_state  suspended;
   };
 
   template <typename T>
   struct thread_handler {
     thread_state<T>* state      = nullptr;
     bool             serialized = false;
-    T                retval_ser; // return the result by value if the thread is serialized
+    thread_retval<T> retval_ser; // return the result by value if the thread is serialized
   };
 
   struct thread_local_storage {
@@ -349,11 +318,13 @@ public:
     dist_tree::node_ref dtree_node_ref; // distribution tree node of the cross-worker task group that this thread belongs to
     flipper             tg_version;
     bool                undistributed;
+    dag_profiler        dag_prof;
   };
 
   struct task_group_data {
-    dist_range drange;
-    bool       owns_dtree_node;
+    dist_range   drange;
+    bool         owns_dtree_node;
+    dag_profiler dag_prof; // to record the dag prof data of this thread prior to this task group
   };
 
   scheduler_adws()
@@ -381,16 +352,23 @@ public:
                thread_local_storage{.drange         = root_drange,
                                     .dtree_node_ref = {},
                                     .tg_version     = {},
-                                    .undistributed  = true};
+                                    .undistributed  = true,
+                                    .dag_prof       = {}};
+
+        tls_->dag_prof.start();
+        tls_->dag_prof.increment_thread_count();
+        tls_->dag_prof.increment_strand_count();
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T retval = invoke_fn<T>(fn, args...);
+        T ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Root thread %p is completed", ts);
 
-        on_root_die(ts, retval);
+        tls_->dag_prof.stop();
+
+        on_root_die(ts, ret);
       });
     });
 
@@ -399,17 +377,25 @@ public:
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
-    T retval = ts->retval;
+    thread_retval<T> retval = ts->retval;
     std::destroy_at(ts);
     thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
 
+    if (dag_prof_enabled_) {
+      dag_prof_result_ = retval.dag_prof;
+    }
+
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
 
-    return retval;
+    return retval.value;
   }
 
   task_group_data task_group_begin() {
-    task_group_data tgdata {.drange = tls_->drange, .owns_dtree_node = false};
+    tls_->dag_prof.stop();
+
+    task_group_data tgdata {.drange          = tls_->drange,
+                            .owns_dtree_node = false,
+                            .dag_prof        = tls_->dag_prof};
 
     if (tls_->drange.is_cross_worker()) {
       if (tls_->dtree_node_ref.depth + 1 < max_depth_) {
@@ -424,6 +410,10 @@ public:
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
     }
 
+    tls_->dag_prof.clear();
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
+
     return tgdata;
   }
 
@@ -431,6 +421,9 @@ public:
   void task_group_end(task_group_data&      tgdata,
                       PreSuspendCallback&&  pre_suspend_cb,
                       PostSuspendCallback&& post_suspend_cb) {
+    // Just in case no threads are spawned in this task group
+    on_task_die();
+
     // restore the original distribution range of this thread at the beginning of the task group
     tls_->drange = tgdata.drange;
 
@@ -476,6 +469,10 @@ public:
 
       tls_->undistributed = false;
     }
+
+    tls_->dag_prof.merge_serial(tgdata.dag_prof);
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
   }
 
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
@@ -522,7 +519,8 @@ public:
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = tls_->dtree_node_ref,
                                     .tg_version     = tls_->tg_version,
-                                    .undistributed  = true};
+                                    .undistributed  = true,
+                                    .dag_prof       = {}};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
@@ -534,16 +532,20 @@ public:
                               tls_->dtree_node_ref.depth);
         }
 
+        tls_->dag_prof.start();
+        tls_->dag_prof.increment_thread_count();
+        tls_->dag_prof.increment_strand_count();
+
         common::verbose<3>("Starting new thread %p", ts);
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T retval = invoke_fn<T>(fn, args...);
+        T ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose<3>("Thread %p is completed", ts);
 
         on_task_die();
-        on_die_workfirst(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
+        on_die_workfirst(ts, ret, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
         common::verbose<3>("Thread %p is serialized (fast path)", ts);
 
@@ -552,7 +554,7 @@ public:
         thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
         th.state      = nullptr;
         th.serialized = true;
-        th.retval_ser = retval;
+        th.retval_ser = {ret, tls_->dag_prof};
 
         common::verbose<3>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
@@ -581,12 +583,17 @@ public:
                thread_local_storage{.drange         = new_drange,
                                     .dtree_node_ref = dtree_node_ref,
                                     .tg_version     = tg_version,
-                                    .undistributed  = true};
+                                    .undistributed  = true,
+                                    .dag_prof       = {}};
 
         if (new_drange.is_cross_worker()) {
           dtree_.copy_parents(dtree_node_ref);
           dtree_local_bottom_ref_ = dtree_node_ref;
         }
+
+        tls_->dag_prof.start();
+        tls_->dag_prof.increment_thread_count();
+        tls_->dag_prof.increment_strand_count();
 
         // If the new task is executed on another process
         if (my_rank != common::topology::my_rank()) {
@@ -596,14 +603,14 @@ public:
           common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
         }
 
-        T retval = invoke_fn<T>(fn, args...);
+        T ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("A migrated thread %p [%f, %f) is completed",
                         ts, new_drange.begin(), new_drange.end());
 
         on_task_die();
-        on_die_drifted(ts, retval, on_drift_die_cb);
+        on_die_drifted(ts, ret, on_drift_die_cb);
       };
 
       size_t task_size = sizeof(callable_task<decltype(new_task_fn)>);
@@ -626,6 +633,11 @@ public:
 
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
     }
+
+    // restart to count only the last task in the task group
+    tls_->dag_prof.clear();
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
   }
 
   template <typename T>
@@ -636,7 +648,7 @@ public:
     // (the last task of a task group may not be spawned as a thread)
     on_task_die();
 
-    T retval;
+    thread_retval<T> retval;
     if (th.serialized) {
       common::verbose<3>("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
@@ -649,7 +661,7 @@ public:
 
       if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
         common::verbose("Thread %p is already joined", ts);
-        if constexpr (!std::is_same_v<T, no_retval_t>) {
+        if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
           retval = remote_get_value(thread_state_allocator_, &ts->retval);
         }
 
@@ -680,7 +692,7 @@ public:
           common::profiler::switch_phase<prof_phase_sched_resume_join, prof_phase_sched_join>();
         }
 
-        if constexpr (!std::is_same_v<T, no_retval_t>) {
+        if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
           retval = remote_get_value(thread_state_allocator_, &ts->retval);
         }
       }
@@ -690,8 +702,10 @@ public:
       th.state = nullptr;
     }
 
+    tls_->dag_prof.merge_parallel(retval.dag_prof);
+
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
-    return retval;
+    return retval.value;
   }
 
   template <typename SchedLoopCallback, typename CondFn>
@@ -757,6 +771,15 @@ public:
     return th.serialized;
   }
 
+  void dag_prof_begin() { dag_prof_enabled_ = true; }
+  void dag_prof_end() { dag_prof_enabled_ = false; }
+
+  void dag_prof_print() const {
+    if (common::topology::my_rank() == 0) {
+      dag_prof_result_.print();
+    }
+  }
+
 private:
   struct cross_worker_task {
     void*       evacuation_ptr;
@@ -779,18 +802,11 @@ private:
     flipper     tg_version;
   };
 
-  template <typename T, typename Fn, typename... Args>
-  T invoke_fn(Fn&& fn, Args&&... args) {
-    T retval;
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
-      retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
-    } else {
-      std::forward<Fn>(fn)(std::forward<Args>(args)...);
-    }
-    return retval;
-  }
-
   void on_task_die() {
+    if (!tls_->dag_prof.is_stopped()) {
+      tls_->dag_prof.stop();
+    }
+
     // TODO: handle corner cases where cross-worker tasks finish without distributing
     // child cross-worker tasks to their owners
     if (tls_->drange.is_cross_worker()) {
@@ -850,7 +866,7 @@ private:
   }
 
   template <typename T, typename OnDriftDieCallback>
-  void on_die_workfirst(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
+  void on_die_workfirst(thread_state<T>* ts, const T& ret, OnDriftDieCallback&& on_drift_die_cb) {
     if (use_primary_wsq_) {
       auto qe = primary_wsq_.pop(tls_->dtree_node_ref.depth);
       if (qe.has_value()) {
@@ -878,17 +894,18 @@ private:
       }
     }
 
-    on_die_drifted(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
+    on_die_drifted(ts, ret, std::forward<OnDriftDieCallback>(on_drift_die_cb));
   }
 
   template <typename T, typename OnDriftDieCallback>
-  void on_die_drifted(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
+  void on_die_drifted(thread_state<T>* ts, const T& ret, OnDriftDieCallback&& on_drift_die_cb) {
     if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
       call_cb<prof_phase_sched_die, prof_phase_sched_die,
               prof_phase_cb_drift_die>(std::forward<OnDriftDieCallback>(on_drift_die_cb));
     }
 
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
+    if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
+      thread_retval<T> retval = {ret, tls_->dag_prof};
       remote_put_value(thread_state_allocator_, retval, &ts->retval);
     }
 
@@ -912,8 +929,9 @@ private:
   }
 
   template <typename T>
-  void on_root_die(thread_state<T>* ts, const T& retval) {
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
+  void on_root_die(thread_state<T>* ts, const T& ret) {
+    if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
+      thread_retval<T> retval = {ret, tls_->dag_prof};
       remote_put_value(thread_state_allocator_, retval, &ts->retval);
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
@@ -1327,6 +1345,8 @@ private:
   bool check_cross_worker_task_arrival(PreSuspendCallback&&  pre_suspend_cb,
                                        PostSuspendCallback&& post_suspend_cb) {
     if (cross_worker_mailbox_.arrived()) {
+      tls_->dag_prof.stop();
+
       auto cb_ret = call_cb<PhaseFrom, prof_phase_sched_evacuate,
                             prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
 
@@ -1356,6 +1376,8 @@ private:
         call_cb<prof_phase_sched_resume_stolen, PhaseTo,
                 prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
+
+      tls_->dag_prof.start();
 
       return true;
 
@@ -1456,6 +1478,8 @@ private:
   bool                               use_primary_wsq_     = true;
   dist_tree                          dtree_;
   dist_tree::node_ref                dtree_local_bottom_ref_;
+  bool                               dag_prof_enabled_ = false;
+  dag_profiler                       dag_prof_result_;
 };
 
 }

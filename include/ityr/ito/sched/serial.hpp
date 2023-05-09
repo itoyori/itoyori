@@ -2,13 +2,12 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/ito/util.hpp"
+#include "ityr/ito/sched/util.hpp"
 
 namespace ityr::ito {
 
 class scheduler_serial {
 public:
-  struct no_retval_t {};
-
   template <typename T>
   using thread_handler = T;
 
@@ -48,17 +47,9 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
 
-private:
-  template <typename T, typename Fn, typename... Args>
-  T invoke_fn(Fn&& fn, Args&&... args) {
-    T retval;
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
-      retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
-    } else {
-      fn(args...);
-    }
-    return retval;
-  }
+  void dag_prof_begin() {}
+  void dag_prof_end() {}
+  void dag_prof_print() const {}
 };
 
 }

@@ -13,13 +13,12 @@
 #include "ityr/ito/callstack.hpp"
 #include "ityr/ito/wsqueue.hpp"
 #include "ityr/ito/prof_events.hpp"
+#include "ityr/ito/sched/util.hpp"
 
 namespace ityr::ito {
 
 class scheduler_randws {
 public:
-  struct no_retval_t {};
-
   struct suspended_state {
     void*       evacuation_ptr;
     void*       frame_base;
@@ -227,18 +226,11 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
 
-private:
-  template <typename T, typename Fn, typename... Args>
-  T invoke_fn(Fn&& fn, Args&&... args) {
-    T retval;
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
-      retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
-    } else {
-      std::forward<Fn>(fn)(std::forward<Args>(args)...);
-    }
-    return retval;
-  }
+  void dag_prof_begin() {}
+  void dag_prof_end() {}
+  void dag_prof_print() const {}
 
+private:
   template <typename T, typename OnDriftDieCallback>
   void on_die(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
     auto qe = wsq_.pop();
@@ -279,22 +271,8 @@ private:
     resume_sched();
   }
 
-  common::topology::rank_t get_random_rank() {
-    ITYR_CHECK(common::topology::n_ranks() > 1);
-    static std::mt19937 engine(std::random_device{}());
-    static std::uniform_int_distribution<common::topology::rank_t> dist(0, common::topology::n_ranks() - 2);
-
-    auto rank = dist(engine);
-    if (rank >= common::topology::my_rank()) rank++;
-
-    ITYR_CHECK(0 <= rank);
-    ITYR_CHECK(rank != common::topology::my_rank());
-    ITYR_CHECK(rank < common::topology::n_ranks());
-    return rank;
-  }
-
   void steal() {
-    auto target_rank = get_random_rank();
+    auto target_rank = get_random_rank(0, common::topology::n_ranks() - 1);
 
     auto ibd = common::profiler::interval_begin<prof_event_sched_steal>(target_rank);
 

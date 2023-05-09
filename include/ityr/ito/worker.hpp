@@ -19,8 +19,8 @@ public:
     using retval_t = std::invoke_result_t<Fn, Args...>;
     if constexpr (std::is_void_v<retval_t>) {
       if (common::topology::my_rank() == 0) {
-        sched_.root_exec<scheduler::no_retval_t>(std::forward<SchedLoopCallback>(cb),
-                                                 std::forward<Fn>(fn), std::forward<Args>(args)...);
+        sched_.root_exec<no_retval_t>(std::forward<SchedLoopCallback>(cb),
+                                      std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
         sched_.sched_loop(std::forward<SchedLoopCallback>(cb), []{ return true; });

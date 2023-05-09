@@ -10,6 +10,11 @@ inline void print_compile_options() {
 #define ITYR_ITO_SCHEDULER randws
 #endif
   ITYR_PRINT_MACRO(ITYR_ITO_SCHEDULER);
+
+#ifndef ITYR_ITO_DAG_PROF
+#define ITYR_ITO_DAG_PROF disabled
+#endif
+  ITYR_PRINT_MACRO(ITYR_ITO_DAG_PROF);
 }
 
 struct stack_size_option : public common::option<stack_size_option, std::size_t> {

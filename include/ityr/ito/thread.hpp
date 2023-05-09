@@ -16,7 +16,7 @@ inline constexpr with_workhint_t with_workhint;
 template <typename T>
 class thread {
   // If the return value is void, set `no_retval_t` as the return type for the internal of the scheduler
-  using sched_retval_t = std::conditional_t<std::is_void_v<T>, scheduler::no_retval_t, T>;
+  using sched_retval_t = std::conditional_t<std::is_void_v<T>, no_retval_t, T>;
 
 public:
   thread() {}

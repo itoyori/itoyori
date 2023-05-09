@@ -85,6 +85,21 @@ inline void task_group_end(scheduler::task_group_data& tgdata,
                            std::forward<PostSuspendCallback>(post_suspend_cb));
 }
 
+inline void dag_prof_begin() {
+  auto& w = worker::instance::get();
+  w.sched().dag_prof_begin();
+}
+
+inline void dag_prof_end() {
+  auto& w = worker::instance::get();
+  w.sched().dag_prof_end();
+}
+
+inline void dag_prof_print() {
+  auto& w = worker::instance::get();
+  w.sched().dag_prof_print();
+}
+
 ITYR_TEST_CASE("[ityr::ito] fib") {
   init();
 
