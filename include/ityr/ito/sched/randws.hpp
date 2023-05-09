@@ -26,17 +26,31 @@ public:
   };
 
   template <typename T>
+  struct thread_retval {
+    T            value;
+    dag_profiler dag_prof;
+  };
+
+  template <typename T>
   struct thread_state {
-    T               retval;
-    int             resume_flag = 0;
-    suspended_state suspended;
+    thread_retval<T> retval;
+    int              resume_flag = 0;
+    suspended_state  suspended;
   };
 
   template <typename T>
   struct thread_handler {
     thread_state<T>* state      = nullptr;
     bool             serialized = false;
-    T                retval_ser; // return the result by value if the thread is serialized
+    thread_retval<T> retval_ser; // return the result by value if the thread is serialized
+  };
+
+  struct thread_local_storage {
+    dag_profiler dag_prof;
+  };
+
+  struct task_group_data {
+    dag_profiler dag_prof;
   };
 
   scheduler_randws()
@@ -55,14 +69,23 @@ public:
       sched_cf_ = cf;
       root_on_stack([&, ts, fn, args...]() {
         common::verbose("Starting root thread %p", ts);
+
+        tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{};
+
+        tls_->dag_prof.start();
+        tls_->dag_prof.increment_thread_count();
+        tls_->dag_prof.increment_strand_count();
+
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T retval = invoke_fn<T>(fn, args...);
+        T ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Root thread %p is completed", ts);
 
-        on_root_die(ts, retval);
+        tls_->dag_prof.stop();
+
+        on_root_die(ts, ret);
       });
     });
 
@@ -71,13 +94,17 @@ public:
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
-    T retval = ts->retval;
+    thread_retval<T> retval = ts->retval;
     std::destroy_at(ts);
     thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
 
+    if (dag_prof_enabled_) {
+      dag_prof_result_ = retval.dag_prof;
+    }
+
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
 
-    return retval;
+    return retval.value;
   }
 
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
@@ -94,18 +121,25 @@ public:
     suspend([&, ts, fn, args...](context_frame* cf) mutable {
       common::verbose<2>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
+      tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{};
+
       std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
       wsq_.push(wsqueue_entry{cf, cf_size});
+
+      tls_->dag_prof.start();
+      tls_->dag_prof.increment_thread_count();
+      tls_->dag_prof.increment_strand_count();
 
       common::verbose<2>("Starting new thread %p", ts);
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-      T retval = invoke_fn<T>(fn, args...);
+      T ret = invoke_fn<T>(fn, args...);
 
       common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
       common::verbose<2>("Thread %p is completed", ts);
 
-      on_die(ts, retval, std::forward<OnDriftDieCallback>(on_drift_die_cb));
+      on_task_die();
+      on_die(ts, ret, std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
       common::verbose<2>("Thread %p is serialized (fast path)", ts);
 
@@ -114,7 +148,7 @@ public:
       thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
       th.state      = nullptr;
       th.serialized = true;
-      th.retval_ser = retval;
+      th.retval_ser = {ret, tls_->dag_prof};
 
       common::verbose<2>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
@@ -132,13 +166,20 @@ public:
         common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
       }
     }
+
+    // restart to count only the last task in the task group
+    tls_->dag_prof.clear();
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
   }
 
   template <typename T>
   T join(thread_handler<T>& th) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_join>();
 
-    T retval;
+    on_task_die();
+
+    thread_retval<T> retval;
     if (th.serialized) {
       common::verbose<2>("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
@@ -151,7 +192,7 @@ public:
 
       if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
         common::verbose("Thread %p is already joined", ts);
-        if constexpr (!std::is_same_v<T, no_retval_t>) {
+        if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
           retval = remote_get_value(thread_state_allocator_, &ts->retval);
         }
 
@@ -180,7 +221,7 @@ public:
           common::profiler::switch_phase<prof_phase_sched_resume_join, prof_phase_sched_join>();
         }
 
-        if constexpr (!std::is_same_v<T, no_retval_t>) {
+        if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
           retval = remote_get_value(thread_state_allocator_, &ts->retval);
         }
       }
@@ -190,8 +231,10 @@ public:
       th.state = nullptr;
     }
 
+    tls_->dag_prof.merge_parallel(retval.dag_prof);
+
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
-    return retval;
+    return retval.value;
   }
 
   template <typename SchedLoopCallback, typename CondFn>
@@ -221,18 +264,45 @@ public:
     return th.serialized;
   }
 
-  struct task_group_data {};
-  task_group_data task_group_begin() { return {}; }
-  template <typename PreSuspendCallback, typename PostSuspendCallback>
-  void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
+  task_group_data task_group_begin() {
+    tls_->dag_prof.stop();
 
-  void dag_prof_begin() {}
-  void dag_prof_end() {}
-  void dag_prof_print() const {}
+    task_group_data tgdata {tls_->dag_prof};
+
+    tls_->dag_prof.clear();
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
+
+    return tgdata;
+  }
+
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void task_group_end(task_group_data& tgdata, PreSuspendCallback&&, PostSuspendCallback&&) {
+    on_task_die();
+
+    tls_->dag_prof.merge_serial(tgdata.dag_prof);
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
+  }
+
+  void dag_prof_begin() { dag_prof_enabled_ = true; }
+  void dag_prof_end() { dag_prof_enabled_ = false; }
+
+  void dag_prof_print() const {
+    if (common::topology::my_rank() == 0) {
+      dag_prof_result_.print();
+    }
+  }
 
 private:
+  void on_task_die() {
+    if (!tls_->dag_prof.is_stopped()) {
+      tls_->dag_prof.stop();
+    }
+  }
+
   template <typename T, typename OnDriftDieCallback>
-  void on_die(thread_state<T>* ts, const T& retval, OnDriftDieCallback&& on_drift_die_cb) {
+  void on_die(thread_state<T>* ts, const T& ret, OnDriftDieCallback&& on_drift_die_cb) {
     auto qe = wsq_.pop();
     bool serialized = qe.has_value();
 
@@ -243,9 +313,11 @@ private:
         common::profiler::switch_phase<prof_phase_cb_drift_die, prof_phase_sched_die>();
       }
 
-      if constexpr (!std::is_same_v<T, no_retval_t>) {
+      if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
+        thread_retval<T> retval = {ret, tls_->dag_prof};
         remote_put_value(thread_state_allocator_, retval, &ts->retval);
       }
+
       // race
       if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
         common::verbose("Win the join race for thread %p (joined thread)", ts);
@@ -261,8 +333,9 @@ private:
   }
 
   template <typename T>
-  void on_root_die(thread_state<T>* ts, const T& retval) {
-    if constexpr (!std::is_same_v<T, no_retval_t>) {
+  void on_root_die(thread_state<T>* ts, const T& ret) {
+    if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
+      thread_retval<T> retval = {ret, tls_->dag_prof};
       remote_put_value(thread_state_allocator_, retval, &ts->retval);
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
@@ -314,15 +387,19 @@ private:
 
   template <typename Fn>
   void suspend(Fn&& fn) {
-    context_frame* prev_cf_top = cf_top_;
+    context_frame*        prev_cf_top = cf_top_;
+    thread_local_storage* prev_tls    = tls_;
+
     context::save_context_with_call(prev_cf_top,
         [](context_frame* cf, void* cf_top_p, void* fn_p) {
       context_frame*& cf_top = *reinterpret_cast<context_frame**>(cf_top_p);
       Fn              fn     = *reinterpret_cast<Fn*>(fn_p); // copy closure to the new stack frame
       cf_top = cf;
       fn(cf);
-    }, &cf_top_, &fn);
+    }, &cf_top_, &fn, prev_tls);
+
     cf_top_ = prev_cf_top;
+    tls_    = prev_tls;
   }
 
   void resume(context_frame* cf) {
@@ -353,6 +430,7 @@ private:
 
   void resume_sched() {
     cf_top_ = nullptr;
+    tls_ = nullptr;
     common::verbose("Resume scheduler context");
     context::resume(sched_cf_);
   }
@@ -403,9 +481,12 @@ private:
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;
   common::remotable_resource suspended_thread_allocator_;
-  context_frame*             cf_top_               = nullptr;
-  context_frame*             sched_cf_             = nullptr;
-  MPI_Request                sched_loop_exit_req_  = MPI_REQUEST_NULL;
+  context_frame*             cf_top_              = nullptr;
+  context_frame*             sched_cf_            = nullptr;
+  MPI_Request                sched_loop_exit_req_ = MPI_REQUEST_NULL;
+  thread_local_storage*      tls_                 = nullptr;
+  bool                       dag_prof_enabled_    = false;
+  dag_profiler               dag_prof_result_;
 };
 
 }
