@@ -225,6 +225,13 @@ public:
 private:
   template <typename Fn>
   void with_read_write(Fn&& f) {
+    if constexpr (ITYR_ORI_FORCE_GETPUT) {
+      T buf {};
+      core::instance::get().get(ptr_.raw_ptr(), &buf, sizeof(T));
+      std::forward<Fn>(f)(buf);
+      core::instance::get().put(&buf, ptr_.raw_ptr(), sizeof(T));
+      return;
+    }
     core::instance::get().checkout(ptr_.raw_ptr(), sizeof(T), mode::read_write);
     std::forward<Fn>(f)(*ptr_.raw_ptr());
     core::instance::get().checkin(ptr_.raw_ptr(), sizeof(T), mode::read_write);
