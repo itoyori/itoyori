@@ -3,11 +3,6 @@
 include(CMakeFindDependencyMacro)
 
 find_dependency(MPI)
-
-include(CheckIncludeFileCXX)
-check_include_file_cxx(memory_resource HAS_STD_MEMORY_RESOURCE)
-if(NOT HAS_STD_MEMORY_RESOURCE)
-  find_dependency(Boost 1.80.0 COMPONENTS container)
-endif()
+find_dependency(Boost 1.80.0 COMPONENTS container)
 
 include("${CMAKE_CURRENT_LIST_DIR}/itoyori-targets.cmake")

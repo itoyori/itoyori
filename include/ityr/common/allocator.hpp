@@ -6,15 +6,14 @@
 #include <atomic>
 #include <sys/mman.h>
 
-#define ITYR_HAS_MEMORY_RESOURCE __has_include(<memory_resource>)
-#if ITYR_HAS_MEMORY_RESOURCE
-#include <memory_resource>
-namespace ityr::common { namespace pmr = std::pmr; }
-#else
+#if ITYR_ALLOCATOR_USE_BOOST
 #include <boost/container/pmr/memory_resource.hpp>
 #include <boost/container/pmr/unsynchronized_pool_resource.hpp>
 #include <boost/container/pmr/pool_options.hpp>
 namespace ityr::common { namespace pmr = boost::container::pmr; }
+#else
+#include <memory_resource>
+namespace ityr::common { namespace pmr = std::pmr; }
 #endif
 
 #include "ityr/common/util.hpp"

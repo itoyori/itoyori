@@ -176,7 +176,7 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
     }
   }
 
-  die("Reservation of virtual memory address failed (max_trial=%d)", max_trial);
+  die("Reservation of virtual memory address failed (size=%ld, max_trial=%d)", size, max_trial);
 }
 
 ITYR_TEST_CASE("[ityr::common::virtual_mem] allocate the same virtual memory across processes") {

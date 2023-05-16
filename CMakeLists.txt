@@ -40,11 +40,18 @@ if(MPI_CXX_LINK_FLAGS)
   target_link_options(itoyori INTERFACE ${MPI_CXX_LINK_OPTIONS})
 endif()
 
+option(ITYR_USE_BOOST_MEMORY_RESOURCE "Use boost::container::pmr instead of std::pmr" OFF)
+
 include(CheckIncludeFileCXX)
 check_include_file_cxx(memory_resource HAS_STD_MEMORY_RESOURCE)
 if(NOT HAS_STD_MEMORY_RESOURCE)
+  set(ITYR_USE_BOOST_MEMORY_RESOURCE ON)
+endif()
+
+if(ITYR_USE_BOOST_MEMORY_RESOURCE)
   find_package(Boost 1.80.0 REQUIRED COMPONENTS container)
   target_link_libraries(itoyori INTERFACE ${Boost_LIBRARIES})
+  target_compile_definitions(itoyori INTERFACE -DITYR_ALLOCATOR_USE_BOOST=1)
 endif()
 
 install(TARGETS itoyori EXPORT itoyori-targets)
@@ -80,7 +87,7 @@ install(
 )
 
 set(MAX_VERBOSE_LEVEL 0 CACHE STRING "Max verbose level for logging output")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DITYR_MAX_VERBOSE_LEVEL=${MAX_VERBOSE_LEVEL}")
+add_definitions(-DITYR_MAX_VERBOSE_LEVEL=${MAX_VERBOSE_LEVEL})
 
 include(CTest)
 if(BUILD_TESTING)
