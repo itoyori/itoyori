@@ -233,4 +233,8 @@ inline void poll() {
   core::instance::get().poll();
 }
 
+inline void collect_deallocated() {
+  core::instance::get().collect_deallocated();
+}
+
 }

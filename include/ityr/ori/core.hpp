@@ -250,6 +250,10 @@ public:
     cache_manager_.poll();
   }
 
+  void collect_deallocated() {
+    noncoll_allocator_.collect_deallocated();
+  }
+
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
@@ -630,6 +634,10 @@ public:
 
   void poll() {}
 
+  void collect_deallocated() {
+    noncoll_allocator_.collect_deallocated();
+  }
+
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
@@ -816,6 +824,8 @@ public:
   void acquire(release_handler) {}
 
   void poll() {}
+
+  void collect_deallocated() {}
 
   /* APIs for debugging */
 
