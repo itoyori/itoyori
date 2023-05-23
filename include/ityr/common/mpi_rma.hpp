@@ -370,7 +370,7 @@ private:
     ITYR_REQUIRE(reinterpret_cast<uintptr_t>(local_base) % alignof(T) == 0);
 
     for (std::size_t i = 0; i < count; i++) {
-      new (local_base + i) T(args...);
+      new (local_base + i) T{args...};
     }
     mpi_barrier(comm_);
     return span<T>{local_base, count};
