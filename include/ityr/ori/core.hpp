@@ -266,7 +266,11 @@ private:
     std::size_t sys_limit = sys_mmap_entry_limit();
     std::size_t margin = 1000;
     ITYR_CHECK(sys_limit > n_cache_blocks + margin);
-    return (sys_limit - n_cache_blocks - margin) / 2;
+
+    std::size_t candidate = (sys_limit - n_cache_blocks - margin) / 2;
+    std::size_t max_val = 1024 * 1024; // some systems may have a too large vm.max_map_count value
+
+    return std::min(max_val, candidate);
   }
 
   template <typename Mode, bool IncrementRef>
