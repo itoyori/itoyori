@@ -108,6 +108,74 @@ inline void serial_for_each(const serial_loop_options& opts,
   }
 }
 
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Fn>
+inline void serial_for_each(ForwardIterator1 first1,
+                            ForwardIterator1 last1,
+                            ForwardIterator2 first2,
+                            ForwardIterator3 first3,
+                            Fn               fn) {
+  serial_for_each(serial_loop_options{}, first1, last1, first2, first3, fn);
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Fn>
+inline void serial_for_each(const serial_loop_options& opts,
+                            ForwardIterator1           first1,
+                            ForwardIterator1           last1,
+                            ForwardIterator2           first2,
+                            ForwardIterator3           first3,
+                            Fn                         fn) {
+  if constexpr (is_global_iterator_v<ForwardIterator1>) {
+    if constexpr (ForwardIterator1::auto_checkout) {
+      auto n = std::distance(first1, last1);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first1, d), n_, [&](auto&& it1) {
+          auto it2 = std::next(first2, d);
+          auto it3 = std::next(first3, d);
+          serial_for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, &*first1, &*last1, first2, first3, fn);
+    }
+  } else if constexpr (is_global_iterator_v<ForwardIterator2>) {
+    if constexpr (ForwardIterator2::auto_checkout) {
+      auto n = std::distance(first1, last1);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first2, d), n_, [&](auto&& it2) {
+          auto it1 = std::next(first1, d);
+          auto it3 = std::next(first3, d);
+          serial_for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, first1, last1, &*first2, first3, fn);
+    }
+  } else if constexpr (is_global_iterator_v<ForwardIterator3>) {
+    if constexpr (ForwardIterator3::auto_checkout) {
+      auto n = std::distance(first1, last1);
+      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
+        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
+        with_checkout_iter(std::next(first3, d), n_, [&](auto&& it3) {
+          auto it1 = std::next(first1, d);
+          auto it2 = std::next(first2, d);
+          serial_for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
+        });
+      }
+    } else {
+      // &*: convert global_iterator -> global_ref -> global_ptr
+      serial_for_each(opts, first1, last1, first2, &*first3, fn);
+    }
+  } else {
+    for (; first1 != last1; ++first1, ++first2, ++first3) {
+      fn(*first1, *first2, *first3);
+    }
+  }
+}
+
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
   class move_only_t {
   public:
@@ -143,6 +211,21 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
                       count_iterator<long>(n),
                       [&](long i) { count += i; });
       ITYR_CHECK(count == n * (n - 1) / 2);
+
+      count = 0;
+      serial_for_each(count_iterator<long>(0),
+                      count_iterator<long>(n),
+                      count_iterator<long>(n),
+                      [&](long i, long j) { count += i + j; });
+      ITYR_CHECK(count == 2 * n * (2 * n - 1) / 2);
+
+      count = 0;
+      serial_for_each(count_iterator<long>(0),
+                      count_iterator<long>(n),
+                      count_iterator<long>(n),
+                      count_iterator<long>(2 * n),
+                      [&](long i, long j, long k) { count += i + j + k; });
+      ITYR_CHECK(count == 3 * n * (3 * n - 1) / 2);
     }
 
     ITYR_SUBCASE("vector copy") {

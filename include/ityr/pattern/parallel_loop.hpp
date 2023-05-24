@@ -63,6 +63,32 @@ inline void parallel_for_each(parallel_loop_options opts,
   parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first2);
 }
 
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Op>
+inline void parallel_for_each(ForwardIterator1      first1,
+                              ForwardIterator1      last1,
+                              ForwardIterator2      first2,
+                              ForwardIterator3      first3,
+                              Op                    op) {
+  parallel_for_each(parallel_loop_options{}, first1, last1, first2, first3, op);
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Op>
+inline void parallel_for_each(parallel_loop_options opts,
+                              ForwardIterator1      first1,
+                              ForwardIterator1      last1,
+                              ForwardIterator2      first2,
+                              ForwardIterator3      first3,
+                              Op                    op) {
+  auto serial_fn = [=](const serial_loop_options& opts_,
+                       ForwardIterator1           first1_,
+                       ForwardIterator1           last1_,
+                       ForwardIterator2           first2_,
+                       ForwardIterator3           first3_) mutable {
+    serial_for_each(opts_, first1_, last1_, first2_, first3_, op);
+  };
+  parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first2, first3);
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
   ito::init();
   ori::init();
