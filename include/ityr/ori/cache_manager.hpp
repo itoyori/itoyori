@@ -62,7 +62,7 @@ public:
     block_region br = {addr - blk_addr, addr + size - blk_addr};
 
     if constexpr (SkipFetch) {
-      cb.fresh_regions.add(br);
+      cb.valid_regions.add(br);
     } else {
       if (fetch_begin(cb, br)) {
         fetch_complete(cb.win);
@@ -106,7 +106,7 @@ public:
     block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
 
     if constexpr (SkipFetch) {
-      cb.fresh_regions.add(br);
+      cb.valid_regions.add(br);
     } else {
       if (fetch_begin(cb, br)) {
         fetching_ = true;
@@ -321,7 +321,7 @@ private:
     std::size_t              pm_offset       = 0;
     int                      ref_count       = 0;
     writeback_epoch_t        writeback_epoch = 0;
-    block_regions            fresh_regions;
+    block_regions            valid_regions;
     block_regions            dirty_regions;
     cache_manager*           outer;
 
@@ -334,7 +334,7 @@ private:
     void invalidate() {
       ITYR_CHECK(!is_writing_back());
       ITYR_CHECK(dirty_regions.empty());
-      fresh_regions.clear();
+      valid_regions.clear();
       ITYR_CHECK(is_evictable());
 
       common::verbose<3>("Cache block %ld for [%p, %p) invalidated",
@@ -419,7 +419,7 @@ private:
   bool fetch_begin(cache_block& cb, block_region br) {
     ITYR_CHECK(cb.owner < common::topology::n_ranks());
 
-    if (cb.fresh_regions.include(br)) {
+    if (cb.valid_regions.include(br)) {
       // fast path (the requested region is already fetched)
       return false;
     }
@@ -429,7 +429,7 @@ private:
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
 
     // fetch only nondirty sections
-    for (auto [blk_offset_b, blk_offset_e] : cb.fresh_regions.inverse(br_pad)) {
+    for (auto [blk_offset_b, blk_offset_e] : cb.valid_regions.inverse(br_pad)) {
       ITYR_CHECK(cb.entry_idx < cs_.num_entries());
 
       std::byte*  addr      = cache_begin + cb.entry_idx * BlockSize + blk_offset_b;
@@ -443,7 +443,7 @@ private:
       common::mpi_get_nb(addr, size, cb.owner, pm_offset, cb.win);
     }
 
-    cb.fresh_regions.add(br_pad);
+    cb.valid_regions.add(br_pad);
 
     return true;
   }
@@ -491,7 +491,7 @@ private:
 
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
 
-    for (auto [blk_offset_b, blk_offset_e] : cb.dirty_regions.get()) {
+    for (auto [blk_offset_b, blk_offset_e] : cb.dirty_regions) {
       ITYR_CHECK(cb.entry_idx < cs_.num_entries());
 
       std::byte*  addr      = cache_begin + cb.entry_idx * BlockSize + blk_offset_b;

@@ -19,6 +19,8 @@ struct block_region {
     end   = static_cast<block_size_t>(e);
   }
 
+  std::size_t size() const { return end - begin; }
+
   block_size_t begin;
   block_size_t end;
 };
@@ -56,6 +58,13 @@ public:
     : regions_(regions) {}
 
   auto& get() { return regions_; }
+  const auto& get() const { return regions_; }
+
+  auto begin() { return regions_.begin(); }
+  auto end() { return regions_.end(); }
+
+  auto begin() const { return regions_.begin(); }
+  auto end() const { return regions_.end(); }
 
   bool empty() const {
     return regions_.empty();
@@ -122,7 +131,7 @@ public:
     }
   }
 
-  bool include(block_region br) {
+  bool include(block_region br) const {
     for (const auto& br_ : regions_) {
       if (br.begin < br_.begin) break;
       if (br.end <= br_.end) return true;
@@ -130,12 +139,14 @@ public:
     return false;
   }
 
-  auto inverse(block_region br) {
-    std::forward_list<block_region> ret;
-    auto it = ret.before_begin();
+  block_regions inverse(block_region br) const {
+    block_regions ret;
+    std::forward_list<block_region>& regs = ret.regions_;
+
+    auto it = regs.before_begin();
     for (auto [b, e] : regions_) {
       if (br.begin < b) {
-        it = ret.insert_after(it, {br.begin, std::min(b, br.end)});
+        it = regs.insert_after(it, {br.begin, std::min(b, br.end)});
       }
       if (br.begin < e) {
         br.begin = e;
@@ -143,7 +154,15 @@ public:
       }
     }
     if (br.begin < br.end) {
-      ret.insert_after(it, br);
+      regs.insert_after(it, br);
+    }
+    return ret;
+  }
+
+  std::size_t size() const {
+    std::size_t ret = 0;
+    for (auto&& reg : regions_) {
+      ret += reg.size();
     }
     return ret;
   }
@@ -152,66 +171,99 @@ private:
   std::forward_list<block_region> regions_;
 };
 
+inline bool operator==(const block_regions& brs1, const block_regions& brs2) noexcept {
+  return brs1.get() == brs2.get();
+}
+
+inline bool operator!=(const block_regions& brs1, const block_regions& brs2) noexcept {
+  return !(brs1 == brs2);
+}
+
+inline block_regions get_intersection(const block_regions& brs1, const block_regions& brs2) {
+  block_regions ret;
+  std::forward_list<block_region>& regs = ret.get();
+
+  auto it_ret = regs.before_begin();
+  auto it1 = brs1.begin();
+  auto it2 = brs2.begin();
+
+  while (it1 != brs1.end() && it2 != brs2.end()) {
+    if (it1->end <= it2->begin) {
+      it1++;
+      continue;
+    }
+
+    if (it2->end <= it1->begin) {
+      it2++;
+      continue;
+    }
+
+    it_ret = regs.insert_after(it_ret, get_intersection(*it1, *it2));
+
+    if (it1->end <= it2->end) {
+      it1++;
+    } else {
+      it2++;
+    }
+  }
+
+  return ret;
+}
+
 ITYR_TEST_CASE("[ityr::ori::block_regions] add") {
   block_regions brs;
-  auto check_equal = [&](std::forward_list<block_region> ans) {
-    ITYR_CHECK(brs.get() == ans);
-  };
   brs.add({2, 5});
-  check_equal({{2, 5}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}}));
   brs.add({11, 20});
-  check_equal({{2, 5}, {11, 20}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {11, 20}}));
   brs.add({20, 21});
-  check_equal({{2, 5}, {11, 21}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {11, 21}}));
   brs.add({15, 23});
-  check_equal({{2, 5}, {11, 23}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {11, 23}}));
   brs.add({8, 23});
-  check_equal({{2, 5}, {8, 23}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {8, 23}}));
   brs.add({7, 25});
-  check_equal({{2, 5}, {7, 25}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {7, 25}}));
   brs.add({0, 7});
-  check_equal({{0, 25}});
+  ITYR_CHECK(brs == (block_regions{{0, 25}}));
   brs.add({30, 50});
-  check_equal({{0, 25}, {30, 50}});
+  ITYR_CHECK(brs == (block_regions{{0, 25}, {30, 50}}));
   brs.add({30, 50});
-  check_equal({{0, 25}, {30, 50}});
+  ITYR_CHECK(brs == (block_regions{{0, 25}, {30, 50}}));
   brs.add({35, 45});
-  check_equal({{0, 25}, {30, 50}});
+  ITYR_CHECK(brs == (block_regions{{0, 25}, {30, 50}}));
   brs.add({60, 100});
-  check_equal({{0, 25}, {30, 50}, {60, 100}});
+  ITYR_CHECK(brs == (block_regions{{0, 25}, {30, 50}, {60, 100}}));
   brs.add({0, 120});
-  check_equal({{0, 120}});
+  ITYR_CHECK(brs == (block_regions{{0, 120}}));
   brs.add({200, 300});
-  check_equal({{0, 120}, {200, 300}});
+  ITYR_CHECK(brs == (block_regions{{0, 120}, {200, 300}}));
   brs.add({600, 700});
-  check_equal({{0, 120}, {200, 300}, {600, 700}});
+  ITYR_CHECK(brs == (block_regions{{0, 120}, {200, 300}, {600, 700}}));
   brs.add({400, 500});
-  check_equal({{0, 120}, {200, 300}, {400, 500}, {600, 700}});
+  ITYR_CHECK(brs == (block_regions{{0, 120}, {200, 300}, {400, 500}, {600, 700}}));
   brs.add({300, 600});
-  check_equal({{0, 120}, {200, 700}});
+  ITYR_CHECK(brs == (block_regions{{0, 120}, {200, 700}}));
   brs.add({50, 600});
-  check_equal({{0, 700}});
+  ITYR_CHECK(brs == (block_regions{{0, 700}}));
 }
 
 ITYR_TEST_CASE("[ityr::ori::block_regions] remove") {
   block_regions brs{{2, 5}, {6, 9}, {11, 20}, {50, 100}};
-  auto check_equal = [&](std::forward_list<block_region> ans) {
-    ITYR_CHECK(brs.get() == ans);
-  };
   brs.remove({6, 9});
-  check_equal({{2, 5}, {11, 20}, {50, 100}});
+  ITYR_CHECK(brs == (block_regions{{2, 5}, {11, 20}, {50, 100}}));
   brs.remove({4, 10});
-  check_equal({{2, 4}, {11, 20}, {50, 100}});
+  ITYR_CHECK(brs == (block_regions{{2, 4}, {11, 20}, {50, 100}}));
   brs.remove({70, 80});
-  check_equal({{2, 4}, {11, 20}, {50, 70}, {80, 100}});
+  ITYR_CHECK(brs == (block_regions{{2, 4}, {11, 20}, {50, 70}, {80, 100}}));
   brs.remove({18, 55});
-  check_equal({{2, 4}, {11, 18}, {55, 70}, {80, 100}});
+  ITYR_CHECK(brs == (block_regions{{2, 4}, {11, 18}, {55, 70}, {80, 100}}));
   brs.remove({10, 110});
-  check_equal({{2, 4}});
+  ITYR_CHECK(brs == (block_regions{{2, 4}}));
   brs.remove({2, 4});
-  check_equal({});
+  ITYR_CHECK(brs == (block_regions{}));
   brs.remove({2, 4});
-  check_equal({});
+  ITYR_CHECK(brs == (block_regions{}));
 }
 
 ITYR_TEST_CASE("[ityr::ori::block_regions] include") {
@@ -231,17 +283,32 @@ ITYR_TEST_CASE("[ityr::ori::block_regions] include") {
 
 ITYR_TEST_CASE("[ityr::ori::block_regions] inverse") {
   block_regions brs{{2, 5}, {6, 9}, {11, 20}, {50, 100}};
-  ITYR_CHECK(brs.inverse({0, 120}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 50}, {100, 120}}).get());
-  ITYR_CHECK(brs.inverse({0, 100}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 50}}).get());
-  ITYR_CHECK(brs.inverse({0, 25}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 25}}).get());
-  ITYR_CHECK(brs.inverse({8, 15}) == block_regions({{9, 11}}).get());
-  ITYR_CHECK(brs.inverse({30, 40}) == block_regions({{30, 40}}).get());
-  ITYR_CHECK(brs.inverse({50, 100}) == block_regions({}).get());
-  ITYR_CHECK(brs.inverse({60, 90}) == block_regions({}).get());
-  ITYR_CHECK(brs.inverse({2, 5}) == block_regions({}).get());
-  ITYR_CHECK(brs.inverse({2, 6}) == block_regions({{5, 6}}).get());
+  ITYR_CHECK(brs.inverse({0, 120}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 50}, {100, 120}}));
+  ITYR_CHECK(brs.inverse({0, 100}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 50}}));
+  ITYR_CHECK(brs.inverse({0, 25}) == block_regions({{0, 2}, {5, 6}, {9, 11}, {20, 25}}));
+  ITYR_CHECK(brs.inverse({8, 15}) == block_regions({{9, 11}}));
+  ITYR_CHECK(brs.inverse({30, 40}) == block_regions({{30, 40}}));
+  ITYR_CHECK(brs.inverse({50, 100}) == block_regions({}));
+  ITYR_CHECK(brs.inverse({60, 90}) == block_regions({}));
+  ITYR_CHECK(brs.inverse({2, 5}) == block_regions({}));
+  ITYR_CHECK(brs.inverse({2, 6}) == block_regions({{5, 6}}));
   block_regions brs_empty{};
-  ITYR_CHECK(brs_empty.inverse({0, 100}) == block_regions({{0, 100}}).get());
+  ITYR_CHECK(brs_empty.inverse({0, 100}) == block_regions({{0, 100}}));
+}
+
+ITYR_TEST_CASE("[ityr::ori::block_regions] intersection") {
+  ITYR_CHECK((get_intersection(block_regions{{2, 5}, {11, 20}, {25, 27}, {50, 100}},
+                               block_regions{{3, 4}, {9, 15}, {16, 19}, {50, 100}})) ==
+             (block_regions{{3, 4}, {11, 15}, {16, 19}, {50, 100}}));
+  ITYR_CHECK((get_intersection(block_regions{},
+                               block_regions{{3, 4}, {9, 15}, {16, 19}, {50, 100}})) ==
+             (block_regions{}));
+  ITYR_CHECK((get_intersection(block_regions{{2, 5}, {11, 20}, {25, 27}, {50, 100}},
+                               block_regions{})) ==
+             (block_regions{}));
+  ITYR_CHECK((get_intersection(block_regions{},
+                               block_regions{})) ==
+             (block_regions{}));
 }
 
 }
