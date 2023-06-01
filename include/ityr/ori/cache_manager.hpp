@@ -64,8 +64,8 @@ public:
     block_region br = {addr - blk_addr, addr + size - blk_addr};
 
     if constexpr (SkipFetch) {
+      cprof_.record_writeonly(cb.entry_idx, br, cb.valid_regions);
       cb.valid_regions.add(br);
-      cprof_.record(cb.entry_idx, br, {}); // TODO: special treatment for cache hits for write-only access
     } else {
       if (fetch_begin(cb, br)) {
         fetch_complete(cb.win);
@@ -109,8 +109,8 @@ public:
     block_region br = {req_addr_b - blk_addr, req_addr_e - blk_addr};
 
     if constexpr (SkipFetch) {
+      cprof_.record_writeonly(cb.entry_idx, br, cb.valid_regions);
       cb.valid_regions.add(br);
-      cprof_.record(cb.entry_idx, br, {});
     } else {
       if (fetch_begin(cb, br)) {
         fetching_ = true;
