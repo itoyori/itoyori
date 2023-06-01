@@ -313,7 +313,7 @@ public:
     std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
   }
 
-  void cache_prof_begin() { cprof_.start(); }
+  void cache_prof_begin() { invalidate_all(); cprof_.start(); }
   void cache_prof_end() { cprof_.stop(); }
   void cache_prof_print() const { cprof_.print(); }
 
@@ -340,12 +340,12 @@ private:
     }
 
     void invalidate() {
+      outer->cprof_.invalidate(entry_idx, valid_regions);
+
       ITYR_CHECK(!is_writing_back());
       ITYR_CHECK(dirty_regions.empty());
       valid_regions.clear();
       ITYR_CHECK(is_evictable());
-
-      outer->cprof_.clear(entry_idx);
 
       common::verbose<3>("Cache block %ld for [%p, %p) invalidated",
                          entry_idx, addr, addr + BlockSize);
