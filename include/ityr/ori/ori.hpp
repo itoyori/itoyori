@@ -237,4 +237,16 @@ inline void collect_deallocated() {
   core::instance::get().collect_deallocated();
 }
 
+inline void cache_prof_begin() {
+  core::instance::get().cache_prof_begin();
+}
+
+inline void cache_prof_end() {
+  core::instance::get().cache_prof_end();
+}
+
+inline void cache_prof_print() {
+  core::instance::get().cache_prof_print();
+}
+
 }

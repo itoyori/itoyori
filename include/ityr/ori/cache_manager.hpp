@@ -17,6 +17,7 @@
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
 #include "ityr/ori/release_manager.hpp"
+#include "ityr/ori/cache_profiler.hpp"
 
 namespace ityr::ori {
 
@@ -34,7 +35,8 @@ public:
       pm_(init_cache_pm()),
       cs_(cache_size / BlockSize, cache_block(this)),
       win_(common::topology::mpicomm(), reinterpret_cast<std::byte*>(vm_.addr()), vm_.size()),
-      max_dirty_cache_blocks_(max_dirty_cache_size_option::value() / BlockSize) {
+      max_dirty_cache_blocks_(max_dirty_cache_size_option::value() / BlockSize),
+      cprof_(cs_.num_entries()) {
     ITYR_CHECK(cache_size_ > 0);
     ITYR_CHECK(common::is_pow2(cache_size_));
     ITYR_CHECK(cache_size_ % BlockSize == 0);
@@ -63,6 +65,7 @@ public:
 
     if constexpr (SkipFetch) {
       cb.valid_regions.add(br);
+      cprof_.record(cb.entry_idx, br, {}); // TODO: special treatment for cache hits for write-only access
     } else {
       if (fetch_begin(cb, br)) {
         fetch_complete(cb.win);
@@ -107,6 +110,7 @@ public:
 
     if constexpr (SkipFetch) {
       cb.valid_regions.add(br);
+      cprof_.record(cb.entry_idx, br, {});
     } else {
       if (fetch_begin(cb, br)) {
         fetching_ = true;
@@ -309,6 +313,10 @@ public:
     std::memcpy(to_addr, from_addr, req_addr_e - req_addr_b);
   }
 
+  void cache_prof_begin() { cprof_.start(); }
+  void cache_prof_end() { cprof_.stop(); }
+  void cache_prof_print() const { cprof_.print(); }
+
 private:
   using writeback_epoch_t = uint64_t;
 
@@ -336,6 +344,8 @@ private:
       ITYR_CHECK(dirty_regions.empty());
       valid_regions.clear();
       ITYR_CHECK(is_evictable());
+
+      outer->cprof_.clear(entry_idx);
 
       common::verbose<3>("Cache block %ld for [%p, %p) invalidated",
                          entry_idx, addr, addr + BlockSize);
@@ -421,6 +431,7 @@ private:
 
     if (cb.valid_regions.include(br)) {
       // fast path (the requested region is already fetched)
+      cprof_.record(cb.entry_idx, br, {});
       return false;
     }
 
@@ -428,8 +439,10 @@ private:
 
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
 
+    block_regions fetch_regions = cb.valid_regions.inverse(br_pad);
+
     // fetch only nondirty sections
-    for (auto [blk_offset_b, blk_offset_e] : cb.valid_regions.inverse(br_pad)) {
+    for (auto [blk_offset_b, blk_offset_e] : fetch_regions) {
       ITYR_CHECK(cb.entry_idx < cs_.num_entries());
 
       std::byte*  addr      = cache_begin + cb.entry_idx * BlockSize + blk_offset_b;
@@ -444,6 +457,8 @@ private:
     }
 
     cb.valid_regions.add(br_pad);
+
+    cprof_.record(cb.entry_idx, br, fetch_regions);
 
     return true;
   }
@@ -577,6 +592,8 @@ private:
 
   // A release epoch is an interval between the events when all cache become clean.
   release_manager                        rm_;
+
+  cache_profiler                         cprof_;
 };
 
 }

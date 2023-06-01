@@ -65,6 +65,7 @@ inline common::wallclock::wallclock_t gettime_ns() {
 }
 
 inline void profiler_begin() {
+  ori::cache_prof_begin();
   ito::dag_prof_begin();
   common::profiler::begin();
 }
@@ -72,11 +73,13 @@ inline void profiler_begin() {
 inline void profiler_end() {
   common::profiler::end();
   ito::dag_prof_end();
+  ori::cache_prof_end();
 }
 
 inline void profiler_flush() {
   common::profiler::flush();
   ito::dag_prof_print();
+  ori::cache_prof_print();
 }
 
 inline void print_compile_options() {

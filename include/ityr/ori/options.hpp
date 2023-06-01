@@ -40,6 +40,11 @@ inline void print_compile_options() {
 #define ITYR_ORI_FORCE_GETPUT false
 #endif
   ITYR_PRINT_MACRO(ITYR_ORI_FORCE_GETPUT);
+
+#ifndef ITYR_ORI_CACHE_PROF
+#define ITYR_ORI_CACHE_PROF disabled
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_CACHE_PROF);
 }
 
 struct cache_size_option : public common::option<cache_size_option, std::size_t> {

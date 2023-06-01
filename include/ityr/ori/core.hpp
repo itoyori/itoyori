@@ -254,6 +254,18 @@ public:
     noncoll_allocator_.collect_deallocated();
   }
 
+  void cache_prof_begin() {
+    cache_manager_.cache_prof_begin();
+  }
+
+  void cache_prof_end() {
+    cache_manager_.cache_prof_end();
+  }
+
+  void cache_prof_print() const {
+    cache_manager_.cache_prof_print();
+  }
+
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
@@ -642,6 +654,10 @@ public:
     noncoll_allocator_.collect_deallocated();
   }
 
+  void cache_prof_begin() {}
+  void cache_prof_end() {}
+  void cache_prof_print() const {}
+
   /* APIs for debugging */
 
   void* get_local_mem(void* addr) {
@@ -830,6 +846,10 @@ public:
   void poll() {}
 
   void collect_deallocated() {}
+
+  void cache_prof_begin() {}
+  void cache_prof_end() {}
+  void cache_prof_print() const {}
 
   /* APIs for debugging */
 
