@@ -13,6 +13,7 @@
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
+#include "ityr/ori/home_profiler.hpp"
 
 namespace ityr::ori {
 
@@ -46,12 +47,16 @@ public:
       me.ref_count++;
     }
 
+    hprof_.record(size, true);
+
     return true;
   }
 
   template <bool IncrementRef>
   void checkout_seg(std::byte*                  seg_addr,
                     std::size_t                 seg_size,
+                    std::byte*                  req_addr, // only required for profiling
+                    std::size_t                 req_size, // only required for profiling
                     const common::physical_mem& pm,
                     std::size_t                 pm_offset) {
     ITYR_CHECK(seg_addr);
@@ -63,7 +68,8 @@ public:
 
     mmap_entry& me = get_entry(seg_addr);
 
-    if (seg_addr != me.mapped_addr) {
+    bool mmap_hit = seg_addr == me.mapped_addr;
+    if (!mmap_hit) {
       me.addr      = seg_addr;
       me.size      = seg_size;
       me.pm        = &pm;
@@ -76,6 +82,8 @@ public:
     }
 
     home_tlb_.add({seg_addr, seg_size}, &me);
+
+    hprof_.record(seg_addr, seg_size, req_addr, req_size, mmap_hit);
   }
 
   template <bool DecrementRef>
@@ -136,6 +144,15 @@ public:
 
     cs_.ensure_evicted(cache_key(addr));
   }
+
+  void on_checkout_noncoll(std::size_t size) {
+    // Home blocks are always mapped to the local view for noncoll memory
+    hprof_.record(size, true);
+  }
+
+  void home_prof_begin() { hprof_.start(); }
+  void home_prof_end() { hprof_.stop(); }
+  void home_prof_print() const { hprof_.print(); }
 
 private:
   using cache_key_t = uintptr_t;
@@ -206,6 +223,7 @@ private:
   cache_system<cache_key_t, mmap_entry>     cs_;
   tlb<common::span<std::byte>, mmap_entry*> home_tlb_;
   std::vector<mmap_entry*>                  home_segments_to_map_;
+  home_profiler                             hprof_;
 };
 
 }

@@ -255,14 +255,17 @@ public:
   }
 
   void cache_prof_begin() {
+    home_manager_.home_prof_begin();
     cache_manager_.cache_prof_begin();
   }
 
   void cache_prof_end() {
+    home_manager_.home_prof_end();
     cache_manager_.cache_prof_end();
   }
 
   void cache_prof_print() const {
+    home_manager_.home_prof_print();
     cache_manager_.cache_prof_print();
   }
 
@@ -311,7 +314,7 @@ private:
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         home_manager_.template checkout_seg<IncrementRef>(
-            seg_addr, seg_size,
+            seg_addr, seg_size, addr, size,
             cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset);
       },
       // cache block
@@ -337,6 +340,7 @@ private:
     if (common::topology::is_locally_accessible(target_rank)) {
       // There is no need to manage mmap entries for home blocks because
       // the remotable allocator employs block distribution policy.
+      home_manager_.on_checkout_noncoll(size);
       return;
     }
 
