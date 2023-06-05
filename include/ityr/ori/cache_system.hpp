@@ -47,14 +47,14 @@ public:
       ce.allocated = true;
       ce.key = key;
       table_[key] = idx;
-      if (UpdateLRU) {
+      if constexpr (UpdateLRU) {
         move_to_back_lru(ce);
       }
       return ce.entry;
     } else {
       cache_entry_idx_t idx = it->second;
       cache_entry& ce = entries_[idx];
-      if (UpdateLRU) {
+      if constexpr (UpdateLRU) {
         move_to_back_lru(ce);
       }
       return ce.entry;
