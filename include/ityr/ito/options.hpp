@@ -71,6 +71,12 @@ struct adws_max_dtree_reuse_option : public common::option<adws_max_dtree_reuse_
   static int default_value() { return 10; }
 };
 
+struct adws_min_drange_size_option : public common::option<adws_min_drange_size_option, double> {
+  using option::option;
+  static std::string name() { return "ITYR_ITO_ADWS_MIN_DRANGE_SIZE"; }
+  static double default_value() { return 0.01; }
+};
+
 struct runtime_options {
   common::option_initializer<stack_size_option>                      ITYR_ANON_VAR;
   common::option_initializer<wsqueue_capacity_option>                ITYR_ANON_VAR;
@@ -81,6 +87,7 @@ struct runtime_options {
   common::option_initializer<adws_wsqueue_capacity_option>           ITYR_ANON_VAR;
   common::option_initializer<adws_max_depth_option>                  ITYR_ANON_VAR;
   common::option_initializer<adws_max_dtree_reuse_option>            ITYR_ANON_VAR;
+  common::option_initializer<adws_min_drange_size_option>            ITYR_ANON_VAR;
 };
 
 }

@@ -67,6 +67,10 @@ public:
     return static_cast<value_type>(static_cast<common::topology::rank_t>(end_)) == end_;
   }
 
+  void move_to_end_boundary() {
+    end_ = static_cast<value_type>(static_cast<common::topology::rank_t>(end_));
+  }
+
   template <typename T>
   std::pair<dist_range, dist_range> divide(T r1, T r2) const {
     value_type at = begin_ + (end_ - begin_) * r1 / (r1 + r2);
@@ -93,6 +97,10 @@ public:
 
   void make_non_cross_worker() {
     end_ = begin_;
+  }
+
+  bool is_sufficiently_small() const {
+    return (end_ - begin_) < adws_min_drange_size_option::value();
   }
 
 private:
@@ -491,6 +499,11 @@ public:
     dist_range new_drange;
     common::topology::rank_t target_rank;
     if (tls_->drange.is_cross_worker()) {
+      // Avoid too fine-grained task migration
+      if (tls_->drange.is_sufficiently_small()) {
+        tls_->drange.move_to_end_boundary();
+      }
+
       auto [dr_rest, dr_new] = tls_->drange.divide(w_rest, w_new);
 
       common::verbose("Distribution range [%f, %f) is divided into [%f, %f) and [%f, %f)",
