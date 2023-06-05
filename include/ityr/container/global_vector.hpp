@@ -245,12 +245,12 @@ private:
         parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
                           make_global_iterator(b, ori::mode::write),
                           make_global_iterator(e, ori::mode::write),
-                          [=](T& x) { new (&x) T{args...}; });
+                          [=](T& x) { new (&x) T(args...); });
       } else {
         serial_for_each({.checkout_count = opts_.cutoff_count},
                         make_global_iterator(b, ori::mode::write),
                         make_global_iterator(e, ori::mode::write),
-                        [&](T& x) { new (&x) T{args...}; });
+                        [&](T& x) { new (&x) T(args...); });
       }
     });
   }
@@ -263,13 +263,13 @@ private:
                           first,
                           last,
                           make_global_iterator(b, ori::mode::write),
-                          [](auto&& src, T& x) { new (&x) T{std::forward<decltype(src)>(src)}; });
+                          [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
       } else {
         serial_for_each({.checkout_count = opts_.cutoff_count},
                         first,
                         last,
                         make_global_iterator(b, ori::mode::write),
-                        [](auto&& src, T& x) { new (&x) T{std::forward<decltype(src)>(src)}; });
+                        [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
       }
     });
   }
@@ -338,7 +338,7 @@ private:
       realloc_mem(new_cap);
     }
     ori::with_checkout(end(), 1, ori::mode::write,
-                       [&](T* p) { new (p) T{std::forward<Args>(args)...}; });
+                       [&](T* p) { new (p) T(std::forward<Args>(args)...); });
     ++end_;
   }
 
