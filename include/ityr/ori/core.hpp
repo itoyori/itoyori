@@ -196,6 +196,9 @@ public:
     common::verbose<2>("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
                        str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
+
     checkout_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
 
@@ -210,6 +213,9 @@ public:
     ITYR_PROFILER_RECORD(prof_event_checkin);
     common::verbose<2>("Checkin request (mode: %s) for [%p, %p) (%ld bytes)",
                        str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
+
+    ITYR_CHECK(addr);
+    ITYR_CHECK(size > 0);
 
     checkin_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }

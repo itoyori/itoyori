@@ -170,6 +170,8 @@ inline void checkin(T* raw_ptr, std::size_t count, mode::read_write_t) {
 
 template <typename T, typename Mode, typename Fn>
 inline auto with_checkout(global_ptr<T> ptr, std::size_t count, Mode, Fn&& fn) {
+  ITYR_CHECK(ptr);
+  ITYR_CHECK(count > 0);
   // TODO: use smart-pointer-like class to automatically call checkin at destructor
   auto raw_ptr = checkout(ptr, count, Mode{});
   if constexpr (std::is_void_v<std::invoke_result_t<Fn, decltype(raw_ptr)>>) {
