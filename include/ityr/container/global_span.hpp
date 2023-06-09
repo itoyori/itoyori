@@ -21,13 +21,14 @@ public:
 
   global_span() {}
   template <typename ContiguousIterator>
-  global_span(ContiguousIterator first, size_type n)
+  explicit global_span(ContiguousIterator first, size_type n)
     : ptr_(&(*first)), n_(n) {}
   template <typename ContiguousIterator>
-  global_span(ContiguousIterator first, ContiguousIterator last)
+  explicit global_span(ContiguousIterator first, ContiguousIterator last)
     : ptr_(&(*first)), n_(last - first) {}
   template <typename U>
-  global_span(global_span<U> s) : ptr_(s.data()), n_(s.size() * sizeof(U) / sizeof(T)) {}
+  explicit global_span(const global_span<U>& s)
+    : ptr_(s.data()), n_(s.size()) { static_assert(sizeof(U) == sizeof(T)); }
 
   constexpr pointer data() const noexcept { return ptr_; }
   constexpr size_type size() const noexcept { return n_; }
@@ -44,7 +45,7 @@ public:
 
   constexpr this_t subspan(size_type offset, size_type count) const {
     assert(offset + count <= n_);
-    return {ptr_ + offset, count};
+    return this_t{ptr_ + offset, count};
   }
 
 private:

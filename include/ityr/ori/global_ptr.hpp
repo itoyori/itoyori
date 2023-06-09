@@ -42,11 +42,11 @@ public:
   bool operator!() const noexcept { return raw_ptr_ == nullptr; }
 
   reference operator*() const noexcept {
-    return *this;
+    return reference(*this);
   }
 
   reference operator[](difference_type diff) const noexcept {
-    return this_t(raw_ptr_ + diff);
+    return reference(this_t(raw_ptr_ + diff));
   }
 
   this_t& operator+=(difference_type diff) {
@@ -75,11 +75,6 @@ public:
 
   difference_type operator-(const this_t& p) const noexcept {
     return raw_ptr_ - p.raw_ptr();
-  }
-
-  template <typename U>
-  explicit operator global_ptr<U>() const noexcept {
-    return global_ptr<U>(reinterpret_cast<U*>(raw_ptr_));
   }
 
   void swap(this_t& p) noexcept {
@@ -145,13 +140,33 @@ inline void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
   p1.swap(p2);
 }
 
+template <typename T, typename U>
+global_ptr<T> static_pointer_cast(const global_ptr<U>& p) noexcept {
+  return global_ptr<T>(static_cast<T*>(p.raw_ptr()));
+}
+
+template <typename T, typename U>
+global_ptr<T> dynamic_pointer_cast(const global_ptr<U>& p) noexcept {
+  return global_ptr<T>(dynamic_cast<T*>(p.raw_ptr()));
+}
+
+template <typename T, typename U>
+global_ptr<T> const_pointer_cast(const global_ptr<U>& p) noexcept {
+  return global_ptr<T>(const_cast<T*>(p.raw_ptr()));
+}
+
+template <typename T, typename U>
+global_ptr<T> reinterpret_pointer_cast(const global_ptr<U>& p) noexcept {
+  return global_ptr<T>(reinterpret_cast<T*>(p.raw_ptr()));
+}
+
 template <typename T>
 class global_ref {
   using this_t = global_ref<T>;
 
 public:
-  global_ref(const global_ptr<T>& p) : ptr_(p) {}
-  global_ref(const this_t& r) : ptr_(r.ptr_) {}
+  explicit global_ref(const global_ptr<T>& p) : ptr_(p) {}
+  global_ref(const this_t& r) = default;
 
   global_ptr<T> operator&() const noexcept { return ptr_; }
 
@@ -246,11 +261,10 @@ inline void swap(global_ref<T> r1, global_ref<T> r2) {
 }
 
 template <typename T, typename MemberT>
-inline global_ref<std::remove_extent_t<MemberT>>
-operator->*(global_ptr<T> ptr, MemberT T::* mp) {
+inline auto operator->*(global_ptr<T> ptr, MemberT T::* mp) {
   using member_t = std::remove_extent_t<MemberT>;
   member_t* member_ptr = reinterpret_cast<member_t*>(std::addressof(ptr.raw_ptr()->*mp));
-  return global_ptr<member_t>(member_ptr);
+  return global_ref<std::remove_extent_t<MemberT>>(global_ptr<member_t>(member_ptr));
 }
 
 template <typename>
@@ -365,10 +379,10 @@ ITYR_TEST_CASE("[ityr::ori::global_ptr] global pointer manipulation") {
   }
 
   ITYR_SUBCASE("cast") {
-    ITYR_CHECK(global_ptr<char>(reinterpret_cast<char*>(p1.raw_ptr())) == static_cast<global_ptr<char>>(p1));
-    ITYR_CHECK(static_cast<global_ptr<char>>(p1 + 4) == static_cast<global_ptr<char>>(p1) + 4 * sizeof(int));
-    global_ptr<const int> p1_const(p1);
-    ITYR_CHECK(static_cast<global_ptr<const int>>(p1) == p1_const);
+    ITYR_CHECK(global_ptr<char>(reinterpret_cast<char*>(p1.raw_ptr())) == reinterpret_pointer_cast<char>(p1));
+    ITYR_CHECK(reinterpret_pointer_cast<char>(p1 + 4) == reinterpret_pointer_cast<char>(p1) + 4 * sizeof(int));
+    global_ptr<const int> p1_const(const_pointer_cast<const int>(p1));
+    ITYR_CHECK(reinterpret_pointer_cast<const int>(p1) == p1_const);
   }
 
   ITYR_SUBCASE("swap") {

@@ -95,8 +95,8 @@ public:
   iterator begin() const noexcept { return begin_; }
   iterator end() const noexcept { return end_; }
 
-  const_iterator cbegin() const noexcept { return const_iterator(begin_); }
-  const_iterator cend() const noexcept { return const_iterator(end_); }
+  const_iterator cbegin() const noexcept { return ori::const_pointer_cast<std::add_const_t<T>>(begin_); }
+  const_iterator cend() const noexcept { return ori::const_pointer_cast<std::add_const_t<T>>(end_); }
 
   reference operator[](size_type i) const {
     ITYR_CHECK(i <= size());
