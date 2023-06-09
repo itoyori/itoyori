@@ -3,6 +3,6 @@
 include(CMakeFindDependencyMacro)
 
 find_dependency(MPI)
-find_dependency(Boost 1.80.0 COMPONENTS container)
+find_package(Boost 1.80.0 COMPONENTS container)
 
 include("${CMAKE_CURRENT_LIST_DIR}/itoyori-targets.cmake")
