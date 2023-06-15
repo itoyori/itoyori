@@ -143,7 +143,7 @@ public:
       global_max_size_(local_max_size_ * topology::n_ranks()),
       vm_(reserve_same_vm_coll(global_max_size_, local_max_size_)),
       pm_(init_pm()),
-      local_base_addr_(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(vm_.addr()) + local_max_size_ * topology::my_rank())),
+      local_base_addr_(reinterpret_cast<std::byte*>(vm_.addr()) + local_max_size_ * topology::my_rank()),
       win_(create_win()),
       win_mr_(local_base_addr_, local_max_size_, win()),
       block_mr_(&win_mr_, allocator_block_size_option::value()),
@@ -318,7 +318,13 @@ private:
     }
 
     ITYR_CHECK(vm_.size() == global_max_size_);
-    pm.map_to_vm(vm_.addr(), vm_.size(), 0);
+
+    for (topology::rank_t r = 0; r < topology::intra_n_ranks(); r++) {
+      auto target_rank = topology::intra2global_rank(r);
+      auto offset = local_max_size_ * target_rank;
+      void* begin_addr = reinterpret_cast<std::byte*>(vm_.addr()) + offset;
+      pm.map_to_vm(begin_addr, local_max_size_, offset);
+    }
 
     return pm;
   }
