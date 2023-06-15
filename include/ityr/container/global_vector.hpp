@@ -166,7 +166,7 @@ public:
   void pop_back() {
     ITYR_CHECK(!opts_.collective);
     ITYR_CHECK(size() > 0);
-    auto cs = make_checkout(end() - 1, 1, ori::mode::read_write);
+    auto cs = make_checkout(end() - 1, 1, checkout_mode::read_write);
     std::destroy_at(&cs[0]);
     --end_;
   }
@@ -244,13 +244,13 @@ private:
     root_exec_if_coll([=]() {
       if (opts_.parallel_construct) {
         parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
-                          make_global_iterator(b, ori::mode::write),
-                          make_global_iterator(e, ori::mode::write),
+                          make_global_iterator(b, checkout_mode::write),
+                          make_global_iterator(e, checkout_mode::write),
                           [=](T& x) { new (&x) T(args...); });
       } else {
         serial_for_each({.checkout_count = opts_.cutoff_count},
-                        make_global_iterator(b, ori::mode::write),
-                        make_global_iterator(e, ori::mode::write),
+                        make_global_iterator(b, checkout_mode::write),
+                        make_global_iterator(e, checkout_mode::write),
                         [&](T& x) { new (&x) T(args...); });
       }
     });
@@ -263,13 +263,13 @@ private:
         parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
                           first,
                           last,
-                          make_global_iterator(b, ori::mode::write),
+                          make_global_iterator(b, checkout_mode::write),
                           [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
       } else {
         serial_for_each({.checkout_count = opts_.cutoff_count},
                         first,
                         last,
-                        make_global_iterator(b, ori::mode::write),
+                        make_global_iterator(b, checkout_mode::write),
                         [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
       }
     });
@@ -280,13 +280,13 @@ private:
       root_exec_if_coll([=]() {
         if (opts_.parallel_destruct) {
           parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
-                            make_global_iterator(b, ori::mode::read_write),
-                            make_global_iterator(e, ori::mode::read_write),
+                            make_global_iterator(b, checkout_mode::read_write),
+                            make_global_iterator(e, checkout_mode::read_write),
                             [](T& x) { std::destroy_at(&x); });
         } else {
           serial_for_each({.checkout_count = opts_.cutoff_count},
-                          make_global_iterator(b, ori::mode::read_write),
-                          make_global_iterator(e, ori::mode::read_write),
+                          make_global_iterator(b, checkout_mode::read_write),
+                          make_global_iterator(e, checkout_mode::read_write),
                           [](T& x) { std::destroy_at(&x); });
         }
       });
@@ -338,7 +338,7 @@ private:
       size_type new_cap = next_size(size() + 1);
       realloc_mem(new_cap);
     }
-    auto cs = make_checkout(end(), 1, ori::mode::write);
+    auto cs = make_checkout(end(), 1, checkout_mode::write);
     new (&cs[0]) T(std::forward<Args>(args)...);
     ++end_;
   }
@@ -411,8 +411,8 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       root_exec([&] {
         parallel_for_each({.cutoff_count   = 128,
                            .checkout_count = 128},
-                          make_global_iterator(gv2.begin(), ori::mode::read_write),
-                          make_global_iterator(gv2.end()  , ori::mode::read_write),
+                          make_global_iterator(gv2.begin(), checkout_mode::read_write),
+                          make_global_iterator(gv2.end()  , checkout_mode::read_write),
                           [](long& i) { i *= 2; });
 
         long count1 = parallel_reduce({.cutoff_count   = 128,
@@ -519,12 +519,12 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     root_exec([&]() {
       auto check_sum = [&](long ans) {
         long count =
-          parallel_reduce(make_global_iterator(gvs.begin(), ori::mode::no_access),
-                          make_global_iterator(gvs.end()  , ori::mode::no_access),
+          parallel_reduce(make_global_iterator(gvs.begin(), checkout_mode::no_access),
+                          make_global_iterator(gvs.end()  , checkout_mode::no_access),
                           long(0),
                           std::plus<long>{},
                           [&](auto&& gv_ref) {
-            auto cs = make_checkout(&gv_ref, 1, ori::mode::read_write);
+            auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
             auto gv_begin = cs[0].begin();
             auto gv_end   = cs[0].end();
             cs.checkin();
@@ -540,8 +540,8 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
 
       check_sum(n * (n - 1) / 2 * n_ranks);
 
-      parallel_for_each(make_global_iterator(gvs.begin(), ori::mode::read_write),
-                        make_global_iterator(gvs.end()  , ori::mode::read_write),
+      parallel_for_each(make_global_iterator(gvs.begin(), checkout_mode::read_write),
+                        make_global_iterator(gvs.end()  , checkout_mode::read_write),
                         [&](global_vector<long>& gv) {
         for (long i = 0; i < 100; i++) {
           gv.push_back(i);
@@ -553,7 +553,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
         serial_for_each({.checkout_count = 128},
                         count_iterator<long>(n),
                         count_iterator<long>(2 * n),
-                        make_global_iterator(gv.begin() + n, ori::mode::write),
+                        make_global_iterator(gv.begin() + n, checkout_mode::write),
                         [](long i, long& x) { x = i; });
       });
 

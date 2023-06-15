@@ -100,37 +100,37 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
   ito::root_exec([=] {
     int count = 0;
     serial_for_each({.checkout_count = 100},
-                    make_global_iterator(p1    , ori::mode::write),
-                    make_global_iterator(p1 + n, ori::mode::write),
+                    make_global_iterator(p1    , checkout_mode::write),
+                    make_global_iterator(p1 + n, checkout_mode::write),
                     [&](int& v) { v = count++; });
 
     parallel_for_each(
-      make_global_iterator(p1    , ori::mode::read),
-      make_global_iterator(p1 + n, ori::mode::read),
+      make_global_iterator(p1    , checkout_mode::read),
+      make_global_iterator(p1 + n, checkout_mode::read),
       ityr::count_iterator<int>(0),
       [=](int x, int i) { ITYR_CHECK(x == i); });
 
     parallel_for_each(
       ityr::count_iterator<int>(0),
       ityr::count_iterator<int>(n),
-      make_global_iterator(p1, ori::mode::read),
+      make_global_iterator(p1, checkout_mode::read),
       [=](int i, int x) { ITYR_CHECK(x == i); });
 
     parallel_for_each(
-      make_global_iterator(p1    , ori::mode::read),
-      make_global_iterator(p1 + n, ori::mode::read),
-      make_global_iterator(p2    , ori::mode::write),
+      make_global_iterator(p1    , checkout_mode::read),
+      make_global_iterator(p1 + n, checkout_mode::read),
+      make_global_iterator(p2    , checkout_mode::write),
       [=](int x, int& y) { y = x * 2; });
 
     parallel_for_each(
-      make_global_iterator(p2    , ori::mode::read_write),
-      make_global_iterator(p2 + n, ori::mode::read_write),
+      make_global_iterator(p2    , checkout_mode::read_write),
+      make_global_iterator(p2 + n, checkout_mode::read_write),
       [=](int& y) { y *= 2; });
 
     parallel_for_each(
       ityr::count_iterator<int>(0),
       ityr::count_iterator<int>(n),
-      make_global_iterator(p2, ori::mode::read),
+      make_global_iterator(p2, checkout_mode::read),
       [=](int i, int y) { ITYR_CHECK(y == i * 4); });
   });
 
@@ -178,13 +178,13 @@ inline T parallel_reduce(parallel_loop_options opts,
   parallel_loop_options_assert(opts);
 
   if constexpr (is_global_iterator_v<ForwardIterator>) {
-    static_assert(std::is_same_v<typename ForwardIterator::mode, ori::mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator::mode, ori::mode::no_access_t>);
+    static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator::mode, checkout_mode::no_access_t>);
     return parallel_reduce_aux(opts, first, last, identity, reduce, transform);
 
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
-    auto first_ = make_global_iterator(first, ori::mode::read);
-    auto last_  = make_global_iterator(last , ori::mode::read);
+    auto first_ = make_global_iterator(first, checkout_mode::read);
+    auto last_  = make_global_iterator(last , checkout_mode::read);
     return parallel_reduce_aux(opts, first_, last_, identity, reduce, transform);
 
   } else {
@@ -362,8 +362,8 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   ito::root_exec([=] {
     int count = 0;
     serial_for_each({.checkout_count = 100},
-                    make_global_iterator(p    , ori::mode::write),
-                    make_global_iterator(p + n, ori::mode::write),
+                    make_global_iterator(p    , checkout_mode::write),
+                    make_global_iterator(p + n, checkout_mode::write),
                     [&](int& v) { v = count++; });
   });
 
@@ -393,12 +393,12 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   ITYR_SUBCASE("without auto checkout") {
     int r = ito::root_exec([=] {
       return parallel_reduce(
-        make_global_iterator(p    , ori::mode::no_access),
-        make_global_iterator(p + n, ori::mode::no_access),
+        make_global_iterator(p    , checkout_mode::no_access),
+        make_global_iterator(p + n, checkout_mode::no_access),
         0,
         std::plus<int>{},
         [](ori::global_ref<int> gref) {
-          auto cs = make_checkout(&gref, 1, ori::mode::read);
+          auto cs = make_checkout(&gref, 1, checkout_mode::read);
           return cs[0];
         });
     });

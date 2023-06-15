@@ -6,15 +6,17 @@
 
 namespace ityr {
 
+namespace checkout_mode = ori::mode;
+
 template <typename T, typename Mode>
 class checkout_span {
 public:
   using element_type = T;
   using value_type   = std::remove_cv_t<T>;
   using size_type    = std::size_t;
-  using pointer      = std::conditional_t<std::is_same_v<Mode, ori::mode::read_t>, const T*, T*>;
+  using pointer      = std::conditional_t<std::is_same_v<Mode, checkout_mode::read_t>, const T*, T*>;
   using iterator     = pointer;
-  using reference    = std::conditional_t<std::is_same_v<Mode, ori::mode::read_t>, const T&, T&>;
+  using reference    = std::conditional_t<std::is_same_v<Mode, checkout_mode::read_t>, const T&, T&>;
 
   checkout_span() {}
   explicit checkout_span(ori::global_ptr<T> gptr, std::size_t n, Mode)

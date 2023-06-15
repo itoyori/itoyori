@@ -94,16 +94,16 @@ void cilkmerge(ityr::global_span<T> s1,
   }
 
   if (s2.size() == 0) {
-    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read);
-    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::ori::mode::write);
+    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::checkout_mode::read);
+    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::checkout_mode::write);
     std::copy(s1_.begin(), s1_.end(), dest_.begin());
     return;
   }
 
   if (dest.size() < cutoff_merge) {
-    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read);
-    auto s2_   = ityr::make_checkout(s2.data()  , s2.size()  , ityr::ori::mode::read);
-    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::ori::mode::write);
+    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::checkout_mode::read);
+    auto s2_   = ityr::make_checkout(s2.data()  , s2.size()  , ityr::checkout_mode::read);
+    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::checkout_mode::write);
     std::merge(s1_.begin(), s1_.end(), s2_.begin(), s2_.end(), dest_.begin());
     return;
   }
@@ -126,7 +126,7 @@ void cilksort(ityr::global_span<T> a, ityr::global_span<T> b) {
   assert(a.size() == b.size());
 
   if (a.size() < cutoff_sort) {
-    auto a_ = ityr::make_checkout(a.data(), a.size(), ityr::ori::mode::read_write);
+    auto a_ = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
     std::sort(a_.begin(), a_.end());
     return;
   }
@@ -166,8 +166,8 @@ void fill_array(ityr::global_span<T> s) {
   std::mt19937 engine(seed++);
 
   ityr::serial_for_each({.checkout_count = cutoff_sort},
-                        ityr::make_global_iterator(s.begin(), ityr::ori::mode::write),
-                        ityr::make_global_iterator(s.end()  , ityr::ori::mode::write),
+                        ityr::make_global_iterator(s.begin(), ityr::checkout_mode::write),
+                        ityr::make_global_iterator(s.end()  , ityr::checkout_mode::write),
                         [&](T& v) { v = get_random_elem<T>(engine); });
 }
 

@@ -20,7 +20,7 @@ template <typename T, typename Fn>
 void with_checkout_iter(global_move_iterator<T> begin,
                         std::size_t             count,
                         Fn&&                    fn) {
-  auto cs = make_checkout(&*begin, count, ori::mode::read_write);
+  auto cs = make_checkout(&*begin, count, checkout_mode::read_write);
   std::forward<Fn>(fn)(std::make_move_iterator(cs.data()));
 }
 
@@ -269,7 +269,7 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
 
     serial_for_each(count_iterator<long>(0),
                     count_iterator<long>(n),
-                    make_global_iterator(gp, ori::mode::write),
+                    make_global_iterator(gp, checkout_mode::write),
                     [&](long i, long& out) { new (&out) long(i); });
 
     ITYR_SUBCASE("read array without global_iterator") {
@@ -282,8 +282,8 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
 
     ITYR_SUBCASE("read array with global_iterator") {
       long count = 0;
-      serial_for_each(make_global_iterator(gp    , ori::mode::read),
-                      make_global_iterator(gp + n, ori::mode::read),
+      serial_for_each(make_global_iterator(gp    , checkout_mode::read),
+                      make_global_iterator(gp + n, checkout_mode::read),
                       [&](long i) { count += i; });
       ITYR_CHECK(count == n * (n - 1) / 2);
     }
@@ -292,24 +292,24 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for each") {
       ori::global_ptr<move_only_t> mos1 = ori::malloc<move_only_t>(n);
       ori::global_ptr<move_only_t> mos2 = ori::malloc<move_only_t>(n);
 
-      serial_for_each(make_global_iterator(gp    , ori::mode::read),
-                      make_global_iterator(gp + n, ori::mode::read),
-                      make_global_iterator(mos1  , ori::mode::write),
+      serial_for_each(make_global_iterator(gp    , checkout_mode::read),
+                      make_global_iterator(gp + n, checkout_mode::read),
+                      make_global_iterator(mos1  , checkout_mode::write),
                       [&](long i, move_only_t& out) { new (&out) move_only_t(i); });
 
       serial_for_each(make_move_iterator(mos1),
                       make_move_iterator(mos1 + n),
-                      make_global_iterator(mos2, ori::mode::write),
+                      make_global_iterator(mos2, checkout_mode::write),
                       [&](move_only_t&& in, move_only_t& out) { new (&out) move_only_t(std::move(in)); });
 
       long count = 0;
-      serial_for_each(make_global_iterator(mos2    , ori::mode::read),
-                      make_global_iterator(mos2 + n, ori::mode::read),
+      serial_for_each(make_global_iterator(mos2    , checkout_mode::read),
+                      make_global_iterator(mos2 + n, checkout_mode::read),
                       [&](const move_only_t& mo) { count += mo.value(); });
       ITYR_CHECK(count == n * (n - 1) / 2);
 
-      serial_for_each(make_global_iterator(mos1    , ori::mode::read),
-                      make_global_iterator(mos1 + n, ori::mode::read),
+      serial_for_each(make_global_iterator(mos1    , checkout_mode::read),
+                      make_global_iterator(mos1 + n, checkout_mode::read),
                       [&](const move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
 
       ori::free(mos1, n);
