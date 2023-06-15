@@ -171,9 +171,8 @@ public:
   global_ptr<T> operator&() const noexcept { return ptr_; }
 
   operator T() const {
-    std::remove_const_t<T> ret;
-    core::instance::get().get(ptr_.raw_ptr(), &ret, sizeof(T));
-    return ret;
+    // TODO: reconsider if this implicit conversion is really what we want
+    return get();
   }
 
   this_t& operator=(const T& v) {
@@ -235,6 +234,17 @@ public:
         swap(this_v, v);
       });
     });
+  }
+
+  T get() const {
+    std::remove_const_t<T> ret;
+    core::instance::get().get(ptr_.raw_ptr(), &ret, sizeof(T));
+    return ret;
+  }
+
+  this_t& put(const T& v) {
+    core::instance::get().put(&v, ptr_.raw_ptr(), sizeof(T));
+    return *this;
   }
 
 private:
