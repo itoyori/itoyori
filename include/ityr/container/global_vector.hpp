@@ -3,6 +3,7 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/root_exec.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
+#include "ityr/container/checkout_span.hpp"
 
 namespace ityr {
 
@@ -165,8 +166,8 @@ public:
   void pop_back() {
     ITYR_CHECK(!opts_.collective);
     ITYR_CHECK(size() > 0);
-    ori::with_checkout(end() - 1, 1, ori::mode::read_write,
-                       [&](T* x) { std::destroy_at(&x); });
+    auto cs = make_checkout(end() - 1, 1, ori::mode::read_write);
+    std::destroy_at(&cs[0]);
     --end_;
   }
 
@@ -337,8 +338,8 @@ private:
       size_type new_cap = next_size(size() + 1);
       realloc_mem(new_cap);
     }
-    ori::with_checkout(end(), 1, ori::mode::write,
-                       [&](T* p) { new (p) T(std::forward<Args>(args)...); });
+    auto cs = make_checkout(end(), 1, ori::mode::write);
+    new (&cs[0]) T(std::forward<Args>(args)...);
     ++end_;
   }
 
@@ -523,11 +524,10 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
                           long(0),
                           std::plus<long>{},
                           [&](auto&& gv_ref) {
-            auto [gv_begin, gv_end] =
-              ori::with_checkout(&gv_ref, 1, ori::mode::read_write,
-                                 [&](global_vector<long>* gv) {
-                return std::make_tuple(gv->begin(), gv->end());
-              });
+            auto cs = make_checkout(&gv_ref, 1, ori::mode::read_write);
+            auto gv_begin = cs[0].begin();
+            auto gv_end   = cs[0].end();
+            cs.checkin();
             return parallel_reduce({.cutoff_count   = 128,
                                     .checkout_count = 128},
                                    gv_begin,

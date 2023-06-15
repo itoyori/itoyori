@@ -13,6 +13,7 @@
 #include "ityr/pattern/parallel_invoke.hpp"
 #include "ityr/container/global_span.hpp"
 #include "ityr/container/global_vector.hpp"
+#include "ityr/container/checkout_span.hpp"
 
 namespace ityr {
 

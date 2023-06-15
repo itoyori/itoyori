@@ -4,6 +4,7 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
+#include "ityr/container/checkout_span.hpp"
 
 namespace ityr {
 
@@ -11,16 +12,16 @@ template <typename T, typename Mode, typename Fn>
 void with_checkout_iter(global_iterator<T, Mode> begin,
                         std::size_t              count,
                         Fn&&                     fn) {
-  ori::with_checkout(&*begin, count, Mode{}, std::forward<Fn>(fn));
+  auto cs = make_checkout(&*begin, count, Mode{});
+  std::forward<Fn>(fn)(cs.data());
 }
 
 template <typename T, typename Fn>
 void with_checkout_iter(global_move_iterator<T> begin,
                         std::size_t             count,
                         Fn&&                    fn) {
-  ori::with_checkout(&*begin, count, ori::mode::read_write, [&](auto&& p) {
-    std::forward<Fn>(fn)(std::make_move_iterator(std::forward<decltype(p)>(p)));
-  });
+  auto cs = make_checkout(&*begin, count, ori::mode::read_write);
+  std::forward<Fn>(fn)(std::make_move_iterator(cs.data()));
 }
 
 struct serial_loop_options {

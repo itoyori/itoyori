@@ -94,21 +94,17 @@ void cilkmerge(ityr::global_span<T> s1,
   }
 
   if (s2.size() == 0) {
-    ityr::ori::with_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read,
-                             dest.data(), dest.size(), ityr::ori::mode::write,
-                             [&](const T* s1_, T* dest_) {
-      std::copy(s1_, s1_ + s1.size(), dest_);
-    });
+    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read);
+    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::ori::mode::write);
+    std::copy(s1_.begin(), s1_.end(), dest_.begin());
     return;
   }
 
   if (dest.size() < cutoff_merge) {
-    ityr::ori::with_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read,
-                             s2.data()  , s2.size()  , ityr::ori::mode::read,
-                             dest.data(), dest.size(), ityr::ori::mode::write,
-                             [&](const T* s1_, const T* s2_, T* dest_) {
-      std::merge(s1_, s1_ + s1.size(), s2_, s2_ + s2.size(), dest_);
-    });
+    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::ori::mode::read);
+    auto s2_   = ityr::make_checkout(s2.data()  , s2.size()  , ityr::ori::mode::read);
+    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::ori::mode::write);
+    std::merge(s1_.begin(), s1_.end(), s2_.begin(), s2_.end(), dest_.begin());
     return;
   }
 
@@ -130,10 +126,8 @@ void cilksort(ityr::global_span<T> a, ityr::global_span<T> b) {
   assert(a.size() == b.size());
 
   if (a.size() < cutoff_sort) {
-    ityr::ori::with_checkout(a.data(), a.size(), ityr::ori::mode::read_write,
-                             [&](T* a_) {
-      std::sort(a_, a_ + a.size());
-    });
+    auto a_ = ityr::make_checkout(a.data(), a.size(), ityr::ori::mode::read_write);
+    std::sort(a_.begin(), a_.end());
     return;
   }
 
