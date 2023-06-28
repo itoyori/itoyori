@@ -58,7 +58,7 @@ public:
     std::size_t curr_page_end = round_up_pow2(size_, pagesize);
     std::size_t next_page_end = round_up_pow2(to_size, pagesize);
     if (curr_page_end > next_page_end) {
-      munmap(reinterpret_cast<std::byte*>(next_page_end),
+      munmap(reinterpret_cast<std::byte*>(addr_) + next_page_end,
              curr_page_end - next_page_end);
     }
 
@@ -175,40 +175,43 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
   std::vector<virtual_mem> prev_vms;
   int max_trial = 100;
   std::size_t alloc_size = round_up_pow2(size, get_page_size());
+  topology::rank_t leader_rank = 0;
 
   // Repeat until the same virtual memory address is allocated
   // TODO: smarter allocation using `pmap` result?
   for (int n_trial = 0; n_trial <= max_trial; n_trial++) {
-    if (topology::my_rank() == 0) {
+    if (topology::my_rank() == leader_rank) {
       vm = virtual_mem(alloc_size, alignment);
       vm_addr = reinterpret_cast<uintptr_t>(vm.addr());
     }
 
-    vm_addr = mpi_bcast_value(vm_addr, 0, topology::mpicomm());
+    vm_addr = mpi_bcast_value(vm_addr, leader_rank, topology::mpicomm());
 
-    int status = 0; // 0: OK, 1: failed
-    if (topology::my_rank() != 0) {
+    topology::rank_t failed_rank = -1;
+    if (topology::my_rank() != leader_rank) {
       try {
         vm = virtual_mem(reinterpret_cast<void*>(vm_addr), alloc_size, alignment);
       } catch (mmap_noreplace_exception& e) {
-        status = 1;
+        failed_rank = topology::my_rank();
       }
     }
 
-    int status_all = mpi_allreduce_value(status, topology::mpicomm());
+    // Among the failed processes, the process with the maximum rank will become the next leader
+    auto failed_rank_max = mpi_allreduce_value(failed_rank, topology::mpicomm(), MPI_MAX);
 
-    if (status_all == 0) {
-      // prev_vms are automatically freed
+    if (failed_rank_max == -1) {
+      // success; prev_vms are automatically freed
       vm.shrink(size);
       return vm;
     }
 
-    if (status == 0) {
+    if (failed_rank == -1) {
       // Defer the deallocation of previous virtual addresses to prevent
       // the same address from being allocated in the next turn
       prev_vms.push_back(std::move(vm));
     }
 
+    leader_rank = failed_rank_max;
     alloc_size *= 2;
   }
 
