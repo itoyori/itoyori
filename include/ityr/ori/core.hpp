@@ -186,8 +186,6 @@ public:
 
   template <typename Mode>
   void checkout(void* addr, std::size_t size, Mode) {
-    static_assert(!std::is_same_v<Mode, mode::no_access_t>);
-
     if constexpr (!enable_vm_map) {
       common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
     }
@@ -204,8 +202,6 @@ public:
 
   template <typename Mode>
   void checkin(void* addr, std::size_t size, Mode) {
-    static_assert(!std::is_same_v<Mode, mode::no_access_t>);
-
     if constexpr (!enable_vm_map) {
       common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
     }

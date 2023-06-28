@@ -2,11 +2,10 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/ori/ori.hpp"
+#include "ityr/pattern/global_iterator.hpp"
 #include "ityr/container/global_span.hpp"
 
 namespace ityr {
-
-namespace checkout_mode = ori::mode;
 
 template <typename T, typename Mode>
 class checkout_span {

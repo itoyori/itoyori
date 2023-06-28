@@ -13,8 +13,6 @@ struct write_t {};
 inline constexpr write_t write;
 struct read_write_t {};
 inline constexpr read_write_t read_write;
-struct no_access_t {};
-inline constexpr no_access_t no_access;
 }
 
 inline std::string str(mode::read_t) {
@@ -27,10 +25,6 @@ inline std::string str(mode::write_t) {
 
 inline std::string str(mode::read_write_t) {
   return "read_write";
-}
-
-inline std::string str(mode::no_access_t) {
-  return "no_access";
 }
 
 using block_size_t = uint32_t;
