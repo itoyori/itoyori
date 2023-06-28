@@ -53,6 +53,15 @@ public:
   void shrink(std::size_t to_size) {
     ITYR_CHECK(addr_);
     ITYR_CHECK(to_size <= size_);
+
+    std::size_t pagesize = get_page_size();
+    std::size_t curr_page_end = round_up_pow2(size_, pagesize);
+    std::size_t next_page_end = round_up_pow2(to_size, pagesize);
+    if (curr_page_end > next_page_end) {
+      munmap(reinterpret_cast<std::byte*>(next_page_end),
+             curr_page_end - next_page_end);
+    }
+
     size_ = to_size;
   }
 
@@ -158,17 +167,20 @@ inline void* mmap_no_physical_mem(void*       addr,
 
 inline virtual_mem reserve_same_vm_coll(std::size_t size,
                                         std::size_t alignment = alignof(max_align_t)) {
+  ITYR_CHECK(size > 0);
+
   uintptr_t vm_addr = 0;
   virtual_mem vm;
 
   std::vector<virtual_mem> prev_vms;
   int max_trial = 100;
+  std::size_t alloc_size = round_up_pow2(size, get_page_size());
 
   // Repeat until the same virtual memory address is allocated
   // TODO: smarter allocation using `pmap` result?
   for (int n_trial = 0; n_trial <= max_trial; n_trial++) {
     if (topology::my_rank() == 0) {
-      vm = virtual_mem(size, alignment);
+      vm = virtual_mem(alloc_size, alignment);
       vm_addr = reinterpret_cast<uintptr_t>(vm.addr());
     }
 
@@ -177,7 +189,7 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
     int status = 0; // 0: OK, 1: failed
     if (topology::my_rank() != 0) {
       try {
-        vm = virtual_mem(reinterpret_cast<void*>(vm_addr), size, alignment);
+        vm = virtual_mem(reinterpret_cast<void*>(vm_addr), alloc_size, alignment);
       } catch (mmap_noreplace_exception& e) {
         status = 1;
       }
@@ -187,6 +199,7 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
 
     if (status_all == 0) {
       // prev_vms are automatically freed
+      vm.shrink(size);
       return vm;
     }
 
@@ -195,6 +208,8 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
       // the same address from being allocated in the next turn
       prev_vms.push_back(std::move(vm));
     }
+
+    alloc_size *= 2;
   }
 
   die("Reservation of virtual memory address failed (size=%ld, max_trial=%d)", size, max_trial);
