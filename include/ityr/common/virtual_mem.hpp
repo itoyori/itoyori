@@ -50,6 +50,12 @@ public:
   void* addr() const { return addr_; }
   std::size_t size() const { return size_; }
 
+  void shrink(std::size_t to_size) {
+    ITYR_CHECK(addr_);
+    ITYR_CHECK(to_size <= size_);
+    size_ = to_size;
+  }
+
 private:
   void* addr_ = nullptr;
   std::size_t size_;
@@ -81,7 +87,10 @@ ITYR_TEST_CASE("[ityr::common::virtual_mem] allocate virtual memory") {
 }
 
 inline void munmap(void* addr, std::size_t size) {
-  if (size > 0 && ::munmap(addr, size) == -1) {
+  ITYR_CHECK(size > 0);
+  ITYR_CHECK_MESSAGE(reinterpret_cast<uintptr_t>(addr) % get_page_size() == 0,
+                     "The address passed to munmap() must be page-aligned");
+  if (::munmap(addr, size) == -1) {
     perror("munmap");
     die("[ityr::common::virtual_mem] munmap(%p, %lu) failed", addr, size);
   }
@@ -93,12 +102,12 @@ inline void* mmap_no_physical_mem(void*       addr,
                                   std::size_t alignment) {
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 
-  std::size_t reqsize;
+  std::size_t alloc_size;
   if (addr == nullptr) {
-    reqsize = size + alignment;
+    alloc_size = size + alignment;
   } else {
     ITYR_CHECK(reinterpret_cast<uintptr_t>(addr) % alignment == 0);
-    reqsize = size;
+    alloc_size = size;
     if (!replace) {
       flags |= MAP_FIXED_NOREPLACE;
     } else {
@@ -106,29 +115,41 @@ inline void* mmap_no_physical_mem(void*       addr,
     }
   }
 
-  void* allocated_p = mmap(addr, reqsize, PROT_NONE, flags, -1, 0);
+  void* allocated_p = mmap(addr, alloc_size, PROT_NONE, flags, -1, 0);
   if (allocated_p == MAP_FAILED) {
     if (errno == EEXIST) {
       // MAP_FIXED_NOREPLACE error
       throw mmap_noreplace_exception{};
     } else {
       perror("mmap");
-      die("[ityr::common::virtual_mem] mmap(%p, %lu, ...) failed", addr, reqsize);
+      die("[ityr::common::virtual_mem] mmap(%p, %lu, ...) failed", addr, alloc_size);
     }
   }
 
   if (addr == nullptr) {
+    std::size_t pagesize = get_page_size();
+
     uintptr_t allocated_addr = reinterpret_cast<uintptr_t>(allocated_p);
+    ITYR_CHECK(allocated_addr % pagesize == 0);
+
     uintptr_t ret_addr = round_up_pow2(allocated_addr, alignment);
-    std::byte* ret_p = reinterpret_cast<std::byte*>(ret_addr);
+    ITYR_CHECK(ret_addr % pagesize == 0);
 
+    // truncate the head end
     ITYR_CHECK(ret_addr >= allocated_addr);
-    munmap(allocated_p, ret_addr - allocated_addr);
+    if (ret_addr - allocated_addr > 0) {
+      munmap(allocated_p, ret_addr - allocated_addr);
+    }
 
-    ITYR_CHECK(reqsize >= ret_addr - allocated_addr + size);
-    munmap(ret_p + size, reqsize - (ret_addr - allocated_addr + size));
+    // truncate the tail end
+    uintptr_t allocated_addr_end = allocated_addr + alloc_size;
+    uintptr_t ret_page_end = round_up_pow2(ret_addr + size, pagesize);
+    ITYR_CHECK(allocated_addr_end >= ret_page_end);
+    if (allocated_addr_end - ret_page_end > 0) {
+      munmap(reinterpret_cast<std::byte*>(ret_page_end), allocated_addr_end - ret_page_end);
+    }
 
-    return ret_p;
+    return reinterpret_cast<std::byte*>(ret_addr);
   } else {
     ITYR_CHECK(addr == allocated_p);
     return allocated_p;
