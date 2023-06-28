@@ -45,18 +45,22 @@ struct prof_event_sched_steal : public common::prof_event_target_base {
 
   void print_stats() override {
     success_mode_ = true;
-    acc_time_ = acc_time_success_;
+    sum_time_ = sum_time_success_;
+    max_time_ = max_time_success_;
     count_ = count_success_;
     common::profiler::event::print_stats();
     success_mode_ = false;
-    acc_time_ = acc_time_fail_;
+    sum_time_ = sum_time_fail_;
+    max_time_ = max_time_fail_;
     count_ = count_fail_;
     common::profiler::event::print_stats();
   }
 
   void clear() override {
-    acc_time_success_ = 0;
-    acc_time_fail_    = 0;
+    sum_time_success_ = 0;
+    sum_time_fail_    = 0;
+    max_time_success_ = 0;
+    max_time_fail_    = 0;
     count_success_    = 0;
     count_fail_       = 0;
   }
@@ -64,16 +68,20 @@ struct prof_event_sched_steal : public common::prof_event_target_base {
 private:
   void do_acc(common::wallclock::wallclock_t t, bool success) {
     if (success) {
-      acc_time_success_ += t;
+      sum_time_success_ += t;
+      max_time_success_ = std::max(max_time_success_, t);
       count_success_++;
     } else {
-      acc_time_fail_ += t;
+      sum_time_fail_ += t;
+      max_time_fail_ = std::max(max_time_fail_, t);
       count_fail_++;
     }
   }
 
-  common::wallclock::wallclock_t acc_time_success_ = 0;
-  common::wallclock::wallclock_t acc_time_fail_    = 0;
+  common::wallclock::wallclock_t sum_time_success_ = 0;
+  common::wallclock::wallclock_t sum_time_fail_    = 0;
+  common::wallclock::wallclock_t max_time_success_ = 0;
+  common::wallclock::wallclock_t max_time_fail_    = 0;
   counter_t                      count_success_    = 0;
   counter_t                      count_fail_       = 0;
   bool                           success_mode_;

@@ -81,21 +81,23 @@ public:
   virtual std::string str() const { return "UNKNOWN"; }
 
   virtual void clear() {
-    acc_time_ = 0;
+    sum_time_ = 0;
+    max_time_ = 0;
     count_ = 0;
   }
 
   virtual void print_stats() {
     auto t_total = state_.t_end - state_.t_begin;
     if (state_.output_per_rank) {
+      using msg_t = std::tuple<wallclock::wallclock_t, wallclock::wallclock_t, wallclock::wallclock_t, counter_t>;
+
       if (topology::my_rank() == 0) {
-        print_stats_per_rank(0, acc_time_, t_total, count_);
+        print_stats_per_rank(0, sum_time_, max_time_, t_total, count_);
         for (topology::rank_t i = 1; i < topology::n_ranks(); i++) {
           mpi_barrier(topology::mpicomm());
 
-          auto [a, t, c] = mpi_recv_value<
-            std::tuple<wallclock::wallclock_t, wallclock::wallclock_t, counter_t>>(i, 0, topology::mpicomm());
-          print_stats_per_rank(i, a, t, c);
+          auto [s, m, t, c] = mpi_recv_value<msg_t>(i, 0, topology::mpicomm());
+          print_stats_per_rank(i, s, m, t, c);
         }
       } else {
         for (topology::rank_t i = 1; i < topology::n_ranks(); i++) {
@@ -103,49 +105,54 @@ public:
           mpi_barrier(topology::mpicomm());
 
           if (i == topology::my_rank()) {
-            mpi_send_value(std::make_tuple(acc_time_, t_total, count_), 0, 0, topology::mpicomm());
+            mpi_send_value(std::make_tuple(sum_time_, max_time_, t_total, count_), 0, 0, topology::mpicomm());
           }
         }
       }
     } else {
-      auto acc_time_sum = mpi_reduce_value(acc_time_, 0, topology::mpicomm());
-      auto t_total_sum = mpi_reduce_value(t_total, 0, topology::mpicomm());
-      auto count_sum = mpi_reduce_value(count_, 0, topology::mpicomm());
+      auto sum_time_all = mpi_reduce_value(sum_time_, 0, topology::mpicomm());
+      auto max_time_all = mpi_reduce_value(max_time_, 0, topology::mpicomm(), MPI_MAX);
+      auto t_total_all  = mpi_reduce_value(t_total, 0, topology::mpicomm());
+      auto count_all    = mpi_reduce_value(count_, 0, topology::mpicomm());
       if (topology::my_rank() == 0) {
-        print_stats_sum(acc_time_sum, t_total_sum, count_sum);
+        print_stats_sum(sum_time_all, max_time_all, t_total_all, count_all);
       }
     }
   }
 
 protected:
   void do_acc(wallclock::wallclock_t t) {
-    acc_time_ += t;
+    sum_time_ += t;
+    max_time_ = std::max(max_time_, t);
     count_++;
   }
 
   using counter_t = uint64_t;
 
   virtual void print_stats_per_rank(topology::rank_t       rank,
-                                    wallclock::wallclock_t acc_time,
+                                    wallclock::wallclock_t sum_time,
+                                    wallclock::wallclock_t max_time,
                                     wallclock::wallclock_t t_total,
                                     counter_t              count) const {
-    printf("  %-22s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
+    printf("  %-22s (rank %3d) : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns max: %8ld ns\n",
            str().c_str(), rank,
-           (double)acc_time / t_total * 100, acc_time, t_total,
-           count, count == 0 ? 0 : (acc_time / count));
+           (double)sum_time / t_total * 100, sum_time, t_total,
+           count, count == 0 ? 0 : (sum_time / count), max_time);
   }
 
-  virtual void print_stats_sum(wallclock::wallclock_t acc_time,
+  virtual void print_stats_sum(wallclock::wallclock_t sum_time,
+                               wallclock::wallclock_t max_time,
                                wallclock::wallclock_t t_total,
                                counter_t              count) const {
-    printf("  %-22s : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns\n",
+    printf("  %-22s : %10.6f %% ( %15ld ns / %15ld ns ) count: %10ld ave: %8ld ns max: %8ld ns\n",
            str().c_str(),
-           (double)acc_time / t_total * 100, acc_time, t_total,
-           count, count == 0 ? 0 : (acc_time / count));
+           (double)sum_time / t_total * 100, sum_time, t_total,
+           count, count == 0 ? 0 : (sum_time / count), max_time);
   }
 
   profiler_state&        state_;
-  wallclock::wallclock_t acc_time_ = 0;
+  wallclock::wallclock_t sum_time_ = 0;
+  wallclock::wallclock_t max_time_ = 0;
   counter_t              count_    = 0;
 };
 
