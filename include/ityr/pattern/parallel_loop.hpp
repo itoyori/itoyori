@@ -398,8 +398,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
         0,
         std::plus<int>{},
         [](ori::global_ref<int> gref) {
-          auto cs = make_checkout(&gref, 1, checkout_mode::read);
-          return cs[0];
+          return gref.get();
         });
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
