@@ -241,14 +241,14 @@ private:
 
   template <typename... Args>
   void construct_elems(pointer b, pointer e, Args&&... args) const {
-    root_exec_if_coll([=]() {
-      if (opts_.parallel_construct) {
-        parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
+    root_exec_if_coll([=, opts = opts_]() {
+      if (opts.parallel_construct) {
+        parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
                           make_global_iterator(b, checkout_mode::write),
                           make_global_iterator(e, checkout_mode::write),
                           [=](T& x) { new (&x) T(args...); });
       } else {
-        serial_for_each({.checkout_count = opts_.cutoff_count},
+        serial_for_each({.checkout_count = opts.cutoff_count},
                         make_global_iterator(b, checkout_mode::write),
                         make_global_iterator(e, checkout_mode::write),
                         [&](T& x) { new (&x) T(args...); });
@@ -258,15 +258,15 @@ private:
 
   template <typename ForwardIterator>
   void construct_elems_from_iter(ForwardIterator first, ForwardIterator last, pointer b) const {
-    root_exec_if_coll([=]() {
-      if (opts_.parallel_construct) {
-        parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
+    root_exec_if_coll([=, opts = opts_]() {
+      if (opts.parallel_construct) {
+        parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
                           first,
                           last,
                           make_global_iterator(b, checkout_mode::write),
                           [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
       } else {
-        serial_for_each({.checkout_count = opts_.cutoff_count},
+        serial_for_each({.checkout_count = opts.cutoff_count},
                         first,
                         last,
                         make_global_iterator(b, checkout_mode::write),
@@ -277,14 +277,14 @@ private:
 
   void destruct_elems(pointer b, pointer e) const {
     if constexpr (!std::is_trivially_destructible_v<T>) {
-      root_exec_if_coll([=]() {
-        if (opts_.parallel_destruct) {
-          parallel_for_each({.cutoff_count = opts_.cutoff_count, .checkout_count = opts_.cutoff_count},
+      root_exec_if_coll([=, opts = opts_]() {
+        if (opts.parallel_destruct) {
+          parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
                             make_global_iterator(b, checkout_mode::read_write),
                             make_global_iterator(e, checkout_mode::read_write),
                             [](T& x) { std::destroy_at(&x); });
         } else {
-          serial_for_each({.checkout_count = opts_.cutoff_count},
+          serial_for_each({.checkout_count = opts.cutoff_count},
                           make_global_iterator(b, checkout_mode::read_write),
                           make_global_iterator(e, checkout_mode::read_write),
                           [](T& x) { std::destroy_at(&x); });
