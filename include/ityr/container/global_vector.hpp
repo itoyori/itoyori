@@ -1,3 +1,5 @@
+#pragma once
+
 #include "ityr/common/util.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
@@ -244,14 +246,14 @@ private:
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
         parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
-                          make_global_iterator(b, checkout_mode::write),
-                          make_global_iterator(e, checkout_mode::write),
-                          [=](T& x) { new (&x) T(args...); });
+                          make_construct_iterator(b),
+                          make_construct_iterator(e),
+                          [=](T* p) { new (p) T(args...); });
       } else {
         serial_for_each({.checkout_count = opts.cutoff_count},
-                        make_global_iterator(b, checkout_mode::write),
-                        make_global_iterator(e, checkout_mode::write),
-                        [&](T& x) { new (&x) T(args...); });
+                        make_construct_iterator(b),
+                        make_construct_iterator(e),
+                        [&](T* p) { new (p) T(args...); });
       }
     });
   }
@@ -263,14 +265,14 @@ private:
         parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
                           first,
                           last,
-                          make_global_iterator(b, checkout_mode::write),
-                          [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
+                          make_construct_iterator(b),
+                          [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
       } else {
         serial_for_each({.checkout_count = opts.cutoff_count},
                         first,
                         last,
-                        make_global_iterator(b, checkout_mode::write),
-                        [](auto&& src, T& x) { new (&x) T(std::forward<decltype(src)>(src)); });
+                        make_construct_iterator(b),
+                        [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
       }
     });
   }

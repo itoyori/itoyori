@@ -69,4 +69,9 @@ inline bool operator>=(const count_iterator<T>& it1, const count_iterator<T>& it
   return *it1 >= *it2;
 }
 
+template <typename T>
+inline auto make_count_iterator(T x) {
+  return count_iterator(x);
+}
+
 }

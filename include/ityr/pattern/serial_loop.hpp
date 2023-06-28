@@ -24,6 +24,14 @@ void with_checkout_iter(global_move_iterator<T> begin,
   std::forward<Fn>(fn)(std::make_move_iterator(cs.data()));
 }
 
+template <typename T, typename Fn>
+void with_checkout_iter(global_construct_iterator<T> begin,
+                        std::size_t                  count,
+                        Fn&&                         fn) {
+  auto cs = make_checkout(&*begin, count, checkout_mode::write);
+  std::forward<Fn>(fn)(make_count_iterator(cs.data()));
+}
+
 struct serial_loop_options {
   std::size_t checkout_count = 1;
 };

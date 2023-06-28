@@ -59,6 +59,19 @@ inline auto make_move_iterator(ori::global_ptr<T> ptr) {
   return global_move_iterator(ptr);
 }
 
+template <typename T>
+class global_construct_iterator : public global_iterator<T, checkout_mode::write_t> {
+  using base_t = global_iterator<T, checkout_mode::write_t>;
+public:
+  explicit global_construct_iterator(ori::global_ptr<T> ptr)
+    : base_t(ptr, checkout_mode::write) {}
+};
+
+template <typename T>
+inline auto make_construct_iterator(ori::global_ptr<T> ptr) {
+  return global_construct_iterator(ptr);
+}
+
 template <typename>
 struct is_global_iterator : public std::false_type {};
 
@@ -67,6 +80,9 @@ struct is_global_iterator<global_iterator<T, Mode>> : public std::true_type {};
 
 template <typename T>
 struct is_global_iterator<global_move_iterator<T>> : public std::true_type {};
+
+template <typename T>
+struct is_global_iterator<global_construct_iterator<T>> : public std::true_type {};
 
 template <typename T>
 inline constexpr bool is_global_iterator_v = is_global_iterator<T>::value;
