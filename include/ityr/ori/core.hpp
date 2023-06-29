@@ -72,9 +72,9 @@ public:
 
   template <template <block_size_t> typename MemMapper, typename... MemMapperArgs>
   void* malloc_coll(std::size_t size, MemMapperArgs&&... mmargs) {
-    if (size == 0) {
-      common::die("Memory allocation size cannot be 0");
-    }
+    ITYR_REQUIRE_MESSAGE(size > 0, "Memory allocation size cannot be 0");
+    ITYR_REQUIRE_MESSAGE(size == common::mpi_bcast_value(size, 0, common::topology::mpicomm()),
+                         "The size passed to malloc_coll() is different among workers");
 
     auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
@@ -99,9 +99,9 @@ public:
   }
 
   void free_coll(void* addr) {
-    if (!addr) {
-      common::die("Null pointer was passed to free_coll()");
-    }
+    ITYR_REQUIRE_MESSAGE(addr, "Null pointer was passed to free()");
+    ITYR_REQUIRE_MESSAGE(addr == common::mpi_bcast_value(addr, 0, common::topology::mpicomm()),
+                         "The address passed to free_coll() is different among workers");
 
     // ensure free safety
     cache_manager_.ensure_all_cache_clean();
