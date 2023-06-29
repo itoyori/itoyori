@@ -19,11 +19,16 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
     ito::root_exec(ito::with_callback,
                    []() { ori::poll(); },
                    std::forward<Fn>(fn), std::forward<Args>(args)...);
+    // TODO: release() is needed only for the last worker which executed the root thread
+    ori::release();
+    common::mpi_barrier(common::topology::mpicomm());
     ori::acquire();
   } else {
     auto ret = ito::root_exec(ito::with_callback,
                               []() { ori::poll(); },
                               std::forward<Fn>(fn), std::forward<Args>(args)...);
+    ori::release();
+    common::mpi_barrier(common::topology::mpicomm());
     ori::acquire();
     return ret;
   }
