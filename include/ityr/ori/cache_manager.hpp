@@ -72,7 +72,7 @@ public:
       }
     }
 
-    if constexpr (enable_vm_map && IncrementRef) {
+    if constexpr (IncrementRef) {
       cb.ref_count++;
     }
 
@@ -117,7 +117,7 @@ public:
       }
     }
 
-    if constexpr (enable_vm_map && IncrementRef) {
+    if constexpr (IncrementRef) {
       cb.ref_count++;
     }
 
@@ -163,7 +163,7 @@ public:
       add_dirty_region(cb, br);
     }
 
-    if constexpr (enable_vm_map && DecrementRef) {
+    if constexpr (DecrementRef) {
       cb.ref_count--;
     }
 
@@ -187,7 +187,7 @@ public:
       add_dirty_region(cb, br);
     }
 
-    if constexpr (enable_vm_map && DecrementRef) {
+    if constexpr (DecrementRef) {
       cb.ref_count--;
     }
   }

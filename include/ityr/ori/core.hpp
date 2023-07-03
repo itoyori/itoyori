@@ -156,7 +156,8 @@ public:
     std::byte* from_addr_ = reinterpret_cast<std::byte*>(const_cast<void*>(from_addr));
 
     // TODO: support get/put for data larger than the cache size
-    if (size <= BlockSize) {
+    if (common::round_down_pow2(from_addr_, BlockSize) ==
+        common::round_down_pow2(from_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
       checkout_impl<mode::read_t, false>(from_addr_, size);
       get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
@@ -172,7 +173,8 @@ public:
 
     std::byte* to_addr_ = reinterpret_cast<std::byte*>(to_addr);
 
-    if (size <= BlockSize) {
+    if (common::round_down_pow2(to_addr_, BlockSize) ==
+        common::round_down_pow2(to_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
       checkout_impl<mode::write_t, false>(to_addr_, size);
       put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
