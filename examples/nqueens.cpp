@@ -102,6 +102,41 @@ result_t nqueens(int n, int j, board b, int depth) {
   }
 }
 
+void run() {
+  for (int r = 0; r < n_repeats; r++) {
+    ityr::profiler_begin();
+
+    auto t0 = ityr::gettime_ns();
+
+    result_t result = ityr::root_exec([]{
+      return nqueens(n_input, 0, board{}, 0);
+    });
+
+    auto t1 = ityr::gettime_ns();
+
+    ityr::profiler_end();
+
+    if (ityr::is_master()) {
+      printf("[%d] %'ld ns", r, t1 - t0);
+
+      if (verify_result) {
+        result_t answer = solutions[n_input - 1];
+        if (result == answer) {
+          printf(" - Result verified: nqueens(%d) = %ld", n_input, result);
+        } else {
+          printf(" - Wrong result: nqueens(%d) should be %ld but got %ld",
+                 n_input, answer, result);
+        }
+      }
+
+      printf("\n");
+      fflush(stdout);
+    }
+
+    ityr::profiler_flush();
+  }
+}
+
 void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
   if (ityr::is_master()) {
     printf("Usage: %s [options]\n"
@@ -161,38 +196,7 @@ int main(int argc, char** argv) {
     fflush(stdout);
   }
 
-  for (int r = 0; r < n_repeats; r++) {
-    ityr::profiler_begin();
-
-    auto t0 = ityr::gettime_ns();
-
-    result_t result = ityr::root_exec([]{
-      return nqueens(n_input, 0, board{}, 0);
-    });
-
-    auto t1 = ityr::gettime_ns();
-
-    ityr::profiler_end();
-
-    if (ityr::is_master()) {
-      printf("[%d] %ld ns", r, t1 - t0);
-
-      if (verify_result) {
-        result_t answer = solutions[n_input - 1];
-        if (result == answer) {
-          printf(" - Result verified: nqueens(%d) = %ld", n_input, result);
-        } else {
-          printf(" - Wrong result: nqueens(%d) should be %ld but got %ld",
-                 n_input, answer, result);
-        }
-      }
-
-      printf("\n");
-      fflush(stdout);
-    }
-
-    ityr::profiler_flush();
-  }
+  run();
 
   ityr::fini();
   return 0;

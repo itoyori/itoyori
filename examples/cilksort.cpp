@@ -62,8 +62,7 @@ using elem_t = int;
 
 std::size_t n_input        = std::size_t(1) * 1024 * 1024;
 int         n_repeats      = 10;
-std::size_t cutoff_sort    = std::size_t(4) * 1024;
-std::size_t cutoff_merge   = std::size_t(4) * 1024;
+std::size_t cutoff_count   = std::size_t(4) * 1024;
 bool        verify_result  = true;
 
 template <typename T>
@@ -100,7 +99,7 @@ void cilkmerge(ityr::global_span<T> s1,
     return;
   }
 
-  if (dest.size() < cutoff_merge) {
+  if (dest.size() < cutoff_count) {
     auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::checkout_mode::read);
     auto s2_   = ityr::make_checkout(s2.data()  , s2.size()  , ityr::checkout_mode::read);
     auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::checkout_mode::write);
@@ -125,7 +124,7 @@ template <typename T>
 void cilksort(ityr::global_span<T> a, ityr::global_span<T> b) {
   assert(a.size() == b.size());
 
-  if (a.size() < cutoff_sort) {
+  if (a.size() < cutoff_count) {
     auto a_ = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
     std::sort(a_.begin(), a_.end());
     return;
@@ -165,7 +164,7 @@ void fill_array(ityr::global_span<T> s) {
   static int seed = 0;
   std::mt19937 engine(seed++);
 
-  ityr::serial_for_each({.checkout_count = cutoff_sort},
+  ityr::serial_for_each({.checkout_count = cutoff_count},
                         ityr::make_global_iterator(s.begin(), ityr::checkout_mode::write),
                         ityr::make_global_iterator(s.end()  , ityr::checkout_mode::write),
                         [&](T& v) { v = get_random_elem<T>(engine); });
@@ -180,7 +179,7 @@ bool check_sorted(ityr::global_span<T> s) {
     T last;
   };
   auto ret = ityr::parallel_reduce(
-    {.cutoff_count = cutoff_sort, .checkout_count = cutoff_sort},
+    {.cutoff_count = cutoff_count, .checkout_count = cutoff_count},
     s.begin(),
     s.end(),
     acc_type{true, true, T{}, T{}},
@@ -195,75 +194,19 @@ bool check_sorted(ityr::global_span<T> s) {
   return ret.success;
 }
 
-void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
-  if (ityr::is_master()) {
-    printf("Usage: %s [options]\n"
-           "  options:\n"
-           "    -n : Input size (size_t)\n"
-           "    -r : # of repeats (int)\n"
-           "    -s : cutoff count for serial sort (size_t)\n"
-           "    -m : cutoff count for serial merge (size_t)\n"
-           "    -v : verify the result (int)\n", argv[0]);
-  }
-  exit(1);
-}
+void run() {
+  ityr::global_vector_options gvec_coll_opts {
+    .collective         = true,
+    .parallel_construct = true,
+    .parallel_destruct  = true,
+    .cutoff_count       = cutoff_count,
+  };
 
-int main(int argc, char** argv) {
-  ityr::init();
+  ityr::global_vector<elem_t> a_vec(gvec_coll_opts, n_input);
+  ityr::global_vector<elem_t> b_vec(gvec_coll_opts, n_input);
 
-  int opt;
-  while ((opt = getopt(argc, argv, "n:r:s:m:v:h")) != EOF) {
-    switch (opt) {
-      case 'n':
-        n_input = atoll(optarg);
-        break;
-      case 'r':
-        n_repeats = atoi(optarg);
-        break;
-      case 's':
-        cutoff_sort = atoll(optarg);
-        break;
-      case 'm':
-        cutoff_merge = atoll(optarg);
-        break;
-      case 'v':
-        verify_result = atoi(optarg);
-        break;
-      case 'h':
-      default:
-        show_help_and_exit(argc, argv);
-    }
-  }
-
-  if (ityr::is_master()) {
-    setlocale(LC_NUMERIC, "en_US.UTF-8");
-    printf("=============================================================\n"
-           "[Cilksort]\n"
-           "# of processes:               %d\n"
-           "Element size:                 %ld bytes\n"
-           "N:                            %ld\n"
-           "# of repeats:                 %d\n"
-           "Cutoff (cilksort):            %ld\n"
-           "Cutoff (cilkmerge):           %ld\n"
-           "Verify result:                %d\n"
-           "-------------------------------------------------------------\n",
-           ityr::n_ranks(), sizeof(elem_t), n_input, n_repeats,
-           cutoff_sort, cutoff_merge, verify_result);
-
-    printf("[Compile Options]\n");
-    ityr::print_compile_options();
-    printf("-------------------------------------------------------------\n");
-    printf("[Runtime Options]\n");
-    ityr::print_runtime_options();
-    printf("=============================================================\n\n");
-    fflush(stdout);
-  }
-
-  ityr::ori::global_ptr<elem_t> a_ptr = ityr::ori::malloc_coll<elem_t>(n_input);
-  ityr::ori::global_ptr<elem_t> b_ptr = ityr::ori::malloc_coll<elem_t>(n_input);
-
-  ityr::global_span<elem_t> a(a_ptr, n_input);
-  ityr::global_span<elem_t> b(b_ptr, n_input);
+  ityr::global_span<elem_t> a(a_vec.begin(), a_vec.end());
+  ityr::global_span<elem_t> b(b_vec.begin(), b_vec.end());
 
   for (int r = 0; r < n_repeats; r++) {
     ityr::root_exec([=]{
@@ -283,7 +226,7 @@ int main(int argc, char** argv) {
     ityr::profiler_end();
 
     if (ityr::is_master()) {
-      printf("[%d] %ld ns", r, t1 - t0);
+      printf("[%d] %'ld ns", r, t1 - t0);
     }
 
     if (verify_result) {
@@ -302,9 +245,68 @@ int main(int argc, char** argv) {
 
     ityr::profiler_flush();
   }
+}
 
-  ityr::ori::free_coll<elem_t>(a_ptr);
-  ityr::ori::free_coll<elem_t>(b_ptr);
+void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
+  if (ityr::is_master()) {
+    printf("Usage: %s [options]\n"
+           "  options:\n"
+           "    -n : Input size (size_t)\n"
+           "    -r : # of repeats (int)\n"
+           "    -c : cutoff count for recursive tasks (size_t)\n"
+           "    -v : verify the result (int)\n", argv[0]);
+  }
+  exit(1);
+}
+
+int main(int argc, char** argv) {
+  ityr::init();
+
+  int opt;
+  while ((opt = getopt(argc, argv, "n:r:c:m:v:h")) != EOF) {
+    switch (opt) {
+      case 'n':
+        n_input = atoll(optarg);
+        break;
+      case 'r':
+        n_repeats = atoi(optarg);
+        break;
+      case 'c':
+        cutoff_count = atoll(optarg);
+        break;
+      case 'v':
+        verify_result = atoi(optarg);
+        break;
+      case 'h':
+      default:
+        show_help_and_exit(argc, argv);
+    }
+  }
+
+  if (ityr::is_master()) {
+    setlocale(LC_NUMERIC, "en_US.UTF-8");
+    printf("=============================================================\n"
+           "[Cilksort]\n"
+           "# of processes:               %d\n"
+           "Element size:                 %ld bytes\n"
+           "N:                            %ld\n"
+           "# of repeats:                 %d\n"
+           "Cutoff count:                 %ld\n"
+           "Verify result:                %d\n"
+           "-------------------------------------------------------------\n",
+           ityr::n_ranks(), sizeof(elem_t), n_input, n_repeats,
+           cutoff_count, verify_result);
+
+    printf("[Compile Options]\n");
+    ityr::print_compile_options();
+    printf("-------------------------------------------------------------\n");
+    printf("[Runtime Options]\n");
+    ityr::print_runtime_options();
+    printf("=============================================================\n\n");
+    fflush(stdout);
+  }
+
+  run();
 
   ityr::fini();
   return 0;

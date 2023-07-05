@@ -27,6 +27,41 @@ result_t fib_rec(int n) {
   }
 }
 
+void run() {
+  for (int r = 0; r < n_repeats; r++) {
+    ityr::profiler_begin();
+
+    auto t0 = ityr::gettime_ns();
+
+    result_t result = ityr::root_exec([]{
+      return fib_rec(n_input);
+    });
+
+    auto t1 = ityr::gettime_ns();
+
+    ityr::profiler_end();
+
+    if (ityr::is_master()) {
+      printf("[%d] %'ld ns", r, t1 - t0);
+
+      if (verify_result) {
+        result_t answer = fib_fast(n_input);
+        if (result == answer) {
+          printf(" - Result verified: fib(%d) = %ld", n_input, result);
+        } else {
+          printf(" - Wrong result: fib(%d) should be %ld but got %ld",
+                 n_input, answer, result);
+        }
+      }
+
+      printf("\n");
+      fflush(stdout);
+    }
+
+    ityr::profiler_flush();
+  }
+}
+
 void show_help_and_exit(int argc [[maybe_unused]], char** argv) {
   if (ityr::is_master()) {
     printf("Usage: %s [options]\n"
@@ -79,38 +114,7 @@ int main(int argc, char** argv) {
     fflush(stdout);
   }
 
-  for (int r = 0; r < n_repeats; r++) {
-    ityr::profiler_begin();
-
-    auto t0 = ityr::gettime_ns();
-
-    result_t result = ityr::root_exec([]{
-      return fib_rec(n_input);
-    });
-
-    auto t1 = ityr::gettime_ns();
-
-    ityr::profiler_end();
-
-    if (ityr::is_master()) {
-      printf("[%d] %ld ns", r, t1 - t0);
-
-      if (verify_result) {
-        result_t answer = fib_fast(n_input);
-        if (result == answer) {
-          printf(" - Result verified: fib(%d) = %ld", n_input, result);
-        } else {
-          printf(" - Wrong result: fib(%d) should be %ld but got %ld",
-                 n_input, answer, result);
-        }
-      }
-
-      printf("\n");
-      fflush(stdout);
-    }
-
-    ityr::profiler_flush();
-  }
+  run();
 
   ityr::fini();
   return 0;
