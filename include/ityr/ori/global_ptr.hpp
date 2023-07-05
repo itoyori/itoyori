@@ -431,10 +431,12 @@ ITYR_TEST_CASE("[ityr::ori::global_ptr] global reference") {
   for (int i = 0; i < n_ranks; i++) {
     core::instance::get().release();
 
-    auto req_send = common::mpi_isend(&p, 1, (n_ranks + my_rank + 1) % n_ranks, i, mpicomm);
-    auto req_recv = common::mpi_irecv(&p, 1, (n_ranks + my_rank - 1) % n_ranks, i, mpicomm);
-    common::mpi_wait(req_send);
-    common::mpi_wait(req_recv);
+    if (n_ranks > 1) {
+      auto req_send = common::mpi_isend(&p, 1, (n_ranks + my_rank + 1) % n_ranks, i, mpicomm);
+      auto req_recv = common::mpi_irecv(&p, 1, (n_ranks + my_rank - 1) % n_ranks, i, mpicomm);
+      common::mpi_wait(req_send);
+      common::mpi_wait(req_recv);
+    }
 
     core::instance::get().acquire();
 
