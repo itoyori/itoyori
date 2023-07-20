@@ -1,6 +1,6 @@
-# Itoyori
+# Welcome to Itoyori
 
-Itoyori is a distributed task-parallel runtime system for global-view fork-join task parallelism.
+Itoyori is a distributed multi-threading runtime system for global-view fork-join task parallelism.
 It is implemented as a C++17 header-only library over MPI (which must have a full support of MPI-3 RMA).
 
 This README explains the basic usage of Itoyori for running example programs.
