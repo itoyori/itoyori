@@ -4,14 +4,29 @@
 #include <tuple>
 #include <memory>
 
-#include <mlog/mlog.h>
-
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/options.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/options.hpp"
+
+#if __has_include(<mlog/mlog.h>)
+#include <mlog/mlog.h>
+#else
+#define MLOG_BEGIN(...) ((void*)0)
+#define MLOG_END(...)
+#define MLOG_READ_ARG(buf, type) ((type){})
+namespace ityr::common::profiler {
+using mlog_data_t = void*;
+inline void mlog_die() {
+  die("Trace profiler cannot be used because MassiveLogger is not loaded.");
+}
+inline void mlog_init(void**, int, size_t) { mlog_die(); }
+inline void mlog_flush_all(void**, FILE*) { mlog_die(); }
+inline void mlog_clear_all(void**) { mlog_die(); }
+}
+#endif
 
 namespace ityr::common::profiler {
 
