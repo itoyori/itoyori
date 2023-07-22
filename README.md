@@ -6,6 +6,11 @@ It is implemented as a C++17 header-only library over MPI (which must have a ful
 This README explains the basic usage of Itoyori for running example programs.
 For more information, please see [publications](#publications).
 
+## Supported Architectures
+
+- x86_64
+- aarch64
+
 ## Getting Started
 
 ```sh
