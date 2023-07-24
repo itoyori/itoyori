@@ -3,6 +3,8 @@
 Itoyori enables concise and straightforward expression for parallel algorithms, but Itoyori-style programming has some (perhaps nonintuitive) pitfalls.
 If you encounter segmentation faults or weird behavior with Itoyori, it is recommended to consult this document to check if your program does not violate any of the following rules.
 
+[TOC]
+
 ## Lifetime of Global Objects
 
 Global memory must be freed before finalization.

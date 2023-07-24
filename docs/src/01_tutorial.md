@@ -2,6 +2,8 @@
 
 This tutorial explains the basics of writing Itoyori programs.
 
+[TOC]
+
 ## Execution Model
 
 An Itoyori program begins with the Single Program Multiple Data (SPMD) execution model, as it is launched by MPI.
