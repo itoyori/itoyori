@@ -260,7 +260,7 @@ With `ityr::checkout_mode::no_access` mode, global references (`ityr::ori::globa
 Calling checkout/checkin operations is then on the user's responsibility.
 In the above case, global reference `x_ref` is used to get the global value with `ityr::ori::global_ref::get()`.
 
-## Unattended Data Races
+## Unintentional Data Races
 
 Itoyori's checkout mode (`ityr::checkout_mode`) must be specified so that no data race occurs.
 Even if the program does not actually modify the checked-out data, the runtime system treats the checked-out region as *dirty* if `read_write` or `write` mode is specified.
@@ -283,7 +283,7 @@ ityr::parallel_invoke(
 ```
 
 The above program concurrently checks out the same region with the `read_write` mode.
-Even if the program does not actually write to the region, this is not allowed in Itoyori because it can lead to unattended data update.
+Even if the program does not actually write to the region, this is not allowed in Itoyori because it can lead to unintentional data update.
 
 Good example:
 ```cpp
