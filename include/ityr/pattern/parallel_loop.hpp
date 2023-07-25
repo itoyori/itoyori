@@ -250,6 +250,112 @@ inline T transform_reduce(const execution::parallel_policy& opts,
   return transform_reduce(opts, first1, last1, first2, init, std::plus<>{}, std::multiplies<>{});
 }
 
+template <typename ForwardIterator1, typename ForwardIteratorD,
+          typename UnaryOp>
+inline ForwardIteratorD transform(const execution::parallel_policy& opts,
+                                  ForwardIterator1                  first1,
+                                  ForwardIterator1                  last1,
+                                  ForwardIteratorD                  first_d,
+                                  UnaryOp                           unary_op) {
+  if constexpr (is_global_iterator_v<ForwardIterator1>) {
+    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
+    // automatically convert global pointers to global iterators with read-only access
+    auto first1_ = make_global_iterator(first1, checkout_mode::read);
+    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
+    transform(opts, first1_, last1_, first_d, unary_op);
+  }
+
+  // If the destination value type is trivially copyable, write-only access is possible
+  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
+                                             checkout_mode::write_t,
+                                             checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
+    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
+                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
+    // automatically convert global pointers to global iterators
+    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
+    transform(opts, first1, last1, first_d_, unary_op);
+  }
+
+  auto seq_opts = execution::sequenced_policy{.checkout_count = opts.checkout_count};
+  auto serial_fn = [=](ForwardIterator1 first1_,
+                       ForwardIterator1 last1_,
+                       ForwardIteratorD first_d_) mutable {
+    for_each(seq_opts, first1_, last1_, first_d_, [&](auto&& v1, auto&& d) {
+      d = unary_op(std::forward<decltype(v1)>(v1));
+    });
+  };
+
+  parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first_d);
+
+  return std::next(first_d, std::distance(first1, last1));
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIteratorD,
+          typename BinaryOp>
+inline ForwardIteratorD transform(const execution::parallel_policy& opts,
+                                  ForwardIterator1                  first1,
+                                  ForwardIterator1                  last1,
+                                  ForwardIterator2                  first2,
+                                  ForwardIteratorD                  first_d,
+                                  BinaryOp                          binary_op) {
+  if constexpr (is_global_iterator_v<ForwardIterator1>) {
+    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
+    // automatically convert global pointers to global iterators with read-only access
+    auto first1_ = make_global_iterator(first1, checkout_mode::read);
+    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
+    transform(opts, first1_, last1_, first2, first_d, binary_op);
+  }
+
+  if constexpr (is_global_iterator_v<ForwardIterator2>) {
+    static_assert(std::is_same_v<typename ForwardIterator2::mode, checkout_mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator2::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
+    // automatically convert global pointers to global iterators with read-only access
+    auto first2_ = make_global_iterator(first2, checkout_mode::read);
+    transform(opts, first1, last1, first2_, first_d, binary_op);
+  }
+
+  // If the destination value type is trivially copyable, write-only access is possible
+  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
+                                             checkout_mode::write_t,
+                                             checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
+    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
+                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
+    // automatically convert global pointers to global iterators
+    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
+    transform(opts, first1, last1, first2, first_d_, binary_op);
+  }
+
+  auto seq_opts = execution::sequenced_policy{.checkout_count = opts.checkout_count};
+  auto serial_fn = [=](ForwardIterator1 first1_,
+                       ForwardIterator1 last1_,
+                       ForwardIterator2 first2_,
+                       ForwardIteratorD first_d_) mutable {
+    for_each(seq_opts, first1_, last1_, first2_, first_d_, [&](auto&& v1, auto&& v2, auto&& d) {
+      d = binary_op(std::forward<decltype(v1)>(v1), std::forward<decltype(v2)>(v2));
+    });
+  };
+
+  parallel_loop_generic(opts, serial_fn, []{}, first1, last1, first2, first_d);
+
+  return std::next(first_d, std::distance(first1, last1));
+}
+
 template <typename SerialFn, typename CombineFn,
           typename ForwardIterator, typename... ForwardIterators>
 inline auto parallel_loop_generic(const execution::parallel_policy& opts,
@@ -348,63 +454,63 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
   ori::init();
 
   ITYR_SUBCASE("default cutoff") {
-    int n = 10000;
-    int r = ito::root_exec([=] {
+    long n = 10000;
+    long r = ito::root_exec([=] {
       return reduce(
           execution::par,
-          ityr::count_iterator<int>(0),
-          ityr::count_iterator<int>(n));
+          ityr::count_iterator<long>(0),
+          ityr::count_iterator<long>(n));
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
 
   ITYR_SUBCASE("custom cutoff") {
-    int n = 100000;
-    int r = ito::root_exec([=] {
+    long n = 100000;
+    long r = ito::root_exec([=] {
       return reduce(
           execution::parallel_policy{.cutoff_count = 100},
-          ityr::count_iterator<int>(0),
-          ityr::count_iterator<int>(n));
+          ityr::count_iterator<long>(0),
+          ityr::count_iterator<long>(n));
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
 
   ITYR_SUBCASE("transform unary") {
-    int n = 100000;
-    int r = ito::root_exec([=] {
+    long n = 100000;
+    long r = ito::root_exec([=] {
       return transform_reduce(
           execution::parallel_policy{.cutoff_count = 100},
-          ityr::count_iterator<int>(0),
-          ityr::count_iterator<int>(n),
-          0,
-          std::plus<int>{},
-          [](int x) { return x * x; });
+          ityr::count_iterator<long>(0),
+          ityr::count_iterator<long>(n),
+          long(0),
+          std::plus<long>{},
+          [](long x) { return x * x; });
     });
     ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
   }
 
   ITYR_SUBCASE("transform binary") {
-    int n = 100000;
-    int r = ito::root_exec([=] {
+    long n = 100000;
+    long r = ito::root_exec([=] {
       return transform_reduce(
           execution::parallel_policy{.cutoff_count = 100},
-          ityr::count_iterator<int>(0),
-          ityr::count_iterator<int>(n),
-          ityr::count_iterator<int>(0),
-          0,
-          std::plus<int>{},
-          [](int x, int y) { return x * y; });
+          ityr::count_iterator<long>(0),
+          ityr::count_iterator<long>(n),
+          ityr::count_iterator<long>(0),
+          long(0),
+          std::plus<long>{},
+          [](long x, long y) { return x * y; });
     });
     ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
   }
 
   ITYR_SUBCASE("zero elements") {
-    int r = ito::root_exec([=] {
+    long r = ito::root_exec([=] {
       return reduce(
           execution::parallel_policy{.cutoff_count = 100},
-          ityr::count_iterator<int>(0),
-          ityr::count_iterator<int>(0),
-          30);
+          ityr::count_iterator<long>(0),
+          ityr::count_iterator<long>(0),
+          long(30));
     });
     ITYR_CHECK(r == 30);
   }
@@ -417,51 +523,45 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   ito::init();
   ori::init();
 
-  int n = 100000;
-  ori::global_ptr<int> p = ori::malloc_coll<int>(n);
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
 
   ito::root_exec([=] {
-    int count = 0;
+    long count = 0;
     for_each(
         execution::sequenced_policy{.checkout_count = 100},
         make_global_iterator(p    , checkout_mode::write),
         make_global_iterator(p + n, checkout_mode::write),
-        [&](int& v) { v = count++; });
+        [&](long& v) { v = count++; });
   });
 
   ITYR_SUBCASE("default cutoff") {
-    int r = ito::root_exec([=] {
+    long r = ito::root_exec([=] {
       return reduce(
           execution::par,
-          p,
-          p + n,
-          0,
-          std::plus<int>{});
+          p, p + n);
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
 
   ITYR_SUBCASE("custom cutoff and checkout count") {
-    int r = ito::root_exec([=] {
+    long r = ito::root_exec([=] {
       return reduce(
           execution::parallel_policy{.cutoff_count = 100, .checkout_count = 50},
-          p,
-          p + n,
-          0,
-          std::plus<int>{});
+          p, p + n);
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
 
   ITYR_SUBCASE("without auto checkout") {
-    int r = ito::root_exec([=] {
+    long r = ito::root_exec([=] {
       return transform_reduce(
           execution::par,
           make_global_iterator(p    , checkout_mode::no_access),
           make_global_iterator(p + n, checkout_mode::no_access),
-          0,
-          std::plus<int>{},
-          [](ori::global_ref<int> gref) {
+          long(0),
+          std::plus<long>{},
+          [](ori::global_ref<long> gref) {
             return gref.get();
           });
     });
@@ -469,6 +569,40 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr")
   }
 
   ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel transform with global_ptr") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    auto r = transform(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        count_iterator<long>(0), count_iterator<long>(n), p1,
+        [](long i) { return i * 2; });
+    ITYR_CHECK(r == p1 + n);
+
+    transform(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        count_iterator<long>(0), count_iterator<long>(n), p1, p2,
+        [](long i, long j) { return i * j; });
+
+    auto sum = reduce(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p2, p2 + n);
+
+    ITYR_CHECK(sum == n * (n - 1) * (2 * n - 1) / 3);
+  });
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
 
   ori::fini();
   ito::fini();
