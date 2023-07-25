@@ -269,7 +269,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                           BinaryReduceOp         binary_reduce_op,
                           BinaryTransformOp      binary_transform_op) {
   using it1_ref = typename std::iterator_traits<ForwardIterator1>::reference;
-  using it2_ref = typename std::iterator_traits<ForwardIterator1>::reference;
+  using it2_ref = typename std::iterator_traits<ForwardIterator2>::reference;
   using transformed_t = std::invoke_result_t<BinaryTransformOp, it1_ref, it2_ref>;
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, transformed_t>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, transformed_t, transformed_t>);
