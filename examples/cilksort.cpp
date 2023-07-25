@@ -60,10 +60,10 @@
 
 using elem_t = int;
 
-std::size_t n_input        = std::size_t(1) * 1024 * 1024;
-int         n_repeats      = 10;
-std::size_t cutoff_count   = std::size_t(4) * 1024;
-bool        verify_result  = true;
+std::size_t n_input       = std::size_t(1) * 1024 * 1024;
+int         n_repeats     = 10;
+std::size_t cutoff_count  = std::size_t(4) * 1024;
+bool        verify_result = true;
 
 template <typename T>
 auto divide(const ityr::global_span<T>& s, typename ityr::global_span<T>::size_type at) {
@@ -164,33 +164,31 @@ void fill_array(ityr::global_span<T> s) {
   static int seed = 0;
   std::mt19937 engine(seed++);
 
-  ityr::serial_for_each({.checkout_count = cutoff_count},
-                        ityr::make_global_iterator(s.begin(), ityr::checkout_mode::write),
-                        ityr::make_global_iterator(s.end()  , ityr::checkout_mode::write),
-                        [&](T& v) { v = get_random_elem<T>(engine); });
+  ityr::for_each(
+      ityr::execution::sequenced_policy{.checkout_count = cutoff_count},
+      ityr::make_global_iterator(s.begin(), ityr::checkout_mode::write),
+      ityr::make_global_iterator(s.end()  , ityr::checkout_mode::write),
+      [&](T& v) { v = get_random_elem<T>(engine); });
 }
 
 template <typename T>
 bool check_sorted(ityr::global_span<T> s) {
   struct acc_type {
-    bool is_init;
     bool success;
     T first;
     T last;
   };
-  auto ret = ityr::parallel_reduce(
-    {.cutoff_count = cutoff_count, .checkout_count = cutoff_count},
-    s.begin(),
-    s.end(),
-    acc_type{true, true, T{}, T{}},
-    [](const auto& l, const auto& r) {
-      if (l.is_init) return r;
-      if (r.is_init) return l;
-      if (!l.success || !r.success) return acc_type{false, false, l.first, r.last};
-      else if (l.last > r.first) return acc_type{false, false, l.first, r.last};
-      else return acc_type{false, true, l.first, r.last};
-    },
-    [](const T& e) { return acc_type{false, true, e, e}; });
+  auto ret = ityr::transform_reduce(
+      ityr::execution::parallel_policy{.cutoff_count   = cutoff_count,
+                                       .checkout_count = cutoff_count},
+      s.begin(), s.end(),
+      acc_type{true, T{}, T{}},
+      [](const auto& l, const auto& r) {
+        if (!l.success || !r.success) return acc_type{false, l.first, r.last};
+        else if (l.last > r.first)    return acc_type{false, l.first, r.last};
+        else                          return acc_type{true , l.first, r.last};
+      },
+      [](const T& e) { return acc_type{true, e, e}; });
   return ret.success;
 }
 

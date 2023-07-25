@@ -46,7 +46,8 @@ Bad example:
 ityr::global_vector<int> gv({.collective = true}, 100);
 /* ... */
 ityr::root_exec([=] { // A copy of the entire global vector is created
-  ityr::parallel_for_each(
+  ityr::for_each(
+      ityr::execution::par,
       ityr::make_global_iterator(gv.begin(), ityr::checkout_mode::read),
       ityr::make_global_iterator(gv.end()  , ityr::checkout_mode::read),
       [=](int x) { /* ... */ });
@@ -62,10 +63,11 @@ ityr::global_vector<int> gv({.collective = true}, 100);
 ityr::global_span<int> gs(gv.begin(), gv.end());
 /* ... */
 ityr::root_exec([=] {
-  ityr::parallel_for_each(
-    ityr::make_global_iterator(gs.begin(), ityr::checkout_mode::read),
-    ityr::make_global_iterator(gs.end()  , ityr::checkout_mode::read),
-    [=](int x) { /* ... */ });
+  ityr::for_each(
+      ityr::execution::par,
+      ityr::make_global_iterator(gs.begin(), ityr::checkout_mode::read),
+      ityr::make_global_iterator(gs.end()  , ityr::checkout_mode::read),
+      [=](int x) { /* ... */ });
 });
 ```
 
@@ -221,7 +223,8 @@ Bad example:
 ityr::root_exec([=] {
   ityr::global_vector<int> gv(100);
   /* ... */
-  ityr::parallel_reduce(
+  ityr::transform_reduce(
+      ityr::execution::par,
       gv.begin(), gv.end(),
       0, std::plus<int>{},
       [=](int x) {
@@ -234,7 +237,7 @@ ityr::root_exec([=] {
 });
 ```
 
-In the above example, `ityr::parallel_reduce()` internally checks out memory for `gv` at some granularity, but performing fork/join operations at each iteration causes the above-mentioned issue of checkout/checkin across thread migration.
+In the above example, `ityr::transform_reduce()` internally checks out memory for `gv` at some granularity, but performing fork/join operations at each iteration causes the above-mentioned issue of checkout/checkin across thread migration.
 If there is nested parallelism, automatic checkout should be disabled by specifing `ityr::checkout_mode::no_access` mode.
 
 Good example:
@@ -242,7 +245,8 @@ Good example:
 ityr::root_exec([=] {
   ityr::global_vector<int> gv(100);
   /* ... */
-  ityr::parallel_reduce(
+  ityr::transform_reduce(
+      ityr::execution::par,
       ityr::make_global_iterator(gv.begin(), ityr::checkout_mode::no_access),
       ityr::make_global_iterator(gv.end()  , ityr::checkout_mode::no_access),
       0, std::plus<int>{},

@@ -73,7 +73,7 @@ The `include/ityr/` dir includes following sub directories:
 - `common`: common utils for the following layers
 - `ito`: low-level threading layer (fork-join primitives)
 - `ori`: low-level PGAS layer (checkout/checkin APIs)
-- `pattern`: parallel patterns (e.g., `parallel_for_each`, `parallel_reduce`)
+- `pattern`: parallel patterns (e.g., `for_each()`, `reduce()`)
 - `container`: containers for global memory objects (e.g., `global_vector`, `global_span`)
 
 The `ito` and `ori` layers are loosely coupled, so that each layer runs independently.

@@ -86,19 +86,20 @@ result_t nqueens(int n, int j, board b, int depth) {
     return 1;
   } else {
     /* try each possible position for queen <j> */
-    return ityr::parallel_reduce(
-      ityr::count_iterator<int>(0),
-      ityr::count_iterator<int>(n),
-      0,
-      std::plus<result_t>(),
-      [=](int i) mutable -> result_t {
-        b.array[j] = static_cast<state_t>(i);
-        if (ok(j + 1, b.array)) {
-          return nqueens(n, j + 1, b, depth + 1);
-        } else {
-          return 0;
-        }
-      });
+    return ityr::transform_reduce(
+        ityr::execution::par,
+        ityr::count_iterator<int>(0),
+        ityr::count_iterator<int>(n),
+        0,
+        std::plus<result_t>(),
+        [=](int i) mutable -> result_t {
+          b.array[j] = static_cast<state_t>(i);
+          if (ok(j + 1, b.array)) {
+            return nqueens(n, j + 1, b, depth + 1);
+          } else {
+            return 0;
+          }
+        });
   }
 }
 

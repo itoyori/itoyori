@@ -245,15 +245,18 @@ private:
   void construct_elems(pointer b, pointer e, Args&&... args) const {
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
-        parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
-                          make_construct_iterator(b),
-                          make_construct_iterator(e),
-                          [=](T* p) { new (p) T(args...); });
+        for_each(
+            execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
+                                       .checkout_count = opts.cutoff_count},
+            make_construct_iterator(b),
+            make_construct_iterator(e),
+            [=](T* p) { new (p) T(args...); });
       } else {
-        serial_for_each({.checkout_count = opts.cutoff_count},
-                        make_construct_iterator(b),
-                        make_construct_iterator(e),
-                        [&](T* p) { new (p) T(args...); });
+        for_each(
+            execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+            make_construct_iterator(b),
+            make_construct_iterator(e),
+            [&](T* p) { new (p) T(args...); });
       }
     });
   }
@@ -262,17 +265,20 @@ private:
   void construct_elems_from_iter(ForwardIterator first, ForwardIterator last, pointer b) const {
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
-        parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
-                          first,
-                          last,
-                          make_construct_iterator(b),
-                          [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
+        for_each(
+            execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
+                                       .checkout_count = opts.cutoff_count},
+            first,
+            last,
+            make_construct_iterator(b),
+            [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
       } else {
-        serial_for_each({.checkout_count = opts.cutoff_count},
-                        first,
-                        last,
-                        make_construct_iterator(b),
-                        [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
+        for_each(
+            execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+            first,
+            last,
+            make_construct_iterator(b),
+            [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
       }
     });
   }
@@ -281,15 +287,18 @@ private:
     if constexpr (!std::is_trivially_destructible_v<T>) {
       root_exec_if_coll([=, opts = opts_]() {
         if (opts.parallel_destruct) {
-          parallel_for_each({.cutoff_count = opts.cutoff_count, .checkout_count = opts.cutoff_count},
-                            make_global_iterator(b, checkout_mode::read_write),
-                            make_global_iterator(e, checkout_mode::read_write),
-                            [](T& x) { std::destroy_at(&x); });
+          for_each(
+              execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
+                                         .checkout_count = opts.cutoff_count},
+              make_global_iterator(b, checkout_mode::read_write),
+              make_global_iterator(e, checkout_mode::read_write),
+              [](T& x) { std::destroy_at(&x); });
         } else {
-          serial_for_each({.checkout_count = opts.cutoff_count},
-                          make_global_iterator(b, checkout_mode::read_write),
-                          make_global_iterator(e, checkout_mode::read_write),
-                          [](T& x) { std::destroy_at(&x); });
+          for_each(
+              execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+              make_global_iterator(b, checkout_mode::read_write),
+              make_global_iterator(e, checkout_mode::read_write),
+              [](T& x) { std::destroy_at(&x); });
         }
       });
     }
@@ -399,38 +408,32 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     ITYR_CHECK(gv1.size() == std::size_t(n));
     ITYR_CHECK(gv1.capacity() >= std::size_t(n));
     root_exec([&] {
-      long count = parallel_reduce({.cutoff_count   = 128,
-                                    .checkout_count = 128},
-                                   gv1.begin(),
-                                   gv1.end(),
-                                   long(0),
-                                   std::plus<long>{});
+      long count = reduce(
+          execution::parallel_policy{.cutoff_count = 128},
+          gv1.begin(), gv1.end());
       ITYR_CHECK(count == n * (n - 1) / 2);
     });
 
     ITYR_SUBCASE("copy") {
       global_vector<long> gv2 = gv1;
       root_exec([&] {
-        parallel_for_each({.cutoff_count   = 128,
-                           .checkout_count = 128},
-                          make_global_iterator(gv2.begin(), checkout_mode::read_write),
-                          make_global_iterator(gv2.end()  , checkout_mode::read_write),
-                          [](long& i) { i *= 2; });
-
-        long count1 = parallel_reduce({.cutoff_count   = 128,
+        for_each(
+            execution::parallel_policy{.cutoff_count   = 128,
                                        .checkout_count = 128},
-                                      gv1.begin(),
-                                      gv1.end(),
-                                      long(0),
-                                      std::plus<long>{});
+            make_global_iterator(gv2.begin(), checkout_mode::read_write),
+            make_global_iterator(gv2.end()  , checkout_mode::read_write),
+            [](long& i) { i *= 2; });
+
+        long count1 = reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            gv1.begin(), gv1.end());
         ITYR_CHECK(count1 == n * (n - 1) / 2);
 
-        long count2 = parallel_reduce({.cutoff_count   = 128,
+        long count2 = reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
                                        .checkout_count = 128},
-                                      gv2.begin(),
-                                      gv2.end(),
-                                      long(0),
-                                      std::plus<long>{});
+            gv2.begin(), gv2.end());
         ITYR_CHECK(count2 == n * (n - 1));
       });
     }
@@ -440,12 +443,10 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       ITYR_CHECK(gv1.empty());
       ITYR_CHECK(gv1.capacity() == 0);
       root_exec([&] {
-        long count = parallel_reduce({.cutoff_count   = 128,
-                                      .checkout_count = 128},
-                                     gv2.begin(),
-                                     gv2.end(),
-                                     long(0),
-                                     std::plus<long>{});
+        long count = reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            gv2.begin(), gv2.end());
         ITYR_CHECK(count == n * (n - 1) / 2);
       });
     }
@@ -453,22 +454,18 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     ITYR_SUBCASE("resize") {
       gv1.resize(n * 10, 3);
       root_exec([&] {
-        long count = parallel_reduce({.cutoff_count   = 128,
-                                      .checkout_count = 128},
-                                     gv1.begin(),
-                                     gv1.end(),
-                                     long(0),
-                                     std::plus<long>{});
+        long count = reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            gv1.begin(), gv1.end());
         ITYR_CHECK(count == n * (n - 1) / 2 + (n * 9) * 3);
       });
       gv1.resize(n * 5);
       root_exec([&] {
-        long count = parallel_reduce({.cutoff_count   = 128,
-                                      .checkout_count = 128},
-                                     gv1.begin(),
-                                     gv1.end(),
-                                     long(0),
-                                     std::plus<long>{});
+        long count = reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            gv1.begin(), gv1.end());
         ITYR_CHECK(count == n * (n - 1) / 2 + (n * 4) * 3);
       });
     }
@@ -489,13 +486,14 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       long next_size = gv2.capacity() * 2;
       gv2.resize(next_size);
       root_exec([&] {
-        long count = parallel_reduce({.cutoff_count   = 128,
-                                      .checkout_count = 128},
-                                     gv2.begin(),
-                                     gv2.end(),
-                                     long(0),
-                                     std::plus<long>{},
-                                     [](const move_only_t& mo) { return mo.value(); });
+        long count = transform_reduce(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            gv2.begin(),
+            gv2.end(),
+            long(0),
+            std::plus<long>{},
+            [](const move_only_t& mo) { return mo.value(); });
         ITYR_CHECK(count == n * (n - 1) / 2 - (next_size - n));
       });
     }
@@ -520,31 +518,31 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
 
     root_exec([&]() {
       auto check_sum = [&](long ans) {
-        long count =
-          parallel_reduce(make_global_iterator(gvs.begin(), checkout_mode::no_access),
-                          make_global_iterator(gvs.end()  , checkout_mode::no_access),
-                          long(0),
-                          std::plus<long>{},
-                          [&](auto&& gv_ref) {
-            auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
-            auto gv_begin = cs[0].begin();
-            auto gv_end   = cs[0].end();
-            cs.checkin();
-            return parallel_reduce({.cutoff_count   = 128,
-                                    .checkout_count = 128},
-                                   gv_begin,
-                                   gv_end,
-                                   long(0),
-                                   std::plus<long>{});
-          });
+        long count = transform_reduce(
+            execution::par,
+            make_global_iterator(gvs.begin(), checkout_mode::no_access),
+            make_global_iterator(gvs.end()  , checkout_mode::no_access),
+            long(0),
+            std::plus<long>{},
+            [&](auto&& gv_ref) {
+          auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
+          auto gv_begin = cs[0].begin();
+          auto gv_end   = cs[0].end();
+          cs.checkin();
+          return reduce(execution::parallel_policy{.cutoff_count   = 128,
+                                                   .checkout_count = 128},
+                        gv_begin, gv_end);
+        });
         ITYR_CHECK(count == ans);
       };
 
       check_sum(n * (n - 1) / 2 * n_ranks);
 
-      parallel_for_each(make_global_iterator(gvs.begin(), checkout_mode::read_write),
-                        make_global_iterator(gvs.end()  , checkout_mode::read_write),
-                        [&](global_vector<long>& gv) {
+      for_each(
+          execution::par,
+          make_global_iterator(gvs.begin(), checkout_mode::read_write),
+          make_global_iterator(gvs.end()  , checkout_mode::read_write),
+          [&](global_vector<long>& gv) {
         for (long i = 0; i < 100; i++) {
           gv.push_back(i);
         }
@@ -552,11 +550,12 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
           gv.pop_back();
         }
         gv.resize(2 * n);
-        serial_for_each({.checkout_count = 128},
-                        count_iterator<long>(n),
-                        count_iterator<long>(2 * n),
-                        make_global_iterator(gv.begin() + n, checkout_mode::write),
-                        [](long i, long& x) { x = i; });
+        for_each(
+            execution::sequenced_policy{.checkout_count = 128},
+            count_iterator<long>(n),
+            count_iterator<long>(2 * n),
+            make_global_iterator(gv.begin() + n, checkout_mode::write),
+            [](long i, long& x) { x = i; });
       });
 
       check_sum((2 * n) * (2 * n - 1) / 2 * n_ranks);

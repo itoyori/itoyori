@@ -339,13 +339,13 @@ for (std::size_t i = 0; i < v.size(); i += block_size) {
 
 It makes each checkout call with a size no larger than `block_size` to prevent too large checkout requests.
 
-By using a higher-order function `ityr::serial_for_each` with *global iterators*, the same goal can be achieved:
+By using a higher-order function `ityr::for_each()` with *global iterators*, the same goal can be achieved:
 ```cpp
 ityr::global_vector<int> v(/* ... */);
 /* ... */
 std::size_t block_size = /* ... */;
-ityr::serial_for_each(
-    {.checkout_count = block_size},
+ityr::for_each(
+    ityr::execution::sequenced_policy{.checkout_count = block_size},
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
@@ -353,12 +353,13 @@ ityr::serial_for_each(
 });
 ```
 
-`ityr::serial_for_each` receives a user-defined function (lambda) that operates on each element, resulting in more concise and structured code.
+`ityr::for_each` receives a user-defined function (lambda) that operates on each element, resulting in more concise and structured code.
 
 Notes:
-- Itoyori's iterator-based functions such as `ityr::serial_for_each()` resemble C++ STL algorithms
-- The first (optional) argument `ityr::serial_loop_options` specifies the number of elements that are internally checked out at the same time
-    - By default, the checkout count is 1
+- Itoyori's iterator-based functions such as `ityr::for_each()` resemble C++ STL algorithms
+- The first argument `ityr::execution::sequenced_policy` specifies the sequential execution policy
+    - `checkout_count` parameter denotes the number of elements that are internally checked out at the same time
+    - By default, the checkout count is 1 (`ityr::execution::seq`)
 - If global iterators made with `ityr::make_global_iterator()` are passed, they are automatically checked out in the specified granularity
     - Global pointers can be treated as iterators, but they are not automatically checked out; instead `ityr::ori::global_ref` is passed to user functions
     - If the checkout mode is `read`, a const reference is passed to the user function; otherwise, a nonconst reference is passed
@@ -368,8 +369,9 @@ This can be easily translated into a parallel *for* loop:
 ityr::global_vector<int> v(/* ... */);
 /* ... */
 std::size_t block_size = /* ... */;
-ityr::parallel_for_each(
-    {.cutoff_count = block_size, .checkout_count = block_size},
+ityr::for_each(
+    ityr::execution::parallel_policy{.cutoff_count   = block_size,
+                                     .checkout_count = block_size},
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
@@ -378,17 +380,19 @@ ityr::parallel_for_each(
 ```
 
 Notes:
-- Internally, `ityr::parallel_for_each()` recursively divides the index space into two parts and runs them in parallel
-- The first (optional) argument `ityr::parallel_loop_options` accepts `cutoff_count` option, which specifies the cutoff count for the leaf tasks
+- With a parallel execution policy, `ityr::for_each()` recursively divides the index space into two parts and runs them in parallel
+- The execution policy `ityr::execution::parallel_policy` accepts `cutoff_count` option, which specifies the cutoff count for the leaf tasks
     - Usually, the same value should be specified to both `cutoff_count` and `checkout_count`
+    - By default, the cutoff count is also 1 (`ityr::execution::par`)
 
-In addition, `ityr::parallel_for_each()` can accept multiple iterators:
+In addition, `ityr::for_each()` can accept multiple iterators:
 ```cpp
 ityr::global_vector<int> v(/* ... */);
 /* ... */
 std::size_t block_size = /* ... */;
-ityr::parallel_for_each(
-    {.cutoff_count = block_size, .checkout_count = block_size},
+ityr::for_each(
+    ityr::execution::parallel_policy{.cutoff_count   = block_size,
+                                     .checkout_count = block_size},
     ityr::count_iterator<int>(0),
     ityr::count_iterator<int>(v.size()),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::write),
@@ -398,10 +402,10 @@ ityr::parallel_for_each(
 ```
 
 `ityr::count_iterator` is a special iterator that counts up its value when incremented.
-Using it with `ityr::parallel_for_each` corresponds to parallelizing a loop that looks like `for (int i = 0; i < n; i++)`.
+Using it with `ityr::for_each()` corresponds to parallelizing a loop that looks like `for (int i = 0; i < n; i++)`.
 Thus, the elements of `v` in the above code will be 0, 1, 2, ... , n.
 
-AXPY is an example that can be concisely written with `ityr::parallel_for_each`.
+AXPY is an example that can be concisely written with `ityr::for_each()`.
 AXPY computes a scalar-vector product and adds the result to another vector:
 
 $$
@@ -413,7 +417,8 @@ where *a* is a scalar and *x* and *y* are vectors.
 AXPY example:
 ```cpp
 void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) {
-  ityr::parallel_for_each(
+  ityr::for_each(
+      ityr::execution::par,
       ityr::make_global_iterator(xs.begin(), ityr::checkout_mode::read),
       ityr::make_global_iterator(xs.end()  , ityr::checkout_mode::read),
       ityr::make_global_iterator(ys.begin(), ityr::checkout_mode::read_write),
@@ -423,36 +428,34 @@ void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) 
 }
 ```
 
-Similarly, the sum of vector elements can be computed in parallel with `ityr::parallel_reduce`.
+Similarly, the sum of vector elements can be computed in parallel with `ityr::reduce()`.
 
 Calculate sum:
 ```cpp
 double sum(ityr::global_span<double> xs) {
-  return
-    ityr::parallel_reduce(
-        xs.begin(), xs.end(),
-        double(0), std::plus<double>{});
+  return ityr::reduce(ityr::execution::par,
+                      xs.begin(), xs.end());
 }
 ```
 
 Note that `ityr::make_global_iterator()` is not needed here because the checkout mode is automatically inferred to `ityr::checkout_mode::read`.
-The user can also provide a user-defined function (lambda) to process each element before summation.
+The user can also provide a user-defined function (lambda) to process each element before summation with `ityr::transform_reduce()`.
 
 For example, to calculate L2 norm:
 ```cpp
 double norm(ityr::global_span<double> xs) {
   double s2 =
-    ityr::parallel_reduce(
-        xs.begin(), xs.end(),
-        double(0), std::plus<double>{},
-        [](double x) { return x * x; });
+    ityr::transform_reduce(ityr::execution::par,
+                           xs.begin(), xs.end(),
+                           double(0), std::plus<double>{},
+                           [](double x) { return x * x; });
   return std::sqrt(s2);
 }
 ```
 
 In the above code, `x * x` is applied to each element before summed up.
 
-`ityr::parallel_reduce` supports a general reduction operation more than just summation.
+`ityr::transform_reduce()` supports a general reduction operation more than just summation.
 The user can also change the identity value and the combine operator, as long as the operator is *associative* (*commutativity* is not required in Itoyori).
 
 Full code example to calculate AXPY and show the result's L2 norm:
@@ -460,7 +463,8 @@ Full code example to calculate AXPY and show the result's L2 norm:
 #include "ityr/ityr.hpp"
 
 void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) {
-  ityr::parallel_for_each(
+  ityr::for_each(
+      ityr::execution::par,
       ityr::make_global_iterator(xs.begin(), ityr::checkout_mode::read),
       ityr::make_global_iterator(xs.end()  , ityr::checkout_mode::read),
       ityr::make_global_iterator(ys.begin(), ityr::checkout_mode::read_write),
@@ -471,10 +475,10 @@ void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) 
 
 double norm(ityr::global_span<double> xs) {
   double s2 =
-    ityr::parallel_reduce(
-        xs.begin(), xs.end(),
-        double(0), std::plus<double>{},
-        [](double x) { return x * x; });
+    ityr::transform_reduce(ityr::execution::par,
+                           xs.begin(), xs.end(),
+                           double(0), std::plus<double>{},
+                           [](double x) { return x * x; });
   return std::sqrt(s2);
 }
 
