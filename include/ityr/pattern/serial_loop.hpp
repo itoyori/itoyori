@@ -18,11 +18,19 @@ struct parallel_policy {
   std::size_t checkout_count = 1;
 };
 
-inline void assert_sequenced_policy(const sequenced_policy& opts) {
+inline sequenced_policy to_sequenced_policy(const sequenced_policy& opts) {
+  return opts;
+}
+
+inline sequenced_policy to_sequenced_policy(const parallel_policy& opts) {
+  return {.checkout_count = opts.checkout_count};
+}
+
+inline void assert_policy(const sequenced_policy& opts) {
   ITYR_CHECK(0 < opts.checkout_count);
 }
 
-inline void assert_parallel_policy(const parallel_policy& opts) {
+inline void assert_policy(const parallel_policy& opts) {
   ITYR_CHECK(0 < opts.checkout_count);
   ITYR_CHECK(opts.checkout_count <= opts.cutoff_count);
 }
@@ -78,7 +86,6 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, &*first, &*last, fn);
     }
   } else {
-    assert_sequenced_policy(opts);
     for (; first != last; ++first) {
       fn(*first);
     }
@@ -120,7 +127,6 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, first1, last1, &*first2, fn);
     }
   } else {
-    assert_sequenced_policy(opts);
     for (; first1 != last1; ++first1, ++first2) {
       fn(*first1, *first2);
     }
@@ -180,7 +186,6 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, first1, last1, first2, &*first3, fn);
     }
   } else {
-    assert_sequenced_policy(opts);
     for (; first1 != last1; ++first1, ++first2, ++first3) {
       fn(*first1, *first2, *first3);
     }
