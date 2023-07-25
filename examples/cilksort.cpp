@@ -173,23 +173,15 @@ void fill_array(ityr::global_span<T> s) {
 
 template <typename T>
 bool check_sorted(ityr::global_span<T> s) {
-  struct acc_type {
-    bool success;
-    T first;
-    T last;
-  };
-  auto ret = ityr::transform_reduce(
+  if (s.size() <= 1) {
+    return true;
+  }
+  // check s[i] <= s[i+1] for all i
+  return ityr::transform_reduce(
       ityr::execution::parallel_policy{.cutoff_count   = cutoff_count,
                                        .checkout_count = cutoff_count},
-      s.begin(), s.end(),
-      acc_type{true, T{}, T{}},
-      [](const auto& l, const auto& r) {
-        if (!l.success || !r.success) return acc_type{false, l.first, r.last};
-        else if (l.last > r.first)    return acc_type{false, l.first, r.last};
-        else                          return acc_type{true , l.first, r.last};
-      },
-      [](const T& e) { return acc_type{true, e, e}; });
-  return ret.success;
+      s.begin(), s.end() - 1, s.begin() + 1,
+      true, std::logical_and<>{}, std::less_equal<>{});
 }
 
 void run() {
@@ -207,7 +199,7 @@ void run() {
   ityr::global_span<elem_t> b(b_vec.begin(), b_vec.end());
 
   for (int r = 0; r < n_repeats; r++) {
-    ityr::root_exec([=]{
+    ityr::root_exec([=] {
       fill_array(a);
     });
 
@@ -215,7 +207,7 @@ void run() {
 
     auto t0 = ityr::gettime_ns();
 
-    ityr::root_exec([=]{
+    ityr::root_exec([=] {
       cilksort(a, b);
     });
 
@@ -228,7 +220,7 @@ void run() {
     }
 
     if (verify_result) {
-      bool success = ityr::root_exec([=]{
+      bool success = ityr::root_exec([=] {
         return check_sorted(a);
       });
       if (ityr::is_master()) {
