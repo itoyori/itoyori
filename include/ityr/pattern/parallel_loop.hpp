@@ -10,6 +10,110 @@
 
 namespace ityr {
 
+template <typename SerialFn, typename CombineFn, typename ReleaseHandler,
+          typename ForwardIterator, typename... ForwardIterators>
+inline std::invoke_result_t<SerialFn, ForwardIterator, ForwardIterator, ForwardIterators...>
+parallel_loop_generic(const execution::parallel_policy& policy,
+                      SerialFn                          serial_fn,
+                      CombineFn                         combine_fn,
+                      ReleaseHandler                    rh,
+                      ForwardIterator                   first,
+                      ForwardIterator                   last,
+                      ForwardIterators...               firsts) {
+  using retval_t = std::invoke_result_t<SerialFn,
+                                        ForwardIterator, ForwardIterator, ForwardIterators...>;
+  ori::poll();
+
+  // for immediately executing cross-worker tasks in ADWS
+  ito::poll([]() { return ori::release_lazy(); },
+            [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
+
+  auto d = std::distance(first, last);
+  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
+    return serial_fn(first, last, firsts...);
+  }
+
+  auto mid = std::next(first, d / 2);
+  auto recur_fn_left = [=]() -> retval_t {
+    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
+                                 first, mid, firsts...);
+  };
+
+  auto recur_fn_right = [&]() -> retval_t {
+    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
+                                 mid, last, std::next(firsts, d / 2)...);
+  };
+
+  auto tgdata = ito::task_group_begin();
+
+  ito::thread<retval_t> th(ito::with_callback,
+                           [=]() { ori::acquire(rh); },
+                           [=]() { ori::release(); },
+                           ito::with_workhint, 1, 1,
+                           recur_fn_left);
+
+  if constexpr (std::is_void_v<retval_t>) {
+    recur_fn_right();
+
+    if (!th.serialized()) {
+      ori::release();
+    }
+
+    th.join();
+
+    ito::task_group_end(tgdata,
+                        []() { ori::release(); },
+                        []() { ori::acquire(); });
+
+    if (!th.serialized()) {
+      ori::acquire();
+    }
+  } else {
+    auto ret2 = recur_fn_right();
+
+    if (!th.serialized()) {
+      ori::release();
+    }
+
+    auto ret1 = th.join();
+
+    ito::task_group_end(tgdata,
+                        []() { ori::release(); },
+                        []() { ori::acquire(); });
+
+    if (!th.serialized()) {
+      ori::acquire();
+    }
+
+    return combine_fn(ret1, ret2);
+  }
+}
+
+template <typename SerialFn, typename CombineFn,
+          typename ForwardIterator, typename... ForwardIterators>
+inline auto loop_generic(const execution::sequenced_policy& policy,
+                         SerialFn                           serial_fn,
+                         CombineFn                          combine_fn [[maybe_unused]],
+                         ForwardIterator                    first,
+                         ForwardIterator                    last,
+                         ForwardIterators...                firsts) {
+  assert_policy(policy);
+  return serial_fn(first, last, firsts...);
+}
+
+template <typename SerialFn, typename CombineFn,
+          typename ForwardIterator, typename... ForwardIterators>
+inline auto loop_generic(const execution::parallel_policy& policy,
+                         SerialFn                          serial_fn,
+                         CombineFn                         combine_fn,
+                         ForwardIterator                   first,
+                         ForwardIterator                   last,
+                         ForwardIterators...               firsts) {
+  assert_policy(policy);
+  auto rh = ori::release_lazy();
+  return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
+}
+
 template <typename ForwardIterator, typename Op>
 inline void for_each(const execution::parallel_policy& policy,
                      ForwardIterator                   first,
@@ -111,37 +215,6 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
 
   ori::fini();
   ito::fini();
-}
-
-template <typename ExecutionPolicy, typename ForwardIterator, typename T, typename BinaryReduceOp>
-inline T reduce(const ExecutionPolicy& policy,
-                ForwardIterator        first,
-                ForwardIterator        last,
-                T                      init,
-                BinaryReduceOp         binary_reduce_op) {
-  using it_ref = typename std::iterator_traits<ForwardIterator>::reference;
-  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, it_ref>);
-  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, it_ref>);
-
-  return transform_reduce(policy, first, last, init, binary_reduce_op,
-                          [](auto&& v) { return std::forward<decltype(v)>(v); });
-}
-
-template <typename ExecutionPolicy, typename ForwardIterator, typename T>
-inline T reduce(const ExecutionPolicy& policy,
-                ForwardIterator        first,
-                ForwardIterator        last,
-                T                      init) {
-  return reduce(policy, first, last, init, std::plus<>{});
-}
-
-template <typename ExecutionPolicy, typename ForwardIterator>
-inline typename std::iterator_traits<ForwardIterator>::value_type
-reduce(const ExecutionPolicy& policy,
-       ForwardIterator        first,
-       ForwardIterator        last) {
-  using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
-  return reduce(policy, first, last, value_type{});
 }
 
 template <typename ExecutionPolicy, typename ForwardIterator, typename T,
@@ -251,6 +324,37 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   return transform_reduce(policy, first1, last1, first2, init, std::plus<>{}, std::multiplies<>{});
 }
 
+template <typename ExecutionPolicy, typename ForwardIterator, typename T, typename BinaryReduceOp>
+inline T reduce(const ExecutionPolicy& policy,
+                ForwardIterator        first,
+                ForwardIterator        last,
+                T                      init,
+                BinaryReduceOp         binary_reduce_op) {
+  using it_ref = typename std::iterator_traits<ForwardIterator>::reference;
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, it_ref>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, it_ref>);
+
+  return transform_reduce(policy, first, last, init, binary_reduce_op,
+                          [](auto&& v) { return std::forward<decltype(v)>(v); });
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator, typename T>
+inline T reduce(const ExecutionPolicy& policy,
+                ForwardIterator        first,
+                ForwardIterator        last,
+                T                      init) {
+  return reduce(policy, first, last, init, std::plus<>{});
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator>
+inline typename std::iterator_traits<ForwardIterator>::value_type
+reduce(const ExecutionPolicy& policy,
+       ForwardIterator        first,
+       ForwardIterator        last) {
+  using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+  return reduce(policy, first, last, value_type{});
+}
+
 template <typename ExecutionPolicy, typename ForwardIterator1,
           typename ForwardIteratorD, typename UnaryOp>
 inline ForwardIteratorD transform(const ExecutionPolicy& policy,
@@ -355,110 +459,6 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
-}
-
-template <typename SerialFn, typename CombineFn,
-          typename ForwardIterator, typename... ForwardIterators>
-inline auto loop_generic(const execution::sequenced_policy& policy,
-                         SerialFn                           serial_fn,
-                         CombineFn                          combine_fn [[maybe_unused]],
-                         ForwardIterator                    first,
-                         ForwardIterator                    last,
-                         ForwardIterators...                firsts) {
-  assert_policy(policy);
-  return serial_fn(first, last, firsts...);
-}
-
-template <typename SerialFn, typename CombineFn,
-          typename ForwardIterator, typename... ForwardIterators>
-inline auto loop_generic(const execution::parallel_policy& policy,
-                         SerialFn                          serial_fn,
-                         CombineFn                         combine_fn,
-                         ForwardIterator                   first,
-                         ForwardIterator                   last,
-                         ForwardIterators...               firsts) {
-  assert_policy(policy);
-  auto rh = ori::release_lazy();
-  return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
-}
-
-template <typename SerialFn, typename CombineFn, typename ReleaseHandler,
-          typename ForwardIterator, typename... ForwardIterators>
-inline std::invoke_result_t<SerialFn, ForwardIterator, ForwardIterator, ForwardIterators...>
-parallel_loop_generic(const execution::parallel_policy& policy,
-                      SerialFn                          serial_fn,
-                      CombineFn                         combine_fn,
-                      ReleaseHandler                    rh,
-                      ForwardIterator                   first,
-                      ForwardIterator                   last,
-                      ForwardIterators...               firsts) {
-  using retval_t = std::invoke_result_t<SerialFn,
-                                        ForwardIterator, ForwardIterator, ForwardIterators...>;
-  ori::poll();
-
-  // for immediately executing cross-worker tasks in ADWS
-  ito::poll([]() { return ori::release_lazy(); },
-            [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
-
-  auto d = std::distance(first, last);
-  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
-    return serial_fn(first, last, firsts...);
-  }
-
-  auto mid = std::next(first, d / 2);
-  auto recur_fn_left = [=]() -> retval_t {
-    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
-                                 first, mid, firsts...);
-  };
-
-  auto recur_fn_right = [&]() -> retval_t {
-    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
-                                 mid, last, std::next(firsts, d / 2)...);
-  };
-
-  auto tgdata = ito::task_group_begin();
-
-  ito::thread<retval_t> th(ito::with_callback,
-                           [=]() { ori::acquire(rh); },
-                           [=]() { ori::release(); },
-                           ito::with_workhint, 1, 1,
-                           recur_fn_left);
-
-  if constexpr (std::is_void_v<retval_t>) {
-    recur_fn_right();
-
-    if (!th.serialized()) {
-      ori::release();
-    }
-
-    th.join();
-
-    ito::task_group_end(tgdata,
-                        []() { ori::release(); },
-                        []() { ori::acquire(); });
-
-    if (!th.serialized()) {
-      ori::acquire();
-    }
-  } else {
-    auto ret2 = recur_fn_right();
-
-    if (!th.serialized()) {
-      ori::release();
-    }
-
-    auto ret1 = th.join();
-
-    ito::task_group_end(tgdata,
-                        []() { ori::release(); },
-                        []() { ori::acquire(); });
-
-    if (!th.serialized()) {
-      ori::acquire();
-    }
-
-    return combine_fn(ret1, ret2);
-  }
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
