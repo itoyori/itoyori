@@ -405,11 +405,11 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
           typename ForwardIteratorD, typename BinaryOp>
 inline ForwardIteratorD transform(const ExecutionPolicy& policy,
-                                  ForwardIterator1                  first1,
-                                  ForwardIterator1                  last1,
-                                  ForwardIterator2                  first2,
-                                  ForwardIteratorD                  first_d,
-                                  BinaryOp                          binary_op) {
+                                  ForwardIterator1       first1,
+                                  ForwardIterator1       last1,
+                                  ForwardIterator2       first2,
+                                  ForwardIteratorD       first_d,
+                                  BinaryOp               binary_op) {
   if constexpr (is_global_iterator_v<ForwardIterator1>) {
     static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
                   std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
@@ -459,6 +459,37 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator, typename T>
+inline void fill(const ExecutionPolicy& policy,
+                 ForwardIterator        first,
+                 ForwardIterator        last,
+                 const T&               value) {
+  // If the value type is trivially copyable, write-only access is possible
+  using checkout_mode_t = std::conditional_t<std::is_trivially_copyable_v<T>,
+                                             checkout_mode::write_t,
+                                             checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<ForwardIterator>) {
+    static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode_t> ||
+                  std::is_same_v<typename ForwardIterator::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
+    // automatically convert global pointers to global iterators
+    auto first_ = make_global_iterator(first, checkout_mode_t{});
+    auto last_  = make_global_iterator(last, checkout_mode_t{});
+    fill(policy, first_, last_, value);
+  }
+
+  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto serial_fn = [=](ForwardIterator first_,
+                       ForwardIterator last_) mutable {
+    for_each(seq_policy, first_, last_, [&](auto&& d) {
+      d = value;
+    });
+  };
+
+  loop_generic(policy, serial_fn, []{}, first, last);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
@@ -647,6 +678,31 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel transform with global_pt
 
   ori::free_coll(p1);
   ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel fill") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    long val = 33;
+    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p, p + n, val);
+
+    auto sum = reduce(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p, p + n);
+
+    ITYR_CHECK(sum == n * val);
+  });
+
+  ori::free_coll(p);
 
   ori::fini();
   ito::fini();
