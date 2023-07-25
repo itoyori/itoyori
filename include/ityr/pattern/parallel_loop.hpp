@@ -160,17 +160,6 @@ inline T transform_reduce(const execution::parallel_policy& opts,
     return init;
   }
 
-  auto seq_opts = execution::sequenced_policy{.checkout_count = opts.checkout_count};
-  auto serial_fn = [=](ForwardIterator first_,
-                       ForwardIterator last_) mutable {
-    ITYR_CHECK(std::distance(first_, last_) >= 1);
-    T acc = unary_transform_op(*first_);
-    for_each(seq_opts, std::next(first_), last_, [&](auto&& v) {
-      acc = binary_reduce_op(acc, unary_transform_op(std::forward<decltype(v)>(v)));
-    });
-    return acc;
-  };
-
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode::read_t> ||
                   std::is_same_v<typename ForwardIterator::mode, checkout_mode::no_access_t>);
@@ -181,6 +170,17 @@ inline T transform_reduce(const execution::parallel_policy& opts,
     auto last_  = make_global_iterator(last , checkout_mode::read);
     return transform_reduce(opts, first_, last_, init, binary_reduce_op, unary_transform_op);
   }
+
+  auto seq_opts = execution::sequenced_policy{.checkout_count = opts.checkout_count};
+  auto serial_fn = [=](ForwardIterator first_,
+                       ForwardIterator last_) mutable {
+    ITYR_CHECK(std::distance(first_, last_) >= 1);
+    T acc = unary_transform_op(*first_);
+    for_each(seq_opts, std::next(first_), last_, [&](auto&& v) {
+      acc = binary_reduce_op(acc, unary_transform_op(std::forward<decltype(v)>(v)));
+    });
+    return acc;
+  };
 
   return binary_reduce_op(init, parallel_loop_generic(opts, serial_fn, binary_reduce_op, first, last));
 }

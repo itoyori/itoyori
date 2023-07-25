@@ -78,6 +78,7 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, &*first, &*last, fn);
     }
   } else {
+    assert_sequenced_policy(opts);
     for (; first != last; ++first) {
       fn(*first);
     }
@@ -119,6 +120,7 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, first1, last1, &*first2, fn);
     }
   } else {
+    assert_sequenced_policy(opts);
     for (; first1 != last1; ++first1, ++first2) {
       fn(*first1, *first2);
     }
@@ -178,6 +180,7 @@ inline void for_each(const execution::sequenced_policy& opts,
       for_each(opts, first1, last1, first2, &*first3, fn);
     }
   } else {
+    assert_sequenced_policy(opts);
     for (; first1 != last1; ++first1, ++first2, ++first3) {
       fn(*first1, *first2, *first3);
     }
