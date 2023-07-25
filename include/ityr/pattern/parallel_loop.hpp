@@ -250,8 +250,8 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                        ForwardIterator last_) mutable {
     ITYR_CHECK(std::distance(first_, last_) >= 1);
     T acc = unary_transform_op(*first_);
-    for_each(seq_policy, std::next(first_), last_, [&](auto&& v) {
-      acc = binary_reduce_op(acc, unary_transform_op(std::forward<decltype(v)>(v)));
+    for_each(seq_policy, std::next(first_), last_, [&](const auto& v) {
+      acc = binary_reduce_op(acc, unary_transform_op(v));
     });
     return acc;
   };
@@ -286,7 +286,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     // automatically convert global pointers to global iterators with read-only access
     auto first1_ = make_global_iterator(first1, checkout_mode::read);
     auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    transform_reduce(policy, first1_, last1_, first2, init, binary_reduce_op, binary_transform_op);
+    return transform_reduce(policy, first1_, last1_, first2, init, binary_reduce_op, binary_transform_op);
   }
 
   if constexpr (is_global_iterator_v<ForwardIterator2>) {
@@ -296,7 +296,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
     // automatically convert global pointers to global iterators with read-only access
     auto first2_ = make_global_iterator(first2, checkout_mode::read);
-    transform_reduce(policy, first1, last1, first2_, init, binary_reduce_op, binary_transform_op);
+    return transform_reduce(policy, first1, last1, first2_, init, binary_reduce_op, binary_transform_op);
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
@@ -305,9 +305,8 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                        ForwardIterator2 first2_) mutable {
     ITYR_CHECK(std::distance(first1_, last1_) >= 1);
     T acc = binary_transform_op(*first1_, *first2_);
-    for_each(seq_policy, std::next(first1_), last1_, std::next(first2_), [&](auto&& v1, auto&& v2) {
-      acc = binary_reduce_op(acc, binary_transform_op(std::forward<decltype(v1)>(v1),
-                                                      std::forward<decltype(v2)>(v2)));
+    for_each(seq_policy, std::next(first1_), last1_, std::next(first2_), [&](const auto& v1, const auto& v2) {
+      acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
     });
     return acc;
   };
@@ -370,7 +369,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     // automatically convert global pointers to global iterators with read-only access
     auto first1_ = make_global_iterator(first1, checkout_mode::read);
     auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    transform(policy, first1_, last1_, first_d, unary_op);
+    return transform(policy, first1_, last1_, first_d, unary_op);
   }
 
   // If the destination value type is trivially copyable, write-only access is possible
@@ -385,15 +384,15 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
     // automatically convert global pointers to global iterators
     auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
-    transform(policy, first1, last1, first_d_, unary_op);
+    return transform(policy, first1, last1, first_d_, unary_op);
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIteratorD first_d_) mutable {
-    for_each(seq_policy, first1_, last1_, first_d_, [&](auto&& v1, auto&& d) {
-      d = unary_op(std::forward<decltype(v1)>(v1));
+    for_each(seq_policy, first1_, last1_, first_d_, [&](const auto& v1, auto&& d) {
+      d = unary_op(v1);
     });
   };
 
@@ -418,7 +417,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     // automatically convert global pointers to global iterators with read-only access
     auto first1_ = make_global_iterator(first1, checkout_mode::read);
     auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    transform(policy, first1_, last1_, first2, first_d, binary_op);
+    return transform(policy, first1_, last1_, first2, first_d, binary_op);
   }
 
   if constexpr (is_global_iterator_v<ForwardIterator2>) {
@@ -428,7 +427,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
     // automatically convert global pointers to global iterators with read-only access
     auto first2_ = make_global_iterator(first2, checkout_mode::read);
-    transform(policy, first1, last1, first2_, first_d, binary_op);
+    return transform(policy, first1, last1, first2_, first_d, binary_op);
   }
 
   // If the destination value type is trivially copyable, write-only access is possible
@@ -443,7 +442,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
     // automatically convert global pointers to global iterators
     auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
-    transform(policy, first1, last1, first2, first_d_, binary_op);
+    return transform(policy, first1, last1, first2, first_d_, binary_op);
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
@@ -451,8 +450,8 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
                        ForwardIteratorD first_d_) mutable {
-    for_each(seq_policy, first1_, last1_, first2_, first_d_, [&](auto&& v1, auto&& v2, auto&& d) {
-      d = binary_op(std::forward<decltype(v1)>(v1), std::forward<decltype(v2)>(v2));
+    for_each(seq_policy, first1_, last1_, first2_, first_d_, [&](const auto& v1, const auto& v2, auto&& d) {
+      d = binary_op(v1, v2);
     });
   };
 
@@ -477,8 +476,9 @@ inline void fill(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
     // automatically convert global pointers to global iterators
     auto first_ = make_global_iterator(first, checkout_mode_t{});
-    auto last_  = make_global_iterator(last, checkout_mode_t{});
+    auto last_  = make_global_iterator(last , checkout_mode_t{});
     fill(policy, first_, last_, value);
+    return;
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
