@@ -20,9 +20,11 @@ result_t fib_rec(int n) {
   if (n <= 1) {
     return 1;
   } else {
-    ityr::ito::thread<result_t> th([=]{ return fib_rec(n - 1); });
-    result_t y = fib_rec(n - 2);
-    result_t x = th.join();
+    auto [x, y] =
+      ityr::parallel_invoke(
+        [=] { return fib_rec(n - 1); },
+        [=] { return fib_rec(n - 2); }
+      );
     return x + y;
   }
 }
