@@ -494,6 +494,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             long(0),
             std::plus<long>{},
             [](const move_only_t& mo) { return mo.value(); });
+
         ITYR_CHECK(count == n * (n - 1) / 2 - (next_size - n));
       });
     }
@@ -525,14 +526,15 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             long(0),
             std::plus<long>{},
             [&](auto&& gv_ref) {
-          auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
-          auto gv_begin = cs[0].begin();
-          auto gv_end   = cs[0].end();
-          cs.checkin();
-          return reduce(execution::parallel_policy{.cutoff_count   = 128,
-                                                   .checkout_count = 128},
-                        gv_begin, gv_end);
-        });
+              auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
+              auto gv_begin = cs[0].begin();
+              auto gv_end   = cs[0].end();
+              cs.checkin();
+              return reduce(execution::parallel_policy{.cutoff_count   = 128,
+                                                       .checkout_count = 128},
+                            gv_begin, gv_end);
+            });
+
         ITYR_CHECK(count == ans);
       };
 
@@ -543,20 +545,20 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
           make_global_iterator(gvs.begin(), checkout_mode::read_write),
           make_global_iterator(gvs.end()  , checkout_mode::read_write),
           [&](global_vector<long>& gv) {
-        for (long i = 0; i < 100; i++) {
-          gv.push_back(i);
-        }
-        for (long i = 0; i < 100; i++) {
-          gv.pop_back();
-        }
-        gv.resize(2 * n);
-        for_each(
-            execution::sequenced_policy{.checkout_count = 128},
-            count_iterator<long>(n),
-            count_iterator<long>(2 * n),
-            make_global_iterator(gv.begin() + n, checkout_mode::write),
-            [](long i, long& x) { x = i; });
-      });
+            for (long i = 0; i < 100; i++) {
+              gv.push_back(i);
+            }
+            for (long i = 0; i < 100; i++) {
+              gv.pop_back();
+            }
+            gv.resize(2 * n);
+            for_each(
+                execution::sequenced_policy{.checkout_count = 128},
+                count_iterator<long>(n),
+                count_iterator<long>(2 * n),
+                make_global_iterator(gv.begin() + n, checkout_mode::write),
+                [](long i, long& x) { x = i; });
+          });
 
       check_sum((2 * n) * (2 * n - 1) / 2 * n_ranks);
     });
