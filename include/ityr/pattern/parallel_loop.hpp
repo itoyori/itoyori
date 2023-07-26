@@ -217,6 +217,40 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
   ito::fini();
 }
 
+/**
+ * @brief Calculate reduction by transforming each element.
+ *
+ * @param policy             Execution policy (`ityr::execution`).
+ * @param first              Begin iterator.
+ * @param last               End iterator.
+ * @param identity           Identity element.
+ * @param binary_reduce_op   Associative binary operator.
+ * @param unary_transform_op Unary operator to transform each element.
+ *
+ * @return The reduced result.
+ *
+ * This function applies `unary_transform_op` to each element in the range `[first, last)` and
+ * performs reduction over them.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * int r = ityr::transform_reduce(ityr::execution::par, v1.begin(), v1.end(), 0, std::plus<>{},
+ *                                [](int x) { return x * x; });
+ * // r = 55
+ * ```
+ *
+ * @see [std::transform_reduce -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform_reduce)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator, typename T,
           typename BinaryReduceOp, typename UnaryTransformOp>
 inline T transform_reduce(const ExecutionPolicy& policy,
@@ -256,6 +290,42 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   return loop_generic(policy, serial_fn, binary_reduce_op, first, last);
 }
 
+/**
+ * @brief Calculate reduction by transforming each element.
+ *
+ * @param policy              Execution policy (`ityr::execution`).
+ * @param first1              1st begin iterator.
+ * @param last1               1st end iterator.
+ * @param first2              2nd begin iterator.
+ * @param identity            Identity element.
+ * @param binary_reduce_op    Associative binary operator.
+ * @param binary_transform_op Binary operator to transform a pair of each element.
+ *
+ * @return The reduced result.
+ *
+ * This function applies `binary_transform_op` to a pair of each element in the range `[first1, last1)`
+ * and `[first2, first2 + (last1 - first1)]` and performs reduction over them.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * The specified regions can be overlapped.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * bool r = ityr::transform_reduce(ityr::execution::par, v1.begin(), v1.end() - 1, v1.begin() + 1,
+ *                                 true, std::logical_and<>{}, [](int x, int y) { return x <= y; });
+ * // r = true (v1 is sorted)
+ * ```
+ *
+ * @see [std::transform_reduce -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform_reduce)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2, typename T,
           typename BinaryReduceOp, typename BinaryTransformOp>
 inline T transform_reduce(const ExecutionPolicy& policy,
@@ -308,6 +378,34 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   return loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2);
 }
 
+/**
+ * @brief Calculate a dot product.
+ *
+ * @param policy   Execution policy (`ityr::execution`).
+ * @param first1   1st begin iterator.
+ * @param last1    1st end iterator.
+ * @param first2   2nd begin iterator.
+ * @param identity Identity element.
+ *
+ * @return The reduced result.
+ *
+ * Equivalent to `ityr::transform_reduce(policy, first1, last1, first2, identity, std::plus<>{}, std::multiplies<>{})`,
+ * which corresponds to calculating a dot product of two vectors.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2 = {2, 3, 4, 5, 6};
+ * int dot = ityr::transform_reduce(ityr::execution::par, v1.begin(), v1.end(), v2.begin(), 0);
+ * // dot = 70
+ * ```
+ *
+ * @see [std::transform_reduce -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform_reduce)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2, typename T>
 inline T transform_reduce(const ExecutionPolicy& policy,
                           ForwardIterator1       first1,
@@ -317,6 +415,50 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   return transform_reduce(policy, first1, last1, first2, identity, std::plus<>{}, std::multiplies<>{});
 }
 
+/**
+ * @brief Calculate reduction.
+ *
+ * @param policy           Execution policy (`ityr::execution`).
+ * @param first            Begin iterator.
+ * @param last             End iterator.
+ * @param identity         Identity element.
+ * @param binary_reduce_op Associative binary operator.
+ *
+ * @return The reduced result.
+ *
+ * This function performs reduction over the elements in the given range `[first, last)`.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Itoyori's reduce operation resembles the standard `std::reduce`, but it differs from the standard
+ * one in the following two respects:
+ *
+ * - `ityr::reduce` does not require that `binary_reduce_op` be *commutative*.
+ *   That is, only *associativity* is required for `binary_reduce_op`. Specifically, it must satisfy
+ *   `binary_reduce_op(x, binary_reduce_op(y, z)) == binary_reduce_op(binary_reduce_op(x, y), z)`.
+ * - `ityr::reduce` receives an identity element (`identity`), while `std::reduce` an initial element
+ *   (`init`). In `std::reduce`, `init` is accumulated only once, while in `ityr::reduce`, `identity`
+ *   can be accumulated multiple times. Therefore, the user must provide an identity element that
+ *   satisfies both `binary_reduce_op(identity, x) == x` and `binary_reduce_op(x, identity) == x`.
+ *
+ * This means that `ityr::reduce` requires a *monoid*, which consists of an identity element and an
+ * associative binary operator.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+ * int product = ityr::reduce(ityr::execution::par, v.begin(), v.end(), 1, std::multiplies<>{});
+ * // product = 120
+ * ```
+ *
+ * @see [std::reduce -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/reduce)
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator, typename T, typename BinaryReduceOp>
 inline T reduce(const ExecutionPolicy& policy,
                 ForwardIterator        first,
@@ -333,6 +475,18 @@ inline T reduce(const ExecutionPolicy& policy,
                           [](auto&& v) { return std::forward<decltype(v)>(v); });
 }
 
+/**
+ * @brief Calculate reduction.
+ *
+ * @param policy   Execution policy (`ityr::execution`).
+ * @param first    Begin iterator.
+ * @param last     End iterator.
+ * @param identity Identity element.
+ *
+ * @return The reduced result.
+ *
+ * Equivalent to `ityr::reduce(policy, first, last, identity, std::plus<>{})`.
+ */
 template <typename ExecutionPolicy, typename ForwardIterator, typename T>
 inline T reduce(const ExecutionPolicy& policy,
                 ForwardIterator        first,
@@ -341,6 +495,18 @@ inline T reduce(const ExecutionPolicy& policy,
   return reduce(policy, first, last, identity, std::plus<>{});
 }
 
+/**
+ * @brief Calculate reduction.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Begin iterator.
+ * @param last   End iterator.
+ *
+ * @return The reduced result.
+ *
+ * Equivalent to `ityr::reduce(policy, first, last, T{}, std::plus<>{})`, where type `T` is
+ * the value type of given iterators (`ForwardIterator`).
+ */
 template <typename ExecutionPolicy, typename ForwardIterator>
 inline typename std::iterator_traits<ForwardIterator>::value_type
 reduce(const ExecutionPolicy& policy,
@@ -350,6 +516,46 @@ reduce(const ExecutionPolicy& policy,
   return reduce(policy, first, last, value_type{});
 }
 
+/**
+ * @brief Apply an operator to each element in a range.
+ *
+ * @param policy   Execution policy (`ityr::execution`).
+ * @param first1   Input begin iterator.
+ * @param last1    Input end iterator.
+ * @param first_d  Output begin iterator.
+ * @param unary_op Unary operator to transform each element.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * This function applies `unary_op` to each element in the range `[first1, last1)` and stores the
+ * result to the output range `[first_d, first_d + (last1 - first1))`. The element order is preserved,
+ * and this operation corresponds to the higher-order *map* function.
+ * This function resembles the standard `std::transform`.
+ *
+ * If the input iterators (`first1` and `last1`) are global pointers, they are automatically checked
+ * out with the read-only mode in the specified granularity
+ * (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * Similarly, if the output iterator (`first_d`) is a global pointer, the output region is checked
+ * out with the write-only mode if the output type is *trivially copyable*; otherwise, it is checked
+ * out with the read-write mode.
+ * Overlapping regions can be specified for `first1` and `first_d`, as long as no data race occurs.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::transform(ityr::execution::par, v1.begin(), v1.end(), v2.begin(),
+ *                 [](int x) { return x * x; });
+ * // v2 = {1, 4, 9, 16, 25}
+ * ```
+ *
+ * @see [std::transform -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform)
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1,
           typename ForwardIteratorD, typename UnaryOp>
 inline ForwardIteratorD transform(const ExecutionPolicy& policy,
@@ -397,6 +603,49 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   return std::next(first_d, std::distance(first1, last1));
 }
 
+/**
+ * @brief Apply an operator to each element in a range.
+ *
+ * @param policy    Execution policy (`ityr::execution`).
+ * @param first1    1st input begin iterator.
+ * @param last1     1st input end iterator.
+ * @param first2    2nd input begin iterator.
+ * @param first_d   Output begin iterator (output).
+ * @param binary_op Binary operator to transform a pair of each element.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * This function applies `binary_op` to a pair of each element in the range `[first1, last1)` and
+ * `[first2, (last1 - first1))`, and the result is stored to the output range
+ * `[first_d, first_d + (last1 - first1))`. The element order is preserved,
+ * and this operation corresponds to the higher-order *map* function.
+ * This function resembles the standard `std::transform`.
+ *
+ * If the input iterators (`first1`, `last1`, and `first2`) are global pointers, they are
+ * automatically checked out with the read-only mode in the specified granularity
+ * (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * Similarly, if the output iterator (`first_d`) is a global pointer, the output region is checked
+ * out with the write-only mode if the output type is *trivially copyable*; otherwise, it is checked
+ * out with the read-write mode.
+ * Overlapping regions can be specified for `first1`, `first2`, and `first_d`, as long as no data race occurs.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2 = {2, 3, 4, 5, 6};
+ * ityr::global_vector<int> v3(v1.size());
+ * ityr::transform(ityr::execution::par, v1.begin(), v1.end(), v2.begin(), v3.begin(),
+ *                 [](int x, int y) { return x * y; });
+ * // v2 = {2, 6, 12, 20, 30}
+ * ```
+ *
+ * @see [std::transform -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform)
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
           typename ForwardIteratorD, typename BinaryOp>
 inline ForwardIteratorD transform(const ExecutionPolicy& policy,
