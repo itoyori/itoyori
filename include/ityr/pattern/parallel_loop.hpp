@@ -114,52 +114,343 @@ inline auto loop_generic(const execution::parallel_policy& policy,
   return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
 }
 
-template <typename ForwardIterator, typename Op>
-inline void for_each(const execution::parallel_policy& policy,
-                     ForwardIterator                   first,
-                     ForwardIterator                   last,
-                     Op                                op) {
+/**
+ * @brief Apply an operation to each element in a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Begin iterator.
+ * @param last   End iterator.
+ * @param op     Operator for the i-th element in the range.
+ *
+ * This function iterates over the given range and applies the operator `op` to the i-th element.
+ * The operator `op` should accept an argument of type `T`, which is the reference type of the
+ * given iterator type.
+ * This function resembles the standard `std::for_each()`, but it is extended to accept multiple
+ * streams of iterators.
+ *
+ * Global pointers are not automatically checked out. If global iterators are explicitly given
+ * (by `ityr::make_global_iterator`), the regions are automatically checked out with the specified
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel).
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::for_each(ityr::execution::par,
+ *                ityr::make_global_iterator(v1.begin(), ityr::checkout_mode::read_write),
+ *                ityr::make_global_iterator(v1.end()  , ityr::checkout_mode::read_write),
+ *                [](int& x) { x++; });
+ * // v1 = {2, 3, 4, 5, 6}
+ * ```
+ *
+ * @see [std::for_each -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/for_each)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator        first,
+                     ForwardIterator        last,
+                     Op                     op) {
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
-    for_each(seq_policy, first_, last_, op);
+    for_each_aux(seq_policy, op, first_, last_);
   };
   loop_generic(policy, serial_fn, []{}, first, last);
 }
 
-template <typename ForwardIterator1, typename ForwardIterator2, typename Op>
-inline void for_each(const execution::parallel_policy& policy,
-                     ForwardIterator1                  first1,
-                     ForwardIterator1                  last1,
-                     ForwardIterator2                  first2,
-                     Op                                op) {
+/**
+ * @brief Apply an operation to each element in a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first1 1st begin iterator.
+ * @param last1  1st end iterator.
+ * @param first2 2nd begin iterator.
+ * @param op     Operator for the i-th element in the 1st and 2nd iterators.
+ *
+ * This function iterates over the given ranges and applies the operator `op` to the i-th elements.
+ * The operator `op` should accept three arguments of type `T1` and `T2`, which are the reference
+ * types of the given iterators `first1` and `first2`.
+ * This function resembles the standard `std::for_each()`, but it is extended to accept multiple
+ * streams of iterators.
+ *
+ * Global pointers are not automatically checked out. If global iterators are explicitly given
+ * (by `ityr::make_global_iterator`), the regions are automatically checked out with the specified
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel).
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2 = {1, 2, 3, 4, 5};
+ * ityr::for_each(ityr::execution::par,
+ *                ityr::make_global_iterator(v1.begin(), ityr::checkout_mode::read),
+ *                ityr::make_global_iterator(v1.end()  , ityr::checkout_mode::read),
+ *                ityr::make_global_iterator(v2.begin(), ityr::checkout_mode::read_write),
+ *                [](int x, int& y) { y += x; });
+ * // v2 = {2, 4, 6, 8, 10}
+ * ```
+ *
+ * @see [std::for_each -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/for_each)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     Op                     op) {
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
-    for_each(seq_policy, first1_, last1_, first2_, op);
+    for_each_aux(seq_policy, op, first1_, last1_, first2_);
   };
   loop_generic(policy, serial_fn, []{}, first1, last1, first2);
 }
 
-template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Op>
-inline void for_each(const execution::parallel_policy& policy,
-                     ForwardIterator1                  first1,
-                     ForwardIterator1                  last1,
-                     ForwardIterator2                  first2,
-                     ForwardIterator3                  first3,
-                     Op                                op) {
+/**
+ * @brief Apply an operation to each element in a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first1 1st begin iterator.
+ * @param last1  1st end iterator.
+ * @param first2 2nd begin iterator.
+ * @param first3 3rd begin iterator.
+ * @param op     Operator for the i-th element in the 1st, 2nd, and 3rd iterators.
+ *
+ * This function iterates over the given ranges and applies the operator `op` to the i-th elements.
+ * The operator `op` should accept three arguments of type `T1`, `T2`, and `T3`, which are the
+ * reference types of the given iterators `first1`, `first2`, and `first3`.
+ * This function resembles the standard `std::for_each()`, but it is extended to accept multiple
+ * streams of iterators.
+ *
+ * Global pointers are not automatically checked out. If global iterators are explicitly given
+ * (by `ityr::make_global_iterator`), the regions are automatically checked out with the specified
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel).
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 1, 1, 1, 1};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::for_each(ityr::execution::par,
+ *                ityr::count_iterator<int>(0),
+ *                ityr::count_iterator<int>(5),
+ *                ityr::make_global_iterator(v1.begin(), ityr::checkout_mode::read),
+ *                ityr::make_global_iterator(v2.begin(), ityr::checkout_mode::write),
+ *                [](int i, int x, int& y) { y = x << i; });
+ * // v2 = {1, 2, 4, 8, 16}
+ * ```
+ *
+ * @see [std::for_each -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/for_each)
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     Op                     op) {
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
                        ForwardIterator3 first3_) mutable {
-    for_each(seq_policy, first1_, last1_, first2_, first3_, op);
+    for_each_aux(seq_policy, op, first1_, last1_, first2_, first3_);
   };
   loop_generic(policy, serial_fn, []{}, first1, last1, first2, first3);
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for each") {
+ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
+  class move_only_t {
+  public:
+    move_only_t() {}
+    move_only_t(const long v) : value_(v) {}
+
+    long value() const { return value_; }
+
+    move_only_t(const move_only_t&) = delete;
+    move_only_t& operator=(const move_only_t&) = delete;
+
+    move_only_t(move_only_t&& mo) : value_(mo.value_) {
+      mo.value_ = -1;
+    }
+    move_only_t& operator=(move_only_t&& mo) {
+      value_ = mo.value_;
+      mo.value_ = -1;
+      return *this;
+    }
+
+  private:
+    long value_ = -1;
+  };
+
+  ori::init();
+
+  long n = 100000;
+
+  ITYR_SUBCASE("without global_ptr") {
+    ITYR_SUBCASE("count iterator") {
+      long count = 0;
+      for_each(execution::seq,
+               count_iterator<long>(0),
+               count_iterator<long>(n),
+               [&](long i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+
+      count = 0;
+      for_each(
+          execution::seq,
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          count_iterator<long>(n),
+          [&](long i, long j) { count += i + j; });
+      ITYR_CHECK(count == 2 * n * (2 * n - 1) / 2);
+
+      count = 0;
+      for_each(
+          execution::seq,
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          count_iterator<long>(n),
+          count_iterator<long>(2 * n),
+          [&](long i, long j, long k) { count += i + j + k; });
+      ITYR_CHECK(count == 3 * n * (3 * n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("vector copy") {
+      std::vector<long> mos1(count_iterator<long>(0),
+                                    count_iterator<long>(n));
+
+      std::vector<long> mos2;
+      for_each(
+          execution::seq,
+          mos1.begin(), mos1.end(),
+          std::back_inserter(mos2),
+          [&](long i, auto&& out) { out = i; });
+
+      long count = 0;
+      for_each(
+          execution::seq,
+          mos2.begin(), mos2.end(),
+          [&](long i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("move iterator with vector") {
+      std::vector<move_only_t> mos1(count_iterator<long>(0),
+                                    count_iterator<long>(n));
+
+      std::vector<move_only_t> mos2;
+      for_each(
+          execution::seq,
+          std::make_move_iterator(mos1.begin()),
+          std::make_move_iterator(mos1.end()),
+          std::back_inserter(mos2),
+          [&](move_only_t&& in, auto&& out) { out = std::move(in); });
+
+      long count = 0;
+      for_each(
+          execution::seq,
+          mos2.begin(), mos2.end(),
+          [&](move_only_t& mo) { count += mo.value(); });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+
+      for_each(
+          execution::seq,
+          mos1.begin(), mos1.end(),
+          [&](move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+    }
+  }
+
+  ITYR_SUBCASE("with global_ptr") {
+    ori::global_ptr<long> gp = ori::malloc<long>(n);
+
+    for_each(
+        execution::seq,
+        count_iterator<long>(0),
+        count_iterator<long>(n),
+        make_global_iterator(gp, checkout_mode::write),
+        [&](long i, long& out) { new (&out) long(i); });
+
+    ITYR_SUBCASE("read array without global_iterator") {
+      long count = 0;
+      for_each(
+          execution::seq,
+          gp,
+          gp + n,
+          [&](ori::global_ref<long> gr) { count += gr; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("read array with global_iterator") {
+      long count = 0;
+      for_each(
+          execution::seq,
+          make_global_iterator(gp    , checkout_mode::read),
+          make_global_iterator(gp + n, checkout_mode::read),
+          [&](long i) { count += i; });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+    }
+
+    ITYR_SUBCASE("move iterator") {
+      ori::global_ptr<move_only_t> mos1 = ori::malloc<move_only_t>(n);
+      ori::global_ptr<move_only_t> mos2 = ori::malloc<move_only_t>(n);
+
+      for_each(
+          execution::seq,
+          make_global_iterator(gp    , checkout_mode::read),
+          make_global_iterator(gp + n, checkout_mode::read),
+          make_global_iterator(mos1  , checkout_mode::write),
+          [&](long i, move_only_t& out) { new (&out) move_only_t(i); });
+
+      for_each(
+          execution::seq,
+          make_move_iterator(mos1),
+          make_move_iterator(mos1 + n),
+          make_global_iterator(mos2, checkout_mode::write),
+          [&](move_only_t&& in, move_only_t& out) { new (&out) move_only_t(std::move(in)); });
+
+      long count = 0;
+      for_each(
+          execution::seq,
+          make_global_iterator(mos2    , checkout_mode::read),
+          make_global_iterator(mos2 + n, checkout_mode::read),
+          [&](const move_only_t& mo) { count += mo.value(); });
+      ITYR_CHECK(count == n * (n - 1) / 2);
+
+      for_each(
+          execution::seq,
+          make_global_iterator(mos1    , checkout_mode::read),
+          make_global_iterator(mos1 + n, checkout_mode::read),
+          [&](const move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+
+      ori::free(mos1, n);
+      ori::free(mos2, n);
+    }
+
+    ori::free(gp, n);
+  }
+
+  ori::fini();
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for_each") {
   ito::init();
   ori::init();
 
@@ -281,9 +572,9 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
     T acc = identity;
-    for_each(seq_policy, first_, last_, [&](const auto& v) {
+    for_each_aux(seq_policy, [&](const auto& v) {
       acc = binary_reduce_op(acc, unary_transform_op(v));
-    });
+    }, first_, last_);
     return acc;
   };
 
@@ -369,9 +660,9 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
     T acc = identity;
-    for_each(seq_policy, first1_, last1_, first2_, [&](const auto& v1, const auto& v2) {
+    for_each_aux(seq_policy, [&](const auto& v1, const auto& v2) {
       acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
-    });
+    }, first1_, last1_, first2_);
     return acc;
   };
 
@@ -593,9 +884,9 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIteratorD first_d_) mutable {
-    for_each(seq_policy, first1_, last1_, first_d_, [&](const auto& v1, auto&& d) {
+    for_each_aux(seq_policy, [&](const auto& v1, auto&& d) {
       d = unary_op(v1);
-    });
+    }, first1_, last1_, first_d_);
   };
 
   loop_generic(policy, serial_fn, []{}, first1, last1, first_d);
@@ -638,7 +929,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
  * ityr::global_vector<int> v3(v1.size());
  * ityr::transform(ityr::execution::par, v1.begin(), v1.end(), v2.begin(), v3.begin(),
  *                 [](int x, int y) { return x * y; });
- * // v2 = {2, 6, 12, 20, 30}
+ * // v3 = {2, 6, 12, 20, 30}
  * ```
  *
  * @see [std::transform -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform)
@@ -695,9 +986,9 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
                        ForwardIteratorD first_d_) mutable {
-    for_each(seq_policy, first1_, last1_, first2_, first_d_, [&](const auto& v1, const auto& v2, auto&& d) {
+    for_each_aux(seq_policy, [&](const auto& v1, const auto& v2, auto&& d) {
       d = binary_op(v1, v2);
-    });
+    }, first1_, last1_, first2_, first_d_);
   };
 
   loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
@@ -729,9 +1020,9 @@ inline void fill(const ExecutionPolicy& policy,
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
-    for_each(seq_policy, first_, last_, [&](auto&& d) {
+    for_each_aux(seq_policy, [&](auto&& d) {
       d = value;
-    });
+    }, first_, last_);
   };
 
   loop_generic(policy, serial_fn, []{}, first, last);
