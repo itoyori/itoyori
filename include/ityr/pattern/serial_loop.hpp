@@ -4,6 +4,7 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
+#include "ityr/container/checkout_span.hpp"
 
 namespace ityr {
 
@@ -40,165 +41,123 @@ inline constexpr parallel_policy  par;
 
 }
 
-template <typename T, typename Mode, typename Fn>
-void with_checkout_iter(global_iterator<T, Mode> begin,
-                        std::size_t              count,
-                        Fn&&                     fn) {
-  auto p = ori::checkout(&*begin, count, Mode{});
-  std::forward<Fn>(fn)(p);
-  ori::checkin(p, count, Mode{});
+template <typename T, typename Mode>
+inline auto make_checkout_iter(global_iterator<T, Mode> it,
+                               std::size_t              count) {
+  auto cs = make_checkout(&*it, count, Mode{});
+  return std::make_tuple(std::move(cs), cs.data());
 }
 
-template <typename T, typename Fn>
-void with_checkout_iter(global_move_iterator<T> begin,
-                        std::size_t             count,
-                        Fn&&                    fn) {
-  auto p = ori::checkout(&*begin, count, ori::mode::read_write);
-  std::forward<Fn>(fn)(std::make_move_iterator(p));
-  ori::checkin(p, count, ori::mode::read_write);
+template <typename T>
+inline auto make_checkout_iter(global_move_iterator<T> it,
+                               std::size_t             count) {
+  auto cs = make_checkout(&*it, count, checkout_mode::read_write);
+  return std::make_tuple(std::move(cs), std::make_move_iterator(cs.data()));
 }
 
-template <typename T, typename Fn>
-void with_checkout_iter(global_construct_iterator<T> begin,
-                        std::size_t                  count,
-                        Fn&&                         fn) {
-  auto p = ori::checkout(&*begin, count, ori::mode::write);
-  std::forward<Fn>(fn)(make_count_iterator(p));
-  ori::checkin(p, count, ori::mode::write);
+template <typename T>
+inline auto make_checkout_iter(global_construct_iterator<T> it,
+                               std::size_t                  count) {
+  auto cs = make_checkout(&*it, count, checkout_mode::write);
+  return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
 }
 
-template <typename T, typename Fn>
-void with_checkout_iter(global_destruct_iterator<T> begin,
-                        std::size_t                 count,
-                        Fn&&                        fn) {
-  auto p = ori::checkout(&*begin, count, ori::mode::read_write);
-  std::forward<Fn>(fn)(make_count_iterator(p));
-  ori::checkin(p, count, ori::mode::read_write);
+template <typename T>
+inline auto make_checkout_iter(global_destruct_iterator<T> it,
+                               std::size_t                 count) {
+  auto cs = make_checkout(&*it, count, checkout_mode::read_write);
+  return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
 }
 
-template <typename ForwardIterator, typename Fn>
-inline void for_each(const execution::sequenced_policy& opts,
-                     ForwardIterator                    first,
-                     ForwardIterator                    last,
-                     Fn                                 fn) {
+inline auto checkout_global_iterators(std::size_t) {
+  return std::make_tuple(std::make_tuple(), std::make_tuple());
+}
+
+template <typename ForwardIterator, typename... ForwardIterators>
+inline auto checkout_global_iterators(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     if constexpr (ForwardIterator::auto_checkout) {
-      auto n = std::distance(first, last);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first, d), n_, [&](auto&& it) {
-          for_each(opts, it, std::next(it, n_), fn);
-        });
-      }
+      auto [cs, it_] = make_checkout_iter(it, n);
+      auto [css, its] = checkout_global_iterators(n, rest...);
+      return std::make_tuple(std::tuple_cat(std::make_tuple(std::move(cs)), std::move(css)),
+                             std::tuple_cat(std::make_tuple(it_), its));
     } else {
+      auto [css, its] = checkout_global_iterators(n, rest...);
       // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, &*first, &*last, fn);
+      return std::make_tuple(std::move(css),
+                             std::tuple_cat(std::make_tuple(&*it), its));
     }
   } else {
-    for (; first != last; ++first) {
-      fn(*first);
+    auto [css, its] = checkout_global_iterators(n, rest...);
+    return std::make_tuple(std::move(css),
+                           std::tuple_cat(std::make_tuple(it), its));
+  }
+}
+
+template <typename Op, typename... ForwardIterators>
+inline void apply_iterators(Op                  op,
+                            std::size_t         n,
+                            ForwardIterators... its) {
+  for (std::size_t i = 0; i < n; (++i, ..., ++its)) {
+    op(*its...);
+  }
+}
+
+template <typename Op, typename ForwardIterator, typename... ForwardIterators>
+inline void for_each_aux(const execution::sequenced_policy& policy,
+                         Op                                 op,
+                         ForwardIterator                    first,
+                         ForwardIterator                    last,
+                         ForwardIterators...                firsts) {
+  if constexpr ((is_global_iterator_v<ForwardIterator> || ... ||
+                 is_global_iterator_v<ForwardIterators>)) {
+    // perform automatic checkout for global iterators
+    std::size_t n = std::distance(first, last);
+    std::size_t c = policy.checkout_count;
+
+    for (std::size_t d = 0; d < n; d += c) {
+      auto n_ = std::min(n - d, c);
+
+      auto [css, its] = checkout_global_iterators(n_, first, firsts...);
+      std::apply([&](auto&&... args) {
+        apply_iterators(op, n_, std::forward<decltype(args)>(args)...);
+      }, its);
+
+      ((first = std::next(first, n_)), ..., (firsts = std::next(firsts, n_)));
+    }
+
+  } else {
+    for (; first != last; (++first, ..., ++firsts)) {
+      op(*first, *firsts...);
     }
   }
 }
 
-template <typename ForwardIterator1, typename ForwardIterator2, typename Fn>
+template <typename ForwardIterator, typename Op>
+inline void for_each(const execution::sequenced_policy& opts,
+                     ForwardIterator                    first,
+                     ForwardIterator                    last,
+                     Op                                 op) {
+  for_each_aux(opts, op, first, last);
+}
+
+template <typename ForwardIterator1, typename ForwardIterator2, typename Op>
 inline void for_each(const execution::sequenced_policy& opts,
                      ForwardIterator1                   first1,
                      ForwardIterator1                   last1,
                      ForwardIterator2                   first2,
-                     Fn                                 fn) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    if constexpr (ForwardIterator1::auto_checkout) {
-      auto n = std::distance(first1, last1);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first1, d), n_, [&](auto&& it1) {
-          auto it2 = std::next(first2, d);
-          for_each(opts, it1, std::next(it1, n_), it2, fn);
-        });
-      }
-    } else {
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, &*first1, &*last1, first2, fn);
-    }
-  } else if constexpr (is_global_iterator_v<ForwardIterator2>) {
-    if constexpr (ForwardIterator2::auto_checkout) {
-      auto n = std::distance(first1, last1);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first2, d), n_, [&](auto&& it2) {
-          auto it1 = std::next(first1, d);
-          for_each(opts, it1, std::next(it1, n_), it2, fn);
-        });
-      }
-    } else {
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, first1, last1, &*first2, fn);
-    }
-  } else {
-    for (; first1 != last1; ++first1, ++first2) {
-      fn(*first1, *first2);
-    }
-  }
+                     Op                                 op) {
+  for_each_aux(opts, op, first1, last1, first2);
 }
 
-template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Fn>
+template <typename ForwardIterator1, typename ForwardIterator2, typename ForwardIterator3, typename Op>
 inline void for_each(const execution::sequenced_policy& opts,
                      ForwardIterator1                   first1,
                      ForwardIterator1                   last1,
                      ForwardIterator2                   first2,
                      ForwardIterator3                   first3,
-                     Fn                                 fn) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    if constexpr (ForwardIterator1::auto_checkout) {
-      auto n = std::distance(first1, last1);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first1, d), n_, [&](auto&& it1) {
-          auto it2 = std::next(first2, d);
-          auto it3 = std::next(first3, d);
-          for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
-        });
-      }
-    } else {
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, &*first1, &*last1, first2, first3, fn);
-    }
-  } else if constexpr (is_global_iterator_v<ForwardIterator2>) {
-    if constexpr (ForwardIterator2::auto_checkout) {
-      auto n = std::distance(first1, last1);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first2, d), n_, [&](auto&& it2) {
-          auto it1 = std::next(first1, d);
-          auto it3 = std::next(first3, d);
-          for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
-        });
-      }
-    } else {
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, first1, last1, &*first2, first3, fn);
-    }
-  } else if constexpr (is_global_iterator_v<ForwardIterator3>) {
-    if constexpr (ForwardIterator3::auto_checkout) {
-      auto n = std::distance(first1, last1);
-      for (std::ptrdiff_t d = 0; d < n; d += opts.checkout_count) {
-        auto n_ = std::min(static_cast<std::size_t>(n - d), opts.checkout_count);
-        with_checkout_iter(std::next(first3, d), n_, [&](auto&& it3) {
-          auto it1 = std::next(first1, d);
-          auto it2 = std::next(first2, d);
-          for_each(opts, it1, std::next(it1, n_), it2, it3, fn);
-        });
-      }
-    } else {
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      for_each(opts, first1, last1, first2, &*first3, fn);
-    }
-  } else {
-    for (; first1 != last1; ++first1, ++first2, ++first3) {
-      fn(*first1, *first2, *first3);
-    }
-  }
+                     Op                                 op) {
+  for_each_aux(opts, op, first1, last1, first2, first3);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] for_each seq") {
