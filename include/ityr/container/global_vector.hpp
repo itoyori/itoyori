@@ -290,15 +290,15 @@ private:
           for_each(
               execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
                                          .checkout_count = opts.cutoff_count},
-              make_global_iterator(b, checkout_mode::read_write),
-              make_global_iterator(e, checkout_mode::read_write),
-              [](T& x) { std::destroy_at(&x); });
+              make_destruct_iterator(b),
+              make_destruct_iterator(e),
+              [](T* p) { std::destroy_at(p); });
         } else {
           for_each(
               execution::sequenced_policy{.checkout_count = opts.cutoff_count},
-              make_global_iterator(b, checkout_mode::read_write),
-              make_global_iterator(e, checkout_mode::read_write),
-              [](T& x) { std::destroy_at(&x); });
+              make_destruct_iterator(b),
+              make_destruct_iterator(e),
+              [](T* p) { std::destroy_at(p); });
         }
       });
     }

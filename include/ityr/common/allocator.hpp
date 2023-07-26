@@ -378,6 +378,8 @@ private:
     remove_header_from_list(h);
     std::destroy_at(h);
     std_pool_mr_.deallocate(h, size, alignment);
+
+    ITYR_CHECK(allocated_size_ >= size);
     allocated_size_ -= size;
   }
 

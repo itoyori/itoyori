@@ -67,6 +67,15 @@ void with_checkout_iter(global_construct_iterator<T> begin,
   ori::checkin(p, count, ori::mode::write);
 }
 
+template <typename T, typename Fn>
+void with_checkout_iter(global_destruct_iterator<T> begin,
+                        std::size_t                 count,
+                        Fn&&                        fn) {
+  auto p = ori::checkout(&*begin, count, ori::mode::read_write);
+  std::forward<Fn>(fn)(make_count_iterator(p));
+  ori::checkin(p, count, ori::mode::read_write);
+}
+
 template <typename ForwardIterator, typename Fn>
 inline void for_each(const execution::sequenced_policy& opts,
                      ForwardIterator                    first,
