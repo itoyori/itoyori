@@ -222,17 +222,15 @@ template <typename ExecutionPolicy, typename ForwardIterator, typename T,
 inline T transform_reduce(const ExecutionPolicy& policy,
                           ForwardIterator        first,
                           ForwardIterator        last,
-                          T                      init,
+                          T                      identity,
                           BinaryReduceOp         binary_reduce_op,
                           UnaryTransformOp       unary_transform_op) {
   using it_ref = typename std::iterator_traits<ForwardIterator>::reference;
   using transformed_t = std::invoke_result_t<UnaryTransformOp, it_ref>;
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, transformed_t>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, transformed_t, T&>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, T&>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, transformed_t, transformed_t>);
-
-  if (first == last) {
-    return init;
-  }
 
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode::read_t> ||
@@ -242,21 +240,20 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     // automatically convert global pointers to global iterators with read-only access
     auto first_ = make_global_iterator(first, checkout_mode::read);
     auto last_  = make_global_iterator(last , checkout_mode::read);
-    return transform_reduce(policy, first_, last_, init, binary_reduce_op, unary_transform_op);
+    return transform_reduce(policy, first_, last_, identity, binary_reduce_op, unary_transform_op);
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
-    ITYR_CHECK(std::distance(first_, last_) >= 1);
-    T acc = unary_transform_op(*first_);
-    for_each(seq_policy, std::next(first_), last_, [&](const auto& v) {
+    T acc = identity;
+    for_each(seq_policy, first_, last_, [&](const auto& v) {
       acc = binary_reduce_op(acc, unary_transform_op(v));
     });
     return acc;
   };
 
-  return binary_reduce_op(init, loop_generic(policy, serial_fn, binary_reduce_op, first, last));
+  return loop_generic(policy, serial_fn, binary_reduce_op, first, last);
 }
 
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2, typename T,
@@ -265,18 +262,16 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                           ForwardIterator1       first1,
                           ForwardIterator1       last1,
                           ForwardIterator2       first2,
-                          T                      init,
+                          T                      identity,
                           BinaryReduceOp         binary_reduce_op,
                           BinaryTransformOp      binary_transform_op) {
   using it1_ref = typename std::iterator_traits<ForwardIterator1>::reference;
   using it2_ref = typename std::iterator_traits<ForwardIterator2>::reference;
   using transformed_t = std::invoke_result_t<BinaryTransformOp, it1_ref, it2_ref>;
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, transformed_t>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, transformed_t, T&>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, T&>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, transformed_t, transformed_t>);
-
-  if (first1 == last1) {
-    return init;
-  }
 
   if constexpr (is_global_iterator_v<ForwardIterator1>) {
     static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
@@ -286,7 +281,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     // automatically convert global pointers to global iterators with read-only access
     auto first1_ = make_global_iterator(first1, checkout_mode::read);
     auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    return transform_reduce(policy, first1_, last1_, first2, init, binary_reduce_op, binary_transform_op);
+    return transform_reduce(policy, first1_, last1_, first2, identity, binary_reduce_op, binary_transform_op);
   }
 
   if constexpr (is_global_iterator_v<ForwardIterator2>) {
@@ -296,22 +291,21 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
     // automatically convert global pointers to global iterators with read-only access
     auto first2_ = make_global_iterator(first2, checkout_mode::read);
-    return transform_reduce(policy, first1, last1, first2_, init, binary_reduce_op, binary_transform_op);
+    return transform_reduce(policy, first1, last1, first2_, identity, binary_reduce_op, binary_transform_op);
   }
 
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
-    ITYR_CHECK(std::distance(first1_, last1_) >= 1);
-    T acc = binary_transform_op(*first1_, *first2_);
-    for_each(seq_policy, std::next(first1_), last1_, std::next(first2_), [&](const auto& v1, const auto& v2) {
+    T acc = identity;
+    for_each(seq_policy, first1_, last1_, first2_, [&](const auto& v1, const auto& v2) {
       acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
     });
     return acc;
   };
 
-  return binary_reduce_op(init, loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2));
+  return loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2);
 }
 
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2, typename T>
@@ -319,21 +313,23 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                           ForwardIterator1       first1,
                           ForwardIterator1       last1,
                           ForwardIterator2       first2,
-                          T                      init) {
-  return transform_reduce(policy, first1, last1, first2, init, std::plus<>{}, std::multiplies<>{});
+                          T                      identity) {
+  return transform_reduce(policy, first1, last1, first2, identity, std::plus<>{}, std::multiplies<>{});
 }
 
 template <typename ExecutionPolicy, typename ForwardIterator, typename T, typename BinaryReduceOp>
 inline T reduce(const ExecutionPolicy& policy,
                 ForwardIterator        first,
                 ForwardIterator        last,
-                T                      init,
+                T                      identity,
                 BinaryReduceOp         binary_reduce_op) {
   using it_ref = typename std::iterator_traits<ForwardIterator>::reference;
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, it_ref>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, T&>);
+  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, T&>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, it_ref>);
 
-  return transform_reduce(policy, first, last, init, binary_reduce_op,
+  return transform_reduce(policy, first, last, identity, binary_reduce_op,
                           [](auto&& v) { return std::forward<decltype(v)>(v); });
 }
 
@@ -341,8 +337,8 @@ template <typename ExecutionPolicy, typename ForwardIterator, typename T>
 inline T reduce(const ExecutionPolicy& policy,
                 ForwardIterator        first,
                 ForwardIterator        last,
-                T                      init) {
-  return reduce(policy, first, last, init, std::plus<>{});
+                T                      identity) {
+  return reduce(policy, first, last, identity, std::plus<>{});
 }
 
 template <typename ExecutionPolicy, typename ForwardIterator>
