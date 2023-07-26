@@ -996,6 +996,33 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   return std::next(first_d, std::distance(first1, last1));
 }
 
+/**
+ * @brief Fill a range with a given value.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Begin iterator.
+ * @param last   End iterator.
+ * @param value  Value to be filled with.
+ *
+ * This function assigns `value` to every element in the given range `[first, last)`.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v(5);
+ * ityr::fill(ityr::execution::par, v.begin(), v.end(), 100);
+ * // v = {100, 100, 100, 100, 100}
+ * ```
+ *
+ * @see [std::reduce -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/reduce)
+ * @see `ityr::transform()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator, typename T>
 inline void fill(const ExecutionPolicy& policy,
                  ForwardIterator        first,
