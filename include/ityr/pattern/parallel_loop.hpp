@@ -10,6 +10,8 @@
 
 namespace ityr {
 
+namespace internal {
+
 template <typename SerialFn, typename CombineFn, typename ReleaseHandler,
           typename ForwardIterator, typename... ForwardIterators>
 inline std::invoke_result_t<SerialFn, ForwardIterator, ForwardIterator, ForwardIterators...>
@@ -114,6 +116,8 @@ inline auto loop_generic(const execution::parallel_policy& policy,
   return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
 }
 
+}
+
 /**
  * @brief Apply an operation to each element in a range.
  *
@@ -158,9 +162,9 @@ inline void for_each(const ExecutionPolicy& policy,
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
-    for_each_aux(seq_policy, op, first_, last_);
+    internal::for_each_aux(seq_policy, op, first_, last_);
   };
-  loop_generic(policy, serial_fn, []{}, first, last);
+  internal::loop_generic(policy, serial_fn, []{}, first, last);
 }
 
 /**
@@ -212,9 +216,9 @@ inline void for_each(const ExecutionPolicy& policy,
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
-    for_each_aux(seq_policy, op, first1_, last1_, first2_);
+    internal::for_each_aux(seq_policy, op, first1_, last1_, first2_);
   };
-  loop_generic(policy, serial_fn, []{}, first1, last1, first2);
+  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2);
 }
 
 /**
@@ -271,9 +275,9 @@ inline void for_each(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
                        ForwardIterator3 first3_) mutable {
-    for_each_aux(seq_policy, op, first1_, last1_, first2_, first3_);
+    internal::for_each_aux(seq_policy, op, first1_, last1_, first2_, first3_);
   };
-  loop_generic(policy, serial_fn, []{}, first1, last1, first2, first3);
+  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2, first3);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
@@ -572,13 +576,13 @@ inline T transform_reduce(const ExecutionPolicy& policy,
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
     T acc = identity;
-    for_each_aux(seq_policy, [&](const auto& v) {
+    internal::for_each_aux(seq_policy, [&](const auto& v) {
       acc = binary_reduce_op(acc, unary_transform_op(v));
     }, first_, last_);
     return acc;
   };
 
-  return loop_generic(policy, serial_fn, binary_reduce_op, first, last);
+  return internal::loop_generic(policy, serial_fn, binary_reduce_op, first, last);
 }
 
 /**
@@ -660,13 +664,13 @@ inline T transform_reduce(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
     T acc = identity;
-    for_each_aux(seq_policy, [&](const auto& v1, const auto& v2) {
+    internal::for_each_aux(seq_policy, [&](const auto& v1, const auto& v2) {
       acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
     }, first1_, last1_, first2_);
     return acc;
   };
 
-  return loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2);
+  return internal::loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2);
 }
 
 /**
@@ -884,12 +888,12 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIteratorD first_d_) mutable {
-    for_each_aux(seq_policy, [&](const auto& v1, auto&& d) {
+    internal::for_each_aux(seq_policy, [&](const auto& v1, auto&& d) {
       d = unary_op(v1);
     }, first1_, last1_, first_d_);
   };
 
-  loop_generic(policy, serial_fn, []{}, first1, last1, first_d);
+  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
 }
@@ -986,12 +990,12 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
                        ForwardIteratorD first_d_) mutable {
-    for_each_aux(seq_policy, [&](const auto& v1, const auto& v2, auto&& d) {
+    internal::for_each_aux(seq_policy, [&](const auto& v1, const auto& v2, auto&& d) {
       d = binary_op(v1, v2);
     }, first1_, last1_, first2_, first_d_);
   };
 
-  loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
+  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
 }
@@ -1047,12 +1051,12 @@ inline void fill(const ExecutionPolicy& policy,
   auto seq_policy = execution::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
-    for_each_aux(seq_policy, [&](auto&& d) {
+    internal::for_each_aux(seq_policy, [&](auto&& d) {
       d = value;
     }, first_, last_);
   };
 
-  loop_generic(policy, serial_fn, []{}, first, last);
+  internal::loop_generic(policy, serial_fn, []{}, first, last);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {

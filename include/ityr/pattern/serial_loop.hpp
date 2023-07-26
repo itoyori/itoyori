@@ -41,6 +41,8 @@ inline constexpr parallel_policy  par;
 
 }
 
+namespace internal {
+
 template <typename T, typename Mode>
 inline auto make_checkout_iter(global_iterator<T, Mode> it,
                                std::size_t              count) {
@@ -131,6 +133,8 @@ inline void for_each_aux(const execution::sequenced_policy& policy,
       op(*first, *firsts...);
     }
   }
+}
+
 }
 
 }
