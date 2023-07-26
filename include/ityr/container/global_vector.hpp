@@ -36,6 +36,7 @@ public:
   explicit global_vector(size_type count, const T& value) : global_vector(global_vector_options(), count, value) {}
   template <typename InputIterator>
   global_vector(InputIterator first, InputIterator last) : global_vector(global_vector_options(), first, last) {}
+  global_vector(std::initializer_list<T> init) : global_vector(global_vector_options(), init) {}
 
   explicit global_vector(const global_vector_options& opts) : opts_(opts) {}
 
@@ -51,6 +52,10 @@ public:
   global_vector(const global_vector_options& opts, InputIterator first, InputIterator last) : opts_(opts) {
     initialize_from_iter(first, last,
                          typename std::iterator_traits<InputIterator>::iterator_category());
+  }
+
+  global_vector(const global_vector_options& opts, std::initializer_list<T> init) : opts_(opts) {
+    initialize_from_iter(init.begin(), init.end(), std::random_access_iterator_tag{});
   }
 
   ~global_vector() {
@@ -561,6 +566,14 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
           });
 
       check_sum((2 * n) * (2 * n - 1) / 2 * n_ranks);
+    });
+  }
+
+  ITYR_SUBCASE("initializer list") {
+    root_exec([&]() {
+      ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+      int product = ityr::reduce(ityr::execution::par, v.begin(), v.end(), 1, std::multiplies<>{});
+      ITYR_CHECK(product == 120);
     });
   }
 
