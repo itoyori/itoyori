@@ -4,6 +4,31 @@
 
 namespace ityr {
 
+/**
+ * @brief Count iterator.
+ *
+ * A count iterator is a special iterator that has the same dereferenced value as the iterator value.
+ *
+ * This is particularly useful when used with iterator-based loop functions (e.g., `ityr::for_each()`),
+ * as it can be used to represent the index of each iteration in the loop.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+ * ityr::for_each(
+ *     ityr::execution::seq,
+ *     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read),
+ *     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read),
+ *     ityr::count_iterator<std::size_t>(0),
+ *     [](int x, std::size_t i) { std::cout << "v[" << i << "] = " << x << std::endl; });
+ * // Output:
+ * // v[0] = 1
+ * // v[1] = 2
+ * // v[2] = 3
+ * // v[3] = 4
+ * // v[4] = 5
+ * ```
+ */
 template <typename T>
 class count_iterator {
   using this_t = count_iterator<T>;

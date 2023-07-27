@@ -7,7 +7,7 @@
 #include "ityr/common/profiler.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/iterator.hpp"
+#include "ityr/pattern/count_iterator.hpp"
 #include "ityr/pattern/root_exec.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 #include "ityr/pattern/parallel_invoke.hpp"

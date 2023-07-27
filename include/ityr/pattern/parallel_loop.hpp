@@ -4,7 +4,7 @@
 #include "ityr/common/topology.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/iterator.hpp"
+#include "ityr/pattern/count_iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
 #include "ityr/pattern/serial_loop.hpp"
 

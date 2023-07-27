@@ -2,7 +2,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/iterator.hpp"
+#include "ityr/pattern/count_iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
 #include "ityr/container/checkout_span.hpp"
 

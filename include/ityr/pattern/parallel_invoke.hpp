@@ -5,7 +5,7 @@
 #include "ityr/common/util.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/iterator.hpp"
+#include "ityr/pattern/count_iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
 
 namespace ityr {
