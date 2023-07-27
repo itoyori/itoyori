@@ -1,5 +1,7 @@
 #pragma once
 
+#include <variant>
+
 #include "ityr/common/util.hpp"
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
@@ -8,16 +10,7 @@
 
 namespace ityr {
 
-struct no_retval_t {};
-inline constexpr no_retval_t no_retval;
-
-inline bool operator==(no_retval_t, no_retval_t) noexcept {
-  return true;
-}
-
-inline bool operator!=(no_retval_t, no_retval_t) noexcept {
-  return false;
-}
+namespace internal {
 
 template <typename... Args>
 struct count_num_tasks;
@@ -82,7 +75,7 @@ public:
     if constexpr (std::is_void_v<retval_t>) {
       std::apply(std::forward<Fn>(fn),
                  std::forward<std::tuple<Args...>>(args));
-      return std::make_tuple(no_retval);
+      return std::make_tuple(std::monostate{});
     } else {
       auto ret = std::apply(std::forward<Fn>(fn),
                             std::forward<std::tuple<Args...>>(args));
@@ -121,7 +114,7 @@ public:
       }
 
       th.join();
-      return std::tuple_cat(std::make_tuple(no_retval), ret_rest);
+      return std::tuple_cat(std::make_tuple(std::monostate{}), ret_rest);
     } else {
       if (!th.serialized()) {
         ori::release();
@@ -137,13 +130,42 @@ private:
   bool           all_serialized_ = true;
 };
 
+}
+
+/**
+ * @brief Fork parallel tasks and join them.
+ *
+ * @param args... Sequence of function objects and their arguments in the form of `fn1, (args1), fn2, (args2), ...`,
+ *                where `fn1` is a function object and `args1` is a tuple of arguments for `fn1`, and so on.
+ *                The tuples of arguments are optional if functions require no argument.
+ *
+ * @return A tuple collecting the results of each function invocation.
+ *         For a void function, `std::monostate` is used as a placeholder.
+ *
+ * This function forks parallel tasks given as function objects and joins them at a time.
+ * This function blocks the current thread's execution until all of the child tasks are completed.
+ *
+ * The executing process can be changed across this function call (due to thread migration).
+ *
+ * Example:
+ * ```
+ * ityr::parallel_invoke(
+ *   []() { return 1; },                                        // no argument
+ *   [](int x) { return x; }, std::make_tuple(2),               // one argument
+ *   [](int x, int y) { return x * y; }, std::make_tuple(3, 4), // two arguments
+ *   []() {},                                                   // no return value
+ *   std::plus<int>{}, std::make_tuple(5, 6)                    // a function (not lambda)
+ * );
+ * // returns std::tuple(1, 2, 12, std::monospace{}, 11)
+ * ```
+ */
 template <typename... Args>
 inline auto parallel_invoke(Args&&... args) {
   auto rh = ori::release_lazy();
 
   auto tgdata = ito::task_group_begin();
 
-  parallel_invoke_state s(rh);
+  internal::parallel_invoke_state s(rh);
   auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
 
   // No lazy release here because the suspended thread (cross-worker tasks in ADWS) is
@@ -210,31 +232,31 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_invoke] parallel invoke") {
       ITYR_CHECK(parallel_invoke() == std::make_tuple());
 
       // The following is not allowed before C++20: Lambda expression in an unevaluated operand
-      // ITYR_CHECK(std::make_tuple(no_retval) == parallel_invoke([]{}));
+      // ITYR_CHECK(std::make_tuple(std::monostate{}) == parallel_invoke([]{}));
 
       {
         auto ret = parallel_invoke([]{});
-        ITYR_CHECK(ret == std::make_tuple(no_retval));
+        ITYR_CHECK(ret == std::make_tuple(std::monostate{}));
       }
 
       {
         auto ret = parallel_invoke([]{}, []{});
-        ITYR_CHECK(ret == std::make_tuple(no_retval, no_retval));
+        ITYR_CHECK(ret == std::make_tuple(std::monostate{}, std::monostate{}));
       }
 
       {
         auto ret = parallel_invoke([]{}, []{}, []{ return 1; });
-        ITYR_CHECK(ret == std::make_tuple(no_retval, no_retval, 1));
+        ITYR_CHECK(ret == std::make_tuple(std::monostate{}, std::monostate{}, 1));
       }
 
       {
         auto ret = parallel_invoke([]{ return 1; }, []{}, []{});
-        ITYR_CHECK(ret == std::make_tuple(1, no_retval, no_retval));
+        ITYR_CHECK(ret == std::make_tuple(1, std::monostate{}, std::monostate{}));
       }
 
       {
         auto ret = parallel_invoke([](int){}, std::make_tuple(1), []{ return 1; }, []{});
-        ITYR_CHECK(ret == std::make_tuple(no_retval, 1, no_retval));
+        ITYR_CHECK(ret == std::make_tuple(std::monostate{}, 1, std::monostate{}));
       }
     });
   }
