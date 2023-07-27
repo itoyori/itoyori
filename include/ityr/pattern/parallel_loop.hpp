@@ -99,7 +99,7 @@ inline auto loop_generic(const execution::sequenced_policy& policy,
                          ForwardIterator                    first,
                          ForwardIterator                    last,
                          ForwardIterators...                firsts) {
-  assert_policy(policy);
+  execution::internal::assert_policy(policy);
   return serial_fn(first, last, firsts...);
 }
 
@@ -111,7 +111,7 @@ inline auto loop_generic(const execution::parallel_policy& policy,
                          ForwardIterator                   first,
                          ForwardIterator                   last,
                          ForwardIterators...               firsts) {
-  assert_policy(policy);
+  execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
 }
@@ -159,7 +159,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator        first,
                      ForwardIterator        last,
                      Op                     op) {
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
     internal::for_each_aux(seq_policy, op, first_, last_);
@@ -212,7 +212,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator1       last1,
                      ForwardIterator2       first2,
                      Op                     op) {
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
@@ -270,7 +270,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator2       first2,
                      ForwardIterator3       first3,
                      Op                     op) {
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
@@ -572,7 +572,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     return transform_reduce(policy, first_, last_, identity, binary_reduce_op, unary_transform_op);
   }
 
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
     T acc = identity;
@@ -659,7 +659,7 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     return transform_reduce(policy, first1, last1, first2_, identity, binary_reduce_op, binary_transform_op);
   }
 
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_) mutable {
@@ -884,7 +884,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     return transform(policy, first1, last1, first_d_, unary_op);
   }
 
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIteratorD first_d_) mutable {
@@ -985,7 +985,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     return transform(policy, first1, last1, first2, first_d_, binary_op);
   }
 
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator1 first1_,
                        ForwardIterator1 last1_,
                        ForwardIterator2 first2_,
@@ -1048,7 +1048,7 @@ inline void fill(const ExecutionPolicy& policy,
     return;
   }
 
-  auto seq_policy = execution::to_sequenced_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
   auto serial_fn = [=](ForwardIterator first_,
                        ForwardIterator last_) mutable {
     internal::for_each_aux(seq_policy, [&](auto&& d) {

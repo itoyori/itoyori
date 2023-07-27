@@ -10,14 +10,52 @@ namespace ityr {
 
 namespace execution {
 
+/**
+ * @brief Serial execution policy for iterator-based loop functions.
+ * @see [std::execution -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/execution_policy_tag_t)
+ * @see `ityr::execution::seq`
+ * @see `ityr::execution::sequenced_policy`
+ * @see `ityr::for_each()`
+ */
 struct sequenced_policy {
+  /**
+   * @brief The maximum number of elements to check out at the same time if automatic checkout is enabled.
+   */
   std::size_t checkout_count = 1;
 };
 
+/**
+ * @brief Parallel execution policy for iterator-based loop functions.
+ * @see [std::execution -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/execution_policy_tag_t)
+ * @see `ityr::execution::par`
+ * @see `ityr::execution::parallel_policy`
+ * @see `ityr::for_each()`
+ */
 struct parallel_policy {
-  std::size_t cutoff_count   = 1;
+  /**
+   * @brief The maximum number of elements to check out at the same time if automatic checkout is enabled.
+   */
+  std::size_t cutoff_count = 1;
+
+  /**
+   * @brief The number of elements for leaf tasks to stop parallel recursion.
+   */
   std::size_t checkout_count = 1;
 };
+
+/**
+ * @brief Default serial execution policy for iterator-based loop functions.
+ * @see `ityr::execution::sequenced_policy`
+ */
+inline constexpr sequenced_policy seq;
+
+/**
+ * @brief Default parallel execution policy for iterator-based loop functions.
+ * @see `ityr::execution::sequenced_policy`
+ */
+inline constexpr parallel_policy par;
+
+namespace internal {
 
 inline sequenced_policy to_sequenced_policy(const sequenced_policy& opts) {
   return opts;
@@ -36,9 +74,7 @@ inline void assert_policy(const parallel_policy& opts) {
   ITYR_CHECK(opts.checkout_count <= opts.cutoff_count);
 }
 
-inline constexpr sequenced_policy seq;
-inline constexpr parallel_policy  par;
-
+}
 }
 
 namespace internal {
