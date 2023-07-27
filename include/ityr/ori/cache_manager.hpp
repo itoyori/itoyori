@@ -461,12 +461,14 @@ private:
   }
 
   void fetch_complete() {
-    for (auto&& win : fetching_wins_) {
-      // TODO: remove duplicates
-      common::mpi_win_flush_all(win);
-      common::verbose<3>("Fetch complete (win=%p)", win);
+    if (!fetching_wins_.empty()) {
+      for (auto&& win : fetching_wins_) {
+        // TODO: remove duplicates
+        common::mpi_win_flush_all(win);
+        common::verbose<3>("Fetch complete (win=%p)", win);
+      }
+      fetching_wins_.clear();
     }
-    fetching_wins_.clear();
   }
 
   void add_fetching_win(MPI_Win win) {

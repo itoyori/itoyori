@@ -110,7 +110,7 @@ void cilkmerge(ityr::global_span<T> s1,
   }
 
   std::size_t split1 = (s1.size() + 1) / 2;
-  std::size_t split2 = binary_search(s2, T(s1[split1 - 1]));
+  std::size_t split2 = binary_search(s2, s1[split1 - 1].get());
 
   auto [s11  , s12  ] = divide(s1, split1);
   auto [s21  , s22  ] = divide(s2, split2);
