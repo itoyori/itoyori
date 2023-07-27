@@ -93,16 +93,18 @@ void cilkmerge(ityr::global_span<T> s1,
   }
 
   if (s2.size() == 0) {
-    auto s1_   = ityr::make_checkout(s1  , ityr::checkout_mode::read);
-    auto dest_ = ityr::make_checkout(dest, ityr::checkout_mode::write);
+    auto [s1_, dest_] =
+      ityr::make_checkouts(s1  , ityr::checkout_mode::read,
+                           dest, ityr::checkout_mode::write);
     std::copy(s1_.begin(), s1_.end(), dest_.begin());
     return;
   }
 
   if (dest.size() < cutoff_count) {
-    auto s1_   = ityr::make_checkout(s1  , ityr::checkout_mode::read);
-    auto s2_   = ityr::make_checkout(s2  , ityr::checkout_mode::read);
-    auto dest_ = ityr::make_checkout(dest, ityr::checkout_mode::write);
+    auto [s1_, s2_, dest_] =
+      ityr::make_checkouts(s1  , ityr::checkout_mode::read,
+                           s2  , ityr::checkout_mode::read,
+                           dest, ityr::checkout_mode::write);
     std::merge(s1_.begin(), s1_.end(), s2_.begin(), s2_.end(), dest_.begin());
     return;
   }

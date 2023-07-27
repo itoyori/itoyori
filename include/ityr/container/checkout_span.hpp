@@ -168,4 +168,58 @@ inline checkout_span<T, Mode> make_checkout(global_span<T> gspan, Mode mode) {
   return checkout_span<T, Mode>{gspan.data(), gspan.size(), mode};
 }
 
+namespace internal {
+
+inline auto make_checkouts_aux() {
+  return std::make_tuple();
+}
+
+template <typename T, typename Mode, typename... Rest>
+inline auto make_checkouts_aux(ori::global_ptr<T> gptr, std::size_t n, Mode mode, Rest&&... rest) {
+  return std::tuple_cat(std::make_tuple(make_checkout(gptr, n, mode)),
+                        make_checkouts_aux(std::forward<Rest>(rest)...));
+}
+
+template <typename T, typename Mode, typename... Rest>
+inline auto make_checkouts_aux(global_span<T> gspan, Mode mode, Rest&&... rest) {
+  return std::tuple_cat(std::make_tuple(make_checkout(gspan, mode)),
+                        make_checkouts_aux(std::forward<Rest>(rest)...));
+}
+
+}
+
+/**
+ * @brief Checkout multiple global memory regions.
+ *
+ * @param args... Sequence of checkout requests. Each checkout request should be in the form of
+ *                `<global_ptr>, <num_elems>, <checkout_mode>` or `<global_span>, <checkout_mode>`.
+ *
+ * @return A tuple collecting the checkout spans for each checkout request.
+ *
+ * This function performs multiple checkout operations at the same time.
+ * This may improve performance by overlapping communication to fetch remote data, compared to
+ * checking out one by one.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2 = {2, 3, 4, 5, 6};
+ * ityr::global_vector<int> v3(10);
+ *
+ * ityr::global_span<int> s2(v2.begin(), v2.end());
+ *
+ * auto [cs1, cs2, cs3] =
+ *   ityr::make_checkouts(
+ *       v1.data(), v1.size(), ityr::checkout_mode::read,
+ *       s2, ityr::checkout_mode::read_write,
+ *       v3.data() + 2, 3, ityr::checkout_mode::write);
+ * ```
+ *
+ * @see `ityr::make_checkout()`
+ */
+template <typename... Args>
+inline auto make_checkouts(Args&&... args) {
+  return internal::make_checkouts_aux(std::forward<Args>(args)...);
+}
+
 }
