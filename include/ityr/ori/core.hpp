@@ -159,10 +159,12 @@ public:
     if (common::round_down_pow2(from_addr_, BlockSize) ==
         common::round_down_pow2(from_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl<mode::read_t, false>(from_addr_, size);
+      checkout_impl_nb<mode::read_t, false>(from_addr_, size);
+      checkout_complete_impl();
       get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
     } else {
-      checkout_impl<mode::read_t, true>(from_addr_, size);
+      checkout_impl_nb<mode::read_t, true>(from_addr_, size);
+      checkout_complete_impl();
       get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
       checkin_impl<mode::read_t, true>(from_addr_, size);
     }
@@ -176,30 +178,43 @@ public:
     if (common::round_down_pow2(to_addr_, BlockSize) ==
         common::round_down_pow2(to_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl<mode::write_t, false>(to_addr_, size);
+      checkout_impl_nb<mode::write_t, false>(to_addr_, size);
+      checkout_complete_impl();
       put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
       checkin_impl<mode::write_t, false>(to_addr_, size);
     } else {
-      checkout_impl<mode::write_t, true>(to_addr_, size);
+      checkout_impl_nb<mode::write_t, true>(to_addr_, size);
+      checkout_complete_impl();
       put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
       checkin_impl<mode::write_t, true>(to_addr_, size);
     }
   }
 
   template <typename Mode>
-  void checkout(void* addr, std::size_t size, Mode) {
+  void checkout_nb(void* addr, std::size_t size, Mode) {
     if constexpr (!enable_vm_map) {
       common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
     }
 
-    ITYR_PROFILER_RECORD(prof_event_checkout);
+    ITYR_PROFILER_RECORD(prof_event_checkout_nb);
     common::verbose<2>("Checkout request (mode: %s) for [%p, %p) (%ld bytes)",
                        str(Mode{}).c_str(), addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
-    checkout_impl<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    checkout_impl_nb<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+  }
+
+  template <typename Mode>
+  void checkout(void* addr, std::size_t size, Mode mode) {
+    checkout_nb(addr, size, mode);
+    checkout_complete();
+  }
+
+  void checkout_complete() {
+    ITYR_PROFILER_RECORD(prof_event_checkout_comp);
+    checkout_complete_impl();
   }
 
   template <typename Mode>
@@ -293,17 +308,17 @@ private:
   }
 
   template <typename Mode, bool IncrementRef>
-  void checkout_impl(std::byte* addr, std::size_t size) {
+  void checkout_impl_nb(std::byte* addr, std::size_t size) {
     constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
     if (noncoll_allocator_.has(addr)) {
-      checkout_noncoll<skip_fetch, IncrementRef>(addr, size);
+      checkout_noncoll_nb<skip_fetch, IncrementRef>(addr, size);
     } else {
-      checkout_coll<skip_fetch, IncrementRef>(addr, size);
+      checkout_coll_nb<skip_fetch, IncrementRef>(addr, size);
     }
   }
 
   template <bool SkipFetch, bool IncrementRef>
-  void checkout_coll(std::byte* addr, std::size_t size) {
+  void checkout_coll_nb(std::byte* addr, std::size_t size) {
     if (home_manager_.template checkout_fast<IncrementRef>(addr, size)) {
       return;
     }
@@ -328,13 +343,10 @@ private:
             blk_addr, req_addr_b, req_addr_e,
             cm.win(), owner, pm_offset);
       });
-
-    home_manager_.checkout_complete();
-    cache_manager_.checkout_complete(cm.win());
   }
 
   template <bool SkipFetch, bool IncrementRef>
-  void checkout_noncoll(std::byte* addr, std::size_t size) {
+  void checkout_noncoll_nb(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_allocator_.has(addr));
 
     auto target_rank = noncoll_allocator_.get_owner(addr);
@@ -361,8 +373,6 @@ private:
           target_rank,
           noncoll_allocator_.get_disp(blk_addr));
     });
-
-    cache_manager_.checkout_complete(noncoll_allocator_.win());
   }
 
   template <typename Mode, bool DecrementRef>
@@ -373,6 +383,11 @@ private:
     } else {
       checkin_coll<register_dirty, DecrementRef>(addr, size);
     }
+  }
+
+  void checkout_complete_impl() {
+    home_manager_.checkout_complete();
+    cache_manager_.checkout_complete();
   }
 
   template <bool RegisterDirty, bool DecrementRef>

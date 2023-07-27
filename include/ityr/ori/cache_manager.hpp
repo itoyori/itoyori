@@ -68,7 +68,7 @@ public:
       cb.valid_regions.add(br);
     } else {
       if (fetch_begin(cb, br)) {
-        fetch_complete(cb.win);
+        add_fetching_win(cb.win);
       }
     }
 
@@ -113,7 +113,7 @@ public:
       cb.valid_regions.add(br);
     } else {
       if (fetch_begin(cb, br)) {
-        fetching_ = true;
+        add_fetching_win(win);
       }
     }
 
@@ -124,7 +124,7 @@ public:
     cache_tlb_.add(blk_addr, &cb);
   }
 
-  void checkout_complete(MPI_Win win) {
+  void checkout_complete() {
     // Overlap communication and memory remapping
     if constexpr (enable_vm_map) {
       if (!cache_blocks_to_map_.empty()) {
@@ -135,10 +135,7 @@ public:
       }
     }
 
-    if (fetching_) {
-      fetch_complete(win);
-      fetching_ = false;
-    }
+    fetch_complete();
   }
 
   template <bool RegisterDirty, bool DecrementRef>
@@ -463,9 +460,20 @@ private:
     return true;
   }
 
-  void fetch_complete(MPI_Win win) {
-    common::mpi_win_flush_all(win);
-    common::verbose<3>("Fetch complete (win=%p)", win);
+  void fetch_complete() {
+    for (auto&& win : fetching_wins_) {
+      // TODO: remove duplicates
+      common::mpi_win_flush_all(win);
+      common::verbose<3>("Fetch complete (win=%p)", win);
+    }
+    fetching_wins_.clear();
+  }
+
+  void add_fetching_win(MPI_Win win) {
+    if (fetching_wins_.empty() || fetching_wins_.back() != win) {
+      // best effort to avoid duplicates
+      fetching_wins_.push_back(win);
+    }
   }
 
   void add_dirty_region(cache_block& cb, block_region br) {
@@ -573,7 +581,7 @@ private:
 
   tlb<std::byte*, cache_block*>          cache_tlb_;
 
-  bool                                   fetching_ = false;
+  std::vector<MPI_Win>                   fetching_wins_;
   std::vector<cache_block*>              cache_blocks_to_map_;
 
   std::vector<cache_block*>              dirty_cache_blocks_;

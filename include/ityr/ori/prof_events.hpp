@@ -18,9 +18,14 @@ struct prof_event_put : public common::profiler::event {
   std::string str() const override { return "core_put"; }
 };
 
-struct prof_event_checkout : public common::profiler::event {
+struct prof_event_checkout_nb : public common::profiler::event {
   using event::event;
-  std::string str() const override { return "core_checkout"; }
+  std::string str() const override { return "core_checkout_nb"; }
+};
+
+struct prof_event_checkout_comp : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "core_checkout_comp"; }
 };
 
 struct prof_event_checkin : public common::profiler::event {
@@ -53,14 +58,15 @@ public:
   prof_events() {}
 
 private:
-  common::profiler::event_initializer<prof_event_get>          ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_put>          ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_checkout>     ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_checkin>      ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_release>      ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_acquire>      ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_release_lazy> ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_acquire_wait> ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_get>           ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_put>           ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_checkout_nb>   ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_checkout_comp> ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_checkin>       ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_release>       ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_acquire>       ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_release_lazy>  ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_acquire_wait>  ITYR_ANON_VAR;
 };
 
 }
