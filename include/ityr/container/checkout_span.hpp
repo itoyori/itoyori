@@ -144,6 +144,7 @@ inline constexpr auto end(const checkout_span<T, Mode>& cs) noexcept {
  * // Output: 1 2 3 4 5
  * ```
  *
+ * @see [std::span -- cppreference.com](https://en.cppreference.com/w/cpp/container/span)
  * @see `ityr::checkout_mode::read`, `ityr::checkout_mode::read_write`, `ityr::checkout_mode::write`
  * @see `ityr::make_global_iterator()`
  */

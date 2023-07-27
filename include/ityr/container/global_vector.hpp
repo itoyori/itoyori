@@ -9,13 +9,87 @@
 
 namespace ityr {
 
+/**
+ * @brief Options for `ityr::global_vector`.
+ * @see `ityr::global_vector`
+ */
 struct global_vector_options {
-  bool        collective         = false;
-  bool        parallel_construct = false;
-  bool        parallel_destruct  = false;
-  std::size_t cutoff_count       = 1024;
+  /**
+   * @brief A collective global vector is initialized if true.
+   */
+  bool collective = false;
+
+  /**
+   * @brief Construction of vector elements is parallelized if true.
+   */
+  bool parallel_construct = false;
+
+  /**
+   * @brief Destruction of vector elements is parallelized if true.
+   */
+  bool parallel_destruct = false;
+
+  /**
+   * @brief The number of elements for leaf tasks to stop parallel recursion in construction and destruction.
+   */
+  std::size_t cutoff_count = 1024;
 };
 
+/**
+ * @brief Global vector to manage a global memory region.
+ *
+ * A global vector is a container for managing a contiguous global memory region.
+ * This resembles the standard `std::vector` container, but `ityr::global_vector` has some
+ * limitations and extensions.
+ *
+ * As a global vector manages global memory, its elements cannot be directly accessed. Access to
+ * its elements must be granted by checkout/checkin operations (e.g., `ityr::make_checkout()`).
+ *
+ * A global vector can accept `ityr::global_vector_options` as the first argument when initialized.
+ * Global vectors have two types (collective or noncollective), which can be configured with the
+ * `ityr::global_vector_options::collective` option.
+ *
+ * - A collective global vector must be allocated and deallocated by all processes collectively
+ *   (i.e., in the SPMD region), and its global memory is distributed to the processes by following
+ *   the memory distribution policy. Some operations that modify the global memory size
+ *   (e.g., `push_back()`) are not permitted for collective global vectors.
+ * - A noncollective global vector can be independently allocated and deallocated in each process.
+ *   Its memory is allocated in the local process and can be deallocated from any other processes.
+ *
+ * Once allocated, both global vectors can be uniformly accessed by global iterators, for example.
+ *
+ * Example:
+ * ```
+ * assert(ityr::is_spmd());
+ *
+ * // Collective global vector's memory is distributed to all processes
+ * // (Note: This example vector is too small to be distributed to multiple processes.)
+ * ityr::global_vector<int> v_coll({.collective = true}, {1, 2, 3, 4, 5});
+ *
+ * // Create a global span to prevent copying the global vector
+ * ityr::global_span<int> s_coll(v_coll.begin(), v_coll.end());
+ *
+ * ityr::root_exec([=] {
+ *   // Noncollective global vector's memory is allocated in the local process
+ *   ityr::global_vector<int> v_noncoll = {2, 3, 4, 5, 6};
+ *
+ *   // Calculate a dot product of the collective and noncollective vectors in parallel
+ *   int dot = ityr::transform_reduce(ityr::execution::par,
+ *                                    s_coll.begin(), s_coll.end(), v_noncoll.begin(), 0);
+ *   // dot = 70
+ * });
+ * ```
+ *
+ * In addition, the construction and destruction of vector elements can also be parallelised by
+ * setting the `ityr::global_vector_options::parallel_construct` and
+ * `ityr::global_vector_options::parallel_destruct` options. The cutoff count for leaf tasks can
+ * be configured by the `ityr::global_vector_options::cutoff_count` option.
+ * Destruction for elements may be skipped if `T` is trivially destructive.
+ *
+ * @see [std::vector -- cppreference.com](https://en.cppreference.com/w/cpp/container/vector)
+ * @see `ityr::global_vector_options`
+ * @see `ityr::global_span`.
+ */
 template <typename T>
 class global_vector {
   using this_t = global_vector;
