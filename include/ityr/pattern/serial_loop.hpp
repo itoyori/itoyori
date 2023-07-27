@@ -80,56 +80,67 @@ inline void assert_policy(const parallel_policy& opts) {
 namespace internal {
 
 template <typename T, typename Mode>
-inline auto make_checkout_iter(global_iterator<T, Mode> it,
-                               std::size_t              count) {
-  auto cs = make_checkout(&*it, count, Mode{});
+inline auto make_checkout_iter_nb(global_iterator<T, Mode> it,
+                                  std::size_t              count) {
+  checkout_span<T, Mode> cs;
+  cs.checkout_nb(&*it, count, Mode{});
   return std::make_tuple(std::move(cs), cs.data());
 }
 
 template <typename T>
-inline auto make_checkout_iter(global_move_iterator<T> it,
-                               std::size_t             count) {
-  auto cs = make_checkout(&*it, count, checkout_mode::read_write);
+inline auto make_checkout_iter_nb(global_move_iterator<T> it,
+                                  std::size_t             count) {
+  checkout_span<T, checkout_mode::read_write_t> cs;
+  cs.checkout_nb(&*it, count, checkout_mode::read_write);
   return std::make_tuple(std::move(cs), std::make_move_iterator(cs.data()));
 }
 
 template <typename T>
-inline auto make_checkout_iter(global_construct_iterator<T> it,
-                               std::size_t                  count) {
-  auto cs = make_checkout(&*it, count, checkout_mode::write);
+inline auto make_checkout_iter_nb(global_construct_iterator<T> it,
+                                  std::size_t                  count) {
+  checkout_span<T, checkout_mode::write_t> cs;
+  cs.checkout_nb(&*it, count, checkout_mode::write);
   return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
 }
 
 template <typename T>
-inline auto make_checkout_iter(global_destruct_iterator<T> it,
-                               std::size_t                 count) {
-  auto cs = make_checkout(&*it, count, checkout_mode::read_write);
+inline auto make_checkout_iter_nb(global_destruct_iterator<T> it,
+                                  std::size_t                 count) {
+  checkout_span<T, checkout_mode::read_write_t> cs;
+  cs.checkout_nb(&*it, count, checkout_mode::read_write);
   return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
 }
 
-inline auto checkout_global_iterators(std::size_t) {
+inline auto checkout_global_iterators_aux(std::size_t) {
   return std::make_tuple(std::make_tuple(), std::make_tuple());
 }
 
 template <typename ForwardIterator, typename... ForwardIterators>
-inline auto checkout_global_iterators(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
+inline auto checkout_global_iterators_aux(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     if constexpr (ForwardIterator::auto_checkout) {
-      auto [cs, it_] = make_checkout_iter(it, n);
-      auto [css, its] = checkout_global_iterators(n, rest...);
+      auto [cs, it_] = make_checkout_iter_nb(it, n);
+      auto [css, its] = checkout_global_iterators_aux(n, rest...);
       return std::make_tuple(std::tuple_cat(std::make_tuple(std::move(cs)), std::move(css)),
                              std::tuple_cat(std::make_tuple(it_), its));
     } else {
-      auto [css, its] = checkout_global_iterators(n, rest...);
+      auto [css, its] = checkout_global_iterators_aux(n, rest...);
       // &*: convert global_iterator -> global_ref -> global_ptr
       return std::make_tuple(std::move(css),
                              std::tuple_cat(std::make_tuple(&*it), its));
     }
   } else {
-    auto [css, its] = checkout_global_iterators(n, rest...);
+    auto [css, its] = checkout_global_iterators_aux(n, rest...);
     return std::make_tuple(std::move(css),
                            std::tuple_cat(std::make_tuple(it), its));
   }
+}
+
+template <typename... ForwardIterators>
+inline auto checkout_global_iterators(std::size_t n, ForwardIterators... its) {
+  auto ret = checkout_global_iterators_aux(n, its...);
+  ori::checkout_complete();
+  return ret;
 }
 
 template <typename Op, typename... ForwardIterators>

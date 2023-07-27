@@ -100,32 +100,47 @@ inline T* checkout_with_getput(global_ptr<T> ptr, std::size_t count) {
 }
 
 template <typename T>
-inline const T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_t) {
+inline const T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) {
   if constexpr (force_getput) {
     return checkout_with_getput<false>(ptr, count);
   }
-  core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::read);
+  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::read);
   return ptr.raw_ptr();
 }
 
 template <typename T>
-inline T* checkout(global_ptr<T> ptr, std::size_t count, mode::write_t) {
+inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with write access mode");
   if constexpr (force_getput) {
     return checkout_with_getput<true>(ptr, count);
   }
-  core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::write);
+  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::write);
   return ptr.raw_ptr();
 }
 
 template <typename T>
-inline T* checkout(global_ptr<T> ptr, std::size_t count, mode::read_write_t) {
+inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with read+write access mode");
   if constexpr (force_getput) {
     return checkout_with_getput<false>(ptr, count);
   }
-  core::instance::get().checkout(ptr.raw_ptr(), count * sizeof(T), mode::read_write);
+  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::read_write);
   return ptr.raw_ptr();
+}
+
+inline void checkout_complete() {
+  if constexpr (force_getput) {
+    // TODO: consider nonblocking implementation for getput
+    return;
+  }
+  core::instance::get().checkout_complete();
+}
+
+template <typename T, typename Mode>
+inline auto checkout(global_ptr<T> ptr, std::size_t count, Mode mode) {
+  auto ret = checkout_nb(ptr, count, mode);
+  checkout_complete();
+  return ret;
 }
 
 template <bool RegisterDirty, typename T>

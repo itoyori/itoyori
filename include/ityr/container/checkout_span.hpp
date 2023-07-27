@@ -69,6 +69,28 @@ public:
   constexpr bool empty() const noexcept { return n_ == 0; }
 
   /**
+   * @brief Manually perform the checkout operation by checking in the previous span.
+   */
+  void checkout(ori::global_ptr<T> gptr, std::size_t n, Mode) {
+    if (ptr_) {
+      checkin();
+    }
+    ptr_ = ori::checkout(gptr, n, Mode{});
+    n_ = n;
+  }
+
+  /**
+   * @brief Manually perform the nonblocking checkout operation by checking in the previous span.
+   */
+  void checkout_nb(ori::global_ptr<T> gptr, std::size_t n, Mode) {
+    if (ptr_) {
+      checkin();
+    }
+    ptr_ = ori::checkout_nb(gptr, n, Mode{});
+    n_ = n;
+  }
+
+  /**
    * @brief Manually perform the checkin operation by discarding the current checkout span.
    */
   void checkin() {
@@ -176,13 +198,17 @@ inline auto make_checkouts_aux() {
 
 template <typename T, typename Mode, typename... Rest>
 inline auto make_checkouts_aux(ori::global_ptr<T> gptr, std::size_t n, Mode mode, Rest&&... rest) {
-  return std::tuple_cat(std::make_tuple(make_checkout(gptr, n, mode)),
+  checkout_span<T, Mode> cs;
+  cs.checkout_nb(gptr, n, mode);
+  return std::tuple_cat(std::make_tuple(std::move(cs)),
                         make_checkouts_aux(std::forward<Rest>(rest)...));
 }
 
 template <typename T, typename Mode, typename... Rest>
 inline auto make_checkouts_aux(global_span<T> gspan, Mode mode, Rest&&... rest) {
-  return std::tuple_cat(std::make_tuple(make_checkout(gspan, mode)),
+  checkout_span<T, Mode> cs;
+  cs.checkout_nb(gspan.data(), gspan.size(), mode);
+  return std::tuple_cat(std::make_tuple(std::move(cs)),
                         make_checkouts_aux(std::forward<Rest>(rest)...));
 }
 
@@ -219,7 +245,9 @@ inline auto make_checkouts_aux(global_span<T> gspan, Mode mode, Rest&&... rest) 
  */
 template <typename... Args>
 inline auto make_checkouts(Args&&... args) {
-  return internal::make_checkouts_aux(std::forward<Args>(args)...);
+  auto css = internal::make_checkouts_aux(std::forward<Args>(args)...);
+  ori::checkout_complete();
+  return css;
 }
 
 }
