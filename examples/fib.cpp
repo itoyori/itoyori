@@ -22,9 +22,8 @@ result_t fib_rec(int n) {
   } else {
     auto [x, y] =
       ityr::parallel_invoke(
-        [=] { return fib_rec(n - 1); },
-        [=] { return fib_rec(n - 2); }
-      );
+          [=] { return fib_rec(n - 1); },
+          [=] { return fib_rec(n - 2); });
     return x + y;
   }
 }
@@ -35,7 +34,7 @@ void run() {
 
     auto t0 = ityr::gettime_ns();
 
-    result_t result = ityr::root_exec([]{
+    result_t result = ityr::root_exec([=] {
       return fib_rec(n_input);
     });
 

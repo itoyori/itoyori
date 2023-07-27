@@ -101,9 +101,8 @@ long fib(int n) {
   } else {
     auto [x, y] =
       ityr::parallel_invoke(
-        [=] { return fib(n - 1); },
-        [=] { return fib(n - 2); }
-      );
+          [=] { return fib(n - 1); },
+          [=] { return fib(n - 2); });
     return x + y;
   }
 }
@@ -139,9 +138,8 @@ Alternatively, arguments can be passed as tuples without lambdas:
 ```cpp
 auto [x, y] =
   ityr::parallel_invoke(
-    fib, std::make_tuple(n - 1),
-    fib, std::make_tuple(n - 2)
-  );
+      fib, std::make_tuple(n - 1),
+      fib, std::make_tuple(n - 2));
 ```
 
 Also, `ityr::parallel_invoke()` can accept an arbitrary number of parallel tasks, as shown in the below Tribonacci example (an extention to Fibonacci).
@@ -156,10 +154,9 @@ long trib(int n) {
   } else {
     auto [x, y, z] =
       ityr::parallel_invoke(
-        [=] { return trib(n - 1); },
-        [=] { return trib(n - 2); },
-        [=] { return trib(n - 3); }
-      );
+          [=] { return trib(n - 1); },
+          [=] { return trib(n - 2); },
+          [=] { return trib(n - 3); });
     return x + y + z;
   }
 }
@@ -217,7 +214,7 @@ Parallel mergesort example:
 void msort(ityr::global_span<int> a) {
   if (a.size() < cutoff) {
     // switch to serial sort when the array is sufficiently small
-    auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
+    auto ac = ityr::make_checkout(a, ityr::checkout_mode::read_write);
     std::sort(ac.begin(), ac.end());
 
   } else {
@@ -225,12 +222,11 @@ void msort(ityr::global_span<int> a) {
 
     // recursively sort two subarrays (divide-and-conquer)
     ityr::parallel_invoke(
-      [=] { msort(a.subspan(0, m           )); },
-      [=] { msort(a.subspan(m, a.size() - m)); }
-    );
+        [=] { msort(a.subspan(0, m           )); },
+        [=] { msort(a.subspan(m, a.size() - m)); });
 
     // merge two sorted subarrays
-    auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
+    auto ac = ityr::make_checkout(a, ityr::checkout_mode::read_write);
     std::inplace_merge(ac.begin(), ac.begin() + m, ac.end());
   }
 }
@@ -250,15 +246,14 @@ std::size_t cutoff = 128;
 
 void msort(ityr::global_span<int> a) {
   if (a.size() < cutoff) {
-    auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
+    auto ac = ityr::make_checkout(a, ityr::checkout_mode::read_write);
     std::sort(ac.begin(), ac.end());
   } else {
     std::size_t m = a.size() / 2;
     ityr::parallel_invoke(
-      [=] { msort(a.subspan(0, m           )); },
-      [=] { msort(a.subspan(m, a.size() - m)); }
-    );
-    auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
+        [=] { msort(a.subspan(0, m           )); },
+        [=] { msort(a.subspan(m, a.size() - m)); });
+    auto ac = ityr::make_checkout(a, ityr::checkout_mode::read_write);
     std::inplace_merge(ac.begin(), ac.begin() + m, ac.end());
   }
 }
@@ -272,7 +267,7 @@ int main() {
 
     if (ityr::is_master()) {
       // initialize the array with random numbers
-      auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::write);
+      auto ac = ityr::make_checkout(a, ityr::checkout_mode::write);
       for (auto&& x : ac) {
         x = rand();
       }
@@ -285,7 +280,7 @@ int main() {
 
     if (ityr::is_master()) {
       // check if the entire array is sorted
-      auto ac = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read);
+      auto ac = ityr::make_checkout(a, ityr::checkout_mode::read);
       bool sorted = std::is_sorted(ac.begin(), ac.end());
       std::cout << "is_sorted: " << std::boolalpha << sorted << std::endl;
     }
@@ -349,8 +344,8 @@ ityr::for_each(
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
-  x = /* ... */;
-});
+      x = /* ... */;
+    });
 ```
 
 `ityr::for_each` receives a user-defined function (lambda) that operates on each element, resulting in more concise and structured code.
@@ -375,8 +370,8 @@ ityr::for_each(
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
-  x = /* ... */;
-});
+      x = /* ... */;
+    });
 ```
 
 Notes:
@@ -397,8 +392,8 @@ ityr::for_each(
     ityr::count_iterator<int>(v.size()),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::write),
     [=](int i, int& x) {
-  x = i;
-});
+      x = i;
+    });
 ```
 
 `ityr::count_iterator` is a special iterator that counts up its value when incremented.
@@ -423,8 +418,8 @@ void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) 
       ityr::make_global_iterator(xs.end()  , ityr::checkout_mode::read),
       ityr::make_global_iterator(ys.begin(), ityr::checkout_mode::read_write),
       [=](const double& x, double& y) {
-    y += a * x;
-  });
+        y += a * x;
+      });
 }
 ```
 
@@ -433,8 +428,7 @@ Similarly, the sum of vector elements can be computed in parallel with `ityr::re
 Calculate sum:
 ```cpp
 double sum(ityr::global_span<double> xs) {
-  return ityr::reduce(ityr::execution::par,
-                      xs.begin(), xs.end());
+  return ityr::reduce(ityr::execution::par, xs.begin(), xs.end());
 }
 ```
 
@@ -469,8 +463,8 @@ void axpy(double a, ityr::global_span<double> xs, ityr::global_span<double> ys) 
       ityr::make_global_iterator(xs.end()  , ityr::checkout_mode::read),
       ityr::make_global_iterator(ys.begin(), ityr::checkout_mode::read_write),
       [=](const double& x, double& y) {
-    y += a * x;
-  });
+        y += a * x;
+      });
 }
 
 double norm(ityr::global_span<double> xs) {

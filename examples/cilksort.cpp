@@ -93,16 +93,16 @@ void cilkmerge(ityr::global_span<T> s1,
   }
 
   if (s2.size() == 0) {
-    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::checkout_mode::read);
-    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::checkout_mode::write);
+    auto s1_   = ityr::make_checkout(s1  , ityr::checkout_mode::read);
+    auto dest_ = ityr::make_checkout(dest, ityr::checkout_mode::write);
     std::copy(s1_.begin(), s1_.end(), dest_.begin());
     return;
   }
 
   if (dest.size() < cutoff_count) {
-    auto s1_   = ityr::make_checkout(s1.data()  , s1.size()  , ityr::checkout_mode::read);
-    auto s2_   = ityr::make_checkout(s2.data()  , s2.size()  , ityr::checkout_mode::read);
-    auto dest_ = ityr::make_checkout(dest.data(), dest.size(), ityr::checkout_mode::write);
+    auto s1_   = ityr::make_checkout(s1  , ityr::checkout_mode::read);
+    auto s2_   = ityr::make_checkout(s2  , ityr::checkout_mode::read);
+    auto dest_ = ityr::make_checkout(dest, ityr::checkout_mode::write);
     std::merge(s1_.begin(), s1_.end(), s2_.begin(), s2_.end(), dest_.begin());
     return;
   }
@@ -115,9 +115,8 @@ void cilkmerge(ityr::global_span<T> s1,
   auto [dest1, dest2] = divide(dest, split1 + split2);
 
   ityr::parallel_invoke(
-    cilkmerge<T>, std::make_tuple(s11, s21, dest1),
-    cilkmerge<T>, std::make_tuple(s12, s22, dest2)
-  );
+      cilkmerge<T>, std::make_tuple(s11, s21, dest1),
+      cilkmerge<T>, std::make_tuple(s12, s22, dest2));
 }
 
 template <typename T>
@@ -125,7 +124,7 @@ void cilksort(ityr::global_span<T> a, ityr::global_span<T> b) {
   assert(a.size() == b.size());
 
   if (a.size() < cutoff_count) {
-    auto a_ = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
+    auto a_ = ityr::make_checkout(a, ityr::checkout_mode::read_write);
     std::sort(a_.begin(), a_.end());
     return;
   }
@@ -139,16 +138,14 @@ void cilksort(ityr::global_span<T> a, ityr::global_span<T> b) {
   auto [b3, b4] = divide_two(b34);
 
   ityr::parallel_invoke(
-    cilksort<T>, std::make_tuple(a1, b1),
-    cilksort<T>, std::make_tuple(a2, b2),
-    cilksort<T>, std::make_tuple(a3, b3),
-    cilksort<T>, std::make_tuple(a4, b4)
-  );
+      cilksort<T>, std::make_tuple(a1, b1),
+      cilksort<T>, std::make_tuple(a2, b2),
+      cilksort<T>, std::make_tuple(a3, b3),
+      cilksort<T>, std::make_tuple(a4, b4));
 
   ityr::parallel_invoke(
-    cilkmerge<T>, std::make_tuple(a1, a2, b12),
-    cilkmerge<T>, std::make_tuple(a3, a4, b34)
-  );
+      cilkmerge<T>, std::make_tuple(a1, a2, b12),
+      cilkmerge<T>, std::make_tuple(a3, a4, b34));
 
   cilkmerge(b12, b34, a);
 }

@@ -90,8 +90,7 @@ result_t nqueens(int n, int j, board b, int depth) {
         ityr::execution::par,
         ityr::count_iterator<int>(0),
         ityr::count_iterator<int>(n),
-        0,
-        std::plus<result_t>(),
+        result_t(0), std::plus<>{},
         [=](int i) mutable -> result_t {
           b.array[j] = static_cast<state_t>(i);
           if (ok(j + 1, b.array)) {
@@ -109,7 +108,7 @@ void run() {
 
     auto t0 = ityr::gettime_ns();
 
-    result_t result = ityr::root_exec([]{
+    result_t result = ityr::root_exec([=] {
       return nqueens(n_input, 0, board{}, 0);
     });
 

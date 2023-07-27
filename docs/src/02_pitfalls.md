@@ -85,9 +85,8 @@ struct fib {
     } else {
       auto [x, y] =
         ityr::parallel_invoke(
-          [=] { return calc(n - 1); },
-          [=] { return calc(n - 2); }
-        );
+            [=] { return calc(n - 1); },
+            [=] { return calc(n - 2); });
       return x + y;
     }
   }
@@ -113,9 +112,8 @@ struct fib {
     } else {
       auto [x, y] =
         ityr::parallel_invoke(
-          [=, *this] { return calc(n - 1); },
-          [=, *this] { return calc(n - 2); }
-        );
+            [=, *this] { return calc(n - 1); },
+            [=, *this] { return calc(n - 2); });
       return x + y;
     }
   }
@@ -139,9 +137,7 @@ Bad example:
 ityr::root_exec([=] {
   std::vector<int> v(100);
 
-  ityr::parallel_invoke(
-    /* ... */
-  );
+  ityr::parallel_invoke(/* ... */);
 
   // The executing process can be different from the previous one
   for (auto&& x : v) {
@@ -159,11 +155,9 @@ Good example:
 ityr::root_exec([=] {
   ityr::global_vector<int> v(100);
 
-  ityr::parallel_invoke(
-    /* ... */
-  );
+  ityr::parallel_invoke(/* ... */);
 
-  auto vc = ityr::make_checkout(v.begin(), v.end(), ityr::checkout_mode::read_write);
+  auto vc = ityr::make_checkout(v.data(), v.size(), ityr::checkout_mode::read_write);
   for (auto&& x : vc) {
     x = /* ... */;
   }
@@ -179,12 +173,10 @@ Bad example:
 ityr::root_exec([=] {
   ityr::global_vector<int> v(100);
 
-  auto vc = ityr::make_checkout(v.begin(), v.end(), ityr::checkout_mode::read_write);
+  auto vc = ityr::make_checkout(v.data(), v.size(), ityr::checkout_mode::read_write);
   /* ... */
 
-  ityr::parallel_invoke(
-    /* ... */
-  );
+  ityr::parallel_invoke(/* ... */);
 
   // The checkin operation occurs here
 });
@@ -198,16 +190,14 @@ Good example:
 ityr::root_exec([=] {
   ityr::global_vector<int> v(100);
 
-  auto vc = ityr::make_checkout(v.begin(), v.end(), ityr::checkout_mode::read_write);
+  auto vc = ityr::make_checkout(v.data(), v.size(), ityr::checkout_mode::read_write);
   /* ... */
   vc.checkin(); // explicit checkin
 
-  ityr::parallel_invoke(
-    /* ... */
-  );
+  ityr::parallel_invoke(/* ... */);
 
   // checkout again after fork/join if needed
-  vc = ityr::make_checkout(v.begin(), v.end(), ityr::checkout_mode::read_write);
+  vc = ityr::make_checkout(v.data(), v.size(), ityr::checkout_mode::read_write);
   /* ... */
 });
 ```
@@ -228,12 +218,10 @@ ityr::root_exec([=] {
       gv.begin(), gv.end(),
       0, std::plus<int>{},
       [=](int x) {
-    /* ... */
-    ityr::parallel_invoke(
-      /* ... */
-    });
-    return x + /* ... */;
-  });
+        /* ... */
+        ityr::parallel_invoke(/* ... */});
+        return x + /* ... */;
+      });
 });
 ```
 
@@ -251,12 +239,10 @@ ityr::root_exec([=] {
       ityr::make_global_iterator(gv.end()  , ityr::checkout_mode::no_access),
       0, std::plus<int>{},
       [=](auto&& x_ref) {
-    /* ... */
-    ityr::parallel_invoke(
-      /* ... */
-    });
-    return x_ref.get() + /* ... */;
-  });
+        /* ... */
+        ityr::parallel_invoke(/* ... */);
+        return x_ref.get() + /* ... */;
+      });
 });
 ```
 
@@ -275,15 +261,14 @@ Bad example:
 ityr::global_span<int> a(/* ... */);
 
 ityr::parallel_invoke(
-  [=] {
-    auto cs = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
-    /* read-only access for `cs` */
-  },
-  [=] {
-    auto cs = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read_write);
-    /* read-only access for `cs` */
-  }
-);
+    [=] {
+      auto cs = ityr::make_checkout(a, ityr::checkout_mode::read_write);
+      /* read-only access for `cs` */
+    },
+    [=] {
+      auto cs = ityr::make_checkout(a, ityr::checkout_mode::read_write);
+      /* read-only access for `cs` */
+    });
 ```
 
 The above program concurrently checks out the same region with the `read_write` mode.
@@ -294,15 +279,14 @@ Good example:
 ityr::global_span<int> a(/* ... */);
 
 ityr::parallel_invoke(
-  [=] {
-    auto cs = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read);
-    /* read-only access for `cs` */
-  },
-  [=] {
-    auto cs = ityr::make_checkout(a.data(), a.size(), ityr::checkout_mode::read);
-    /* read-only access for `cs` */
-  }
-);
+    [=] {
+      auto cs = ityr::make_checkout(a, ityr::checkout_mode::read);
+      /* read-only access for `cs` */
+    },
+    [=] {
+      auto cs = ityr::make_checkout(a, ityr::checkout_mode::read);
+      /* read-only access for `cs` */
+    });
 ```
 
 The user should precisely specify the checkout mode for each checkout call.
