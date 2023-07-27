@@ -42,7 +42,7 @@ using instance = common::singleton<ityr>;
 }
 
 /**
- * @brief Initialize Itoyori.
+ * @brief Initialize Itoyori (collective).
  *
  * @param comm MPI communicator to be used in Itoyori (default: `MPI_COMM_WORLD`).
  *
@@ -61,7 +61,7 @@ inline void init(MPI_Comm comm = MPI_COMM_WORLD) {
 }
 
 /**
- * @brief Finalize Itoyori.
+ * @brief Finalize Itoyori (collective).
  *
  * This function finalizes the Itoyori runtime system.
  * Any itoyori APIs cannot be called after this call unless `ityr::init()` is called again.
