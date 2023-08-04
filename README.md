@@ -6,6 +6,9 @@ It is implemented as a C++17 header-only library over MPI (which must have a ful
 This README explains the basic usage of Itoyori for running example programs.
 For more information, please see [publications](#publications).
 
+- Tutorial: https://itoyori.github.io/itoyori/md_01_tutorial.html
+- API Documentation: https://itoyori.github.io/itoyori/namespaceityr.html
+
 ## Supported Architectures
 
 - x86_64
@@ -43,10 +46,6 @@ The command `setarch $(uname -m) --addr-no-randomize` is needed for Itoyori to d
 The argument `$(uname -m)` might not be needed depending on the `setarch` version.
 
 Please see the example programs for usage (e.g., [cilksort.cpp](./examples/cilksort.cpp)).
-
-## Tutorial and Documentation
-
-https://itoyori.github.io/itoyori
 
 ## Profiling
 
