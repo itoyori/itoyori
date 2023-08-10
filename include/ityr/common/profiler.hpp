@@ -214,7 +214,9 @@ public:
     for (auto&& e : events_) {
       e->clear();
     }
-    mlog_clear_all(&state_.trace_md);
+    if constexpr (std::is_same_v<Mode, mode_trace>) {
+      mlog_clear_all(&state_.trace_md);
+    }
   }
 
   profiler_state& get_state() { return state_; }
