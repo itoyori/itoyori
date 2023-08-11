@@ -12,12 +12,12 @@
 namespace ityr::common {
 
 inline void mpi_win_flush(int target_rank, MPI_Win win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_flush);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_flush);
   MPI_Win_flush(target_rank, win);
 }
 
 inline void mpi_win_flush_all(MPI_Win win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_flush);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_flush);
   MPI_Win_flush_all(win);
 }
 
@@ -27,7 +27,7 @@ inline void mpi_get_nb(T*          origin,
                        int         target_rank,
                        std::size_t target_disp,
                        MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_get, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_get, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Get(origin,
           sizeof(T) * count,
@@ -84,7 +84,7 @@ inline void mpi_put_nb(const T*    origin,
                        int         target_rank,
                        std::size_t target_disp,
                        MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_put, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_put, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Put(origin,
           sizeof(T) * count,
@@ -140,7 +140,7 @@ inline void mpi_atomic_faa_nb(const T*    origin,
                               int         target_rank,
                               std::size_t target_disp,
                               MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_atomic_faa, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_faa, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(origin,
                    result,
@@ -169,7 +169,7 @@ inline void mpi_atomic_cas_nb(const T*    origin,
                               int         target_rank,
                               std::size_t target_disp,
                               MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_atomic_cas, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_cas, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Compare_and_swap(origin,
                        compare,
@@ -197,7 +197,7 @@ inline void mpi_atomic_get_nb(T*          origin,
                               int         target_rank,
                               std::size_t target_disp,
                               MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_atomic_get, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_get, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(nullptr,
                    origin,
@@ -224,7 +224,7 @@ inline void mpi_atomic_put_nb(const T*    origin,
                               int         target_rank,
                               std::size_t target_disp,
                               MPI_Win     win) {
-  ITYR_PROFILER_RECORD(prof_event_rma_atomic_put, target_rank);
+  ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_put, target_rank);
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(origin,
                    result,

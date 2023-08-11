@@ -36,34 +36,49 @@ struct prof_event_target_base : public profiler::event {
   }
 };
 
-struct prof_event_rma_get : public prof_event_target_base {
+struct prof_event_mpi_rma_get : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_get"; }
+  std::string str() const override { return "mpi_rma_get"; }
 };
 
-struct prof_event_rma_put : public prof_event_target_base {
+struct prof_event_mpi_rma_put : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_put"; }
+  std::string str() const override { return "mpi_rma_put"; }
 };
 
-struct prof_event_rma_atomic_faa : public prof_event_target_base {
+struct prof_event_mpi_rma_atomic_faa : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_atomic_faa"; }
+  std::string str() const override { return "mpi_rma_atomic_faa"; }
 };
 
-struct prof_event_rma_atomic_cas : public prof_event_target_base {
+struct prof_event_mpi_rma_atomic_cas : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_atomic_cas"; }
+  std::string str() const override { return "mpi_rma_atomic_cas"; }
 };
 
-struct prof_event_rma_atomic_get : public prof_event_target_base {
+struct prof_event_mpi_rma_atomic_get : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_atomic_get"; }
+  std::string str() const override { return "mpi_rma_atomic_get"; }
 };
 
-struct prof_event_rma_atomic_put : public prof_event_target_base {
+struct prof_event_mpi_rma_atomic_put : public prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "rma_atomic_put"; }
+  std::string str() const override { return "mpi_rma_atomic_put"; }
+};
+
+struct prof_event_mpi_rma_flush : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "mpi_rma_flush"; }
+};
+
+struct prof_event_rma_get_nb : public prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "rma_get_nb"; }
+};
+
+struct prof_event_rma_put_nb : public prof_event_target_base {
+  using prof_event_target_base::prof_event_target_base;
+  std::string str() const override { return "rma_put_nb"; }
 };
 
 struct prof_event_rma_flush : public common::profiler::event {
@@ -111,12 +126,15 @@ public:
   prof_events() {}
 
 private:
-  profiler::event_initializer<prof_event_rma_get>               ITYR_ANON_VAR;
-  profiler::event_initializer<prof_event_rma_put>               ITYR_ANON_VAR;
-  profiler::event_initializer<prof_event_rma_atomic_faa>        ITYR_ANON_VAR;
-  profiler::event_initializer<prof_event_rma_atomic_cas>        ITYR_ANON_VAR;
-  profiler::event_initializer<prof_event_rma_atomic_get>        ITYR_ANON_VAR;
-  profiler::event_initializer<prof_event_rma_atomic_put>        ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_get>           ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_put>           ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_atomic_faa>    ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_atomic_cas>    ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_atomic_get>    ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_atomic_put>    ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_mpi_rma_flush>         ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_get_nb>            ITYR_ANON_VAR;
+  profiler::event_initializer<prof_event_rma_put_nb>            ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_rma_flush>             ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_global_lock_trylock>   ITYR_ANON_VAR;
   profiler::event_initializer<prof_event_global_lock_priolock>  ITYR_ANON_VAR;

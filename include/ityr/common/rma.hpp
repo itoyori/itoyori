@@ -2,6 +2,8 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/options.hpp"
+#include "ityr/common/profiler.hpp"
+#include "ityr/common/prof_events.hpp"
 #include "ityr/common/rma/mpi.hpp"
 #include "ityr/common/rma/utofu.hpp"
 
@@ -27,6 +29,7 @@ inline void get_nb(const win&  origin_win,
                    int         target_rank,
                    std::size_t target_disp) {
   static_assert(!std::is_void_v<T>);
+  ITYR_PROFILER_RECORD(prof_event_rma_get_nb, target_rank);
   instance::get().get_nb(origin_win, reinterpret_cast<std::byte*>(origin_addr), sizeof(T) * count,
                          target_win, target_rank, target_disp);
 }
@@ -39,6 +42,7 @@ inline void get_nb(T*          origin_addr,
                    int         target_rank,
                    std::size_t target_disp) {
   static_assert(!std::is_void_v<T>);
+  ITYR_PROFILER_RECORD(prof_event_rma_get_nb, target_rank);
   instance::get().get_nb(reinterpret_cast<std::byte*>(origin_addr), sizeof(T) * count,
                          target_win, target_rank, target_disp);
 }
@@ -51,6 +55,7 @@ inline void put_nb(const win&  origin_win,
                    int         target_rank,
                    std::size_t target_disp) {
   static_assert(!std::is_void_v<T>);
+  ITYR_PROFILER_RECORD(prof_event_rma_put_nb, target_rank);
   instance::get().put_nb(origin_win, reinterpret_cast<const std::byte*>(origin_addr), sizeof(T) * count,
                          target_win, target_rank, target_disp);
 }
@@ -63,11 +68,13 @@ inline void put_nb(const T*    origin_addr,
                    int         target_rank,
                    std::size_t target_disp) {
   static_assert(!std::is_void_v<T>);
+  ITYR_PROFILER_RECORD(prof_event_rma_put_nb, target_rank);
   instance::get().put_nb(reinterpret_cast<const std::byte*>(origin_addr), sizeof(T) * count,
                          target_win, target_rank, target_disp);
 }
 
 inline void flush(const win& target_win) {
+  ITYR_PROFILER_RECORD(prof_event_rma_flush);
   instance::get().flush(target_win);
 }
 
