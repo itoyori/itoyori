@@ -652,7 +652,16 @@ public:
   }
 
   template <typename Mode>
+  void checkout_nb(void*, std::size_t, Mode) {
+    common::die("core::checkout/checkin is disabled");
+  }
+
+  template <typename Mode>
   void checkout(void*, std::size_t, Mode) {
+    common::die("core::checkout/checkin is disabled");
+  }
+
+  void checkout_complete() {
     common::die("core::checkout/checkin is disabled");
   }
 
@@ -851,7 +860,12 @@ public:
   }
 
   template <typename Mode>
+  void checkout_nb(void*, std::size_t, Mode) {}
+
+  template <typename Mode>
   void checkout(void*, std::size_t, Mode) {}
+
+  void checkout_complete() {}
 
   template <typename Mode>
   void checkin(void*, std::size_t, Mode) {}
