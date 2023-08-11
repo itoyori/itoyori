@@ -268,6 +268,7 @@ public:
       baseptr_ = std::aligned_alloc(alignment, size);
       MPI_Win_create(baseptr_, size, 1, MPI_INFO_NULL, comm, &win_);
     }
+    ITYR_CHECK(win_ != MPI_WIN_NULL);
     MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
     wireup(comm);
   }
@@ -278,6 +279,7 @@ public:
                    MPI_INFO_NULL,
                    comm,
                    &win_);
+    ITYR_CHECK(win_ != MPI_WIN_NULL);
     MPI_Win_lock_all(MPI_MODE_NOCHECK, win_);
     wireup(comm);
   }

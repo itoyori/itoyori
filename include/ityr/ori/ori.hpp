@@ -6,6 +6,7 @@
 #include "ityr/common/wallclock.hpp"
 #include "ityr/common/profiler.hpp"
 #include "ityr/common/prof_events.hpp"
+#include "ityr/common/rma.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/core.hpp"
@@ -29,6 +30,7 @@ private:
   common::singleton_initializer<common::topology::instance>  topo_;
   common::singleton_initializer<common::wallclock::instance> clock_;
   common::singleton_initializer<common::profiler::instance>  prof_;
+  common::singleton_initializer<common::rma::instance>       rma_;
   common::prof_events                                        common_prof_events_;
 
   runtime_options                                            ori_opts_;

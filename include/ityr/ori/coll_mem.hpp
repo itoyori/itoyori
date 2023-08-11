@@ -5,8 +5,8 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
-#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
+#include "ityr/common/rma.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/mem_mapper.hpp"
@@ -26,7 +26,7 @@ public:
       vm_(common::reserve_same_vm_coll(mmapper_->effective_size(), mmapper_->block_size())),
       intra_home_pms_(init_intra_home_pms()),
       intra_home_vms_(init_intra_home_vms()),
-      win_(common::topology::mpicomm(), reinterpret_cast<std::byte*>(local_home_vm().addr()), local_home_vm().size()) {}
+      win_(common::rma::create_win(reinterpret_cast<std::byte*>(local_home_vm().addr()), local_home_vm().size())) {}
 
   coll_mem(coll_mem&&) = default;
   coll_mem& operator=(coll_mem&&) = default;
@@ -58,7 +58,7 @@ public:
     return intra_home_vms_[intra_rank];
   }
 
-  MPI_Win win() const { return win_.win(); }
+  const common::rma::win& win() const { return *win_; }
 
 private:
   static std::string home_shmem_name(coll_mem_id_t id, int global_rank) {
@@ -107,7 +107,7 @@ private:
   common::virtual_mem                vm_;
   std::vector<common::physical_mem>  intra_home_pms_; // intra-rank -> pm
   std::vector<common::virtual_mem>   intra_home_vms_; // intra-rank -> vm
-  common::mpi_win_manager<std::byte> win_;
+  std::unique_ptr<common::rma::win>  win_;
 };
 
 template <typename Fn>

@@ -7,12 +7,14 @@
 #include "ityr/common/mpi_util.hpp"
 #include "ityr/common/options.hpp"
 #include "ityr/common/logger.hpp"
+#include "ityr/common/rma.hpp"
 #include "ityr/common/allocator.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/prof_events.hpp"
 #include "ityr/ori/coll_mem.hpp"
 #include "ityr/ori/coll_mem_manager.hpp"
+#include "ityr/ori/noncoll_mem.hpp"
 #include "ityr/ori/home_manager.hpp"
 #include "ityr/ori/cache_manager.hpp"
 
@@ -62,7 +64,7 @@ class core_default {
 
 public:
   core_default(std::size_t cache_size, std::size_t sub_block_size)
-    : noncoll_allocator_(noncoll_allocator_size_option::value()),
+    : noncoll_mem_(noncoll_allocator_size_option::value()),
       home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
       cache_manager_(cache_size, sub_block_size) {}
 
@@ -82,7 +84,7 @@ public:
     void* addr = cm.vm().addr();
 
     common::verbose("Allocate collective memory [%p, %p) (%ld bytes) (win=%p)",
-                    addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size, &cm.win());
 
     return addr;
   }
@@ -90,7 +92,7 @@ public:
   void* malloc(std::size_t size) {
     ITYR_CHECK_MESSAGE(size > 0, "Memory allocation size cannot be 0");
 
-    void* addr = noncoll_allocator_.allocate(size);
+    void* addr = noncoll_mem_.allocate(size);
 
     common::verbose<2>("Allocate noncollective memory [%p, %p) (%ld bytes)",
                        addr, reinterpret_cast<std::byte*>(addr) + size, size);
@@ -117,7 +119,7 @@ public:
     }
 
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
-                    addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
+                    addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), &cm.win());
 
     cm_manager_.destroy(cm);
   }
@@ -125,12 +127,12 @@ public:
   // TODO: remove size from parameters
   void free(void* addr, std::size_t size) {
     ITYR_CHECK_MESSAGE(addr, "Null pointer was passed to free()");
-    ITYR_CHECK(noncoll_allocator_.has(addr));
+    ITYR_CHECK(noncoll_mem_.has(addr));
 
-    common::topology::rank_t target_rank = noncoll_allocator_.get_owner(addr);
+    common::topology::rank_t target_rank = noncoll_mem_.get_owner(addr);
 
     if (target_rank == common::topology::my_rank()) {
-      noncoll_allocator_.local_deallocate(addr, size);
+      noncoll_mem_.local_deallocate(addr, size);
 
       common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
                          addr, reinterpret_cast<std::byte*>(addr) + size, size);
@@ -143,7 +145,7 @@ public:
         cache_manager_.discard_dirty(blk_addr, req_addr_b, req_addr_e);
       });
 
-      noncoll_allocator_.remote_deallocate(addr, size, target_rank);
+      noncoll_mem_.remote_deallocate(addr, size, target_rank);
 
       common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
                          addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
@@ -270,7 +272,7 @@ public:
   }
 
   void collect_deallocated() {
-    noncoll_allocator_.collect_deallocated();
+    noncoll_mem_.collect_deallocated();
   }
 
   void cache_prof_begin() {
@@ -310,7 +312,7 @@ private:
   template <typename Mode, bool IncrementRef>
   void checkout_impl_nb(std::byte* addr, std::size_t size) {
     constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
-    if (noncoll_allocator_.has(addr)) {
+    if (noncoll_mem_.has(addr)) {
       checkout_noncoll_nb<skip_fetch, IncrementRef>(addr, size);
     } else {
       checkout_coll_nb<skip_fetch, IncrementRef>(addr, size);
@@ -347,9 +349,9 @@ private:
 
   template <bool SkipFetch, bool IncrementRef>
   void checkout_noncoll_nb(std::byte* addr, std::size_t size) {
-    ITYR_CHECK(noncoll_allocator_.has(addr));
+    ITYR_CHECK(noncoll_mem_.has(addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(addr);
+    auto target_rank = noncoll_mem_.get_owner(addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -369,16 +371,16 @@ private:
                                               std::byte* req_addr_e) {
       cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
           blk_addr, req_addr_b, req_addr_e,
-          noncoll_allocator_.win(),
+          noncoll_mem_.win(),
           target_rank,
-          noncoll_allocator_.get_disp(blk_addr));
+          noncoll_mem_.get_disp(blk_addr));
     });
   }
 
   template <typename Mode, bool DecrementRef>
   void checkin_impl(std::byte* addr, std::size_t size) {
     constexpr bool register_dirty = !std::is_same_v<Mode, mode::read_t>;
-    if (noncoll_allocator_.has(addr)) {
+    if (noncoll_mem_.has(addr)) {
       checkin_noncoll<register_dirty, DecrementRef>(addr, size);
     } else {
       checkin_coll<register_dirty, DecrementRef>(addr, size);
@@ -417,9 +419,9 @@ private:
 
   template <bool RegisterDirty, bool DecrementRef>
   void checkin_noncoll(std::byte* addr, std::size_t size) {
-    ITYR_CHECK(noncoll_allocator_.has(addr));
+    ITYR_CHECK(noncoll_mem_.has(addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(addr);
+    auto target_rank = noncoll_mem_.get_owner(addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -451,7 +453,7 @@ private:
   void get_copy_impl(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     if constexpr (enable_vm_map) {
       std::memcpy(to_addr, from_addr, size);
-    } else if (noncoll_allocator_.has(from_addr)) {
+    } else if (noncoll_mem_.has(from_addr)) {
       get_copy_noncoll(from_addr, to_addr, size);
     } else {
       get_copy_coll(from_addr, to_addr, size);
@@ -484,9 +486,9 @@ private:
   void get_copy_noncoll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     ITYR_CHECK(!enable_vm_map);
 
-    ITYR_CHECK(noncoll_allocator_.has(from_addr));
+    ITYR_CHECK(noncoll_mem_.has(from_addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(from_addr);
+    auto target_rank = noncoll_mem_.get_owner(from_addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -505,7 +507,7 @@ private:
   void put_copy_impl(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     if constexpr (enable_vm_map) {
       std::memcpy(to_addr, from_addr, size);
-    } else if (noncoll_allocator_.has(to_addr)) {
+    } else if (noncoll_mem_.has(to_addr)) {
       put_copy_noncoll(from_addr, to_addr, size);
     } else {
       put_copy_coll(from_addr, to_addr, size);
@@ -538,9 +540,9 @@ private:
   void put_copy_noncoll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
     ITYR_CHECK(!enable_vm_map);
 
-    ITYR_CHECK(noncoll_allocator_.has(to_addr));
+    ITYR_CHECK(noncoll_mem_.has(to_addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(to_addr);
+    auto target_rank = noncoll_mem_.get_owner(to_addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -559,17 +561,17 @@ private:
   template <block_size_t BS>
   using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
 
-  coll_mem_manager           cm_manager_;
-  common::remotable_resource noncoll_allocator_;
-  home_manager<BlockSize>    home_manager_;
-  cache_manager<BlockSize>   cache_manager_;
+  coll_mem_manager         cm_manager_;
+  noncoll_mem              noncoll_mem_;
+  home_manager<BlockSize>  home_manager_;
+  cache_manager<BlockSize> cache_manager_;
 };
 
 template <block_size_t BlockSize>
 class core_nocache {
 public:
   core_nocache(std::size_t, std::size_t)
-    : noncoll_allocator_(noncoll_allocator_size_option::value()) {}
+    : noncoll_mem_(noncoll_allocator_size_option::value()) {}
 
   static constexpr block_size_t block_size = BlockSize;
 
@@ -587,7 +589,7 @@ public:
     void* addr = cm.vm().addr();
 
     common::verbose("Allocate collective memory [%p, %p) (%ld bytes) (win=%p)",
-                    addr, reinterpret_cast<std::byte*>(addr) + size, size, cm.win());
+                    addr, reinterpret_cast<std::byte*>(addr) + size, size, &cm.win());
 
     return addr;
   }
@@ -595,7 +597,7 @@ public:
   void* malloc(std::size_t size) {
     ITYR_CHECK_MESSAGE(size > 0, "Memory allocation size cannot be 0");
 
-    void* addr = noncoll_allocator_.allocate(size);
+    void* addr = noncoll_mem_.allocate(size);
 
     common::verbose<2>("Allocate noncollective memory [%p, %p) (%ld bytes)",
                        addr, reinterpret_cast<std::byte*>(addr) + size, size);
@@ -612,25 +614,25 @@ public:
     ITYR_CHECK(addr == cm.vm().addr());
 
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
-                    addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), cm.win());
+                    addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), &cm.win());
 
     cm_manager_.destroy(cm);
   }
 
   void free(void* addr, std::size_t size) {
     ITYR_CHECK_MESSAGE(addr, "Null pointer was passed to free()");
-    ITYR_CHECK(noncoll_allocator_.has(addr));
+    ITYR_CHECK(noncoll_mem_.has(addr));
 
-    common::topology::rank_t target_rank = noncoll_allocator_.get_owner(addr);
+    common::topology::rank_t target_rank = noncoll_mem_.get_owner(addr);
 
     if (target_rank == common::topology::my_rank()) {
-      noncoll_allocator_.local_deallocate(addr, size);
+      noncoll_mem_.local_deallocate(addr, size);
 
       common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) locally",
                          addr, reinterpret_cast<std::byte*>(addr) + size, size);
 
     } else {
-      noncoll_allocator_.remote_deallocate(addr, size, target_rank);
+      noncoll_mem_.remote_deallocate(addr, size, target_rank);
 
       common::verbose<2>("Deallocate noncollective memory [%p, %p) (%ld bytes) remotely (rank=%d)",
                          addr, reinterpret_cast<std::byte*>(addr) + size, size, target_rank);
@@ -683,7 +685,7 @@ public:
   void poll() {}
 
   void collect_deallocated() {
-    noncoll_allocator_.collect_deallocated();
+    noncoll_mem_.collect_deallocated();
   }
 
   void cache_prof_begin() {}
@@ -699,7 +701,7 @@ public:
 
 private:
   void get_impl(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    if (noncoll_allocator_.has(from_addr)) {
+    if (noncoll_mem_.has(from_addr)) {
       get_noncoll(from_addr, to_addr, size);
     } else {
       get_coll(from_addr, to_addr, size);
@@ -725,20 +727,20 @@ private:
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
-        common::mpi_get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
-                           owner, pm_offset + (req_addr_b - blk_addr), cm.win());
+        common::rma::get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
+                            cm.win(), owner, pm_offset + (req_addr_b - blk_addr));
         fetching = true;
       });
 
     if (fetching) {
-      common::mpi_win_flush_all(cm.win());
+      common::rma::flush(cm.win());
     }
   }
 
   void get_noncoll(std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    ITYR_CHECK(noncoll_allocator_.has(from_addr));
+    ITYR_CHECK(noncoll_mem_.has(from_addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(from_addr);
+    auto target_rank = noncoll_mem_.get_owner(from_addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -750,16 +752,16 @@ private:
     for_each_block<BlockSize>(from_addr, size, [&](std::byte* blk_addr,
                                                    std::byte* req_addr_b,
                                                    std::byte* req_addr_e) {
-      common::mpi_get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
-                         target_rank, noncoll_allocator_.get_disp(blk_addr) + (req_addr_b - blk_addr),
-                         noncoll_allocator_.win());
+      common::rma::get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
+                          noncoll_mem_.win(), target_rank,
+                          noncoll_mem_.get_disp(blk_addr) + (req_addr_b - blk_addr));
     });
 
-    common::mpi_win_flush(target_rank, noncoll_allocator_.win());
+    common::rma::flush(noncoll_mem_.win());
   }
 
   void put_impl(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    if (noncoll_allocator_.has(to_addr)) {
+    if (noncoll_mem_.has(to_addr)) {
       put_noncoll(from_addr, to_addr, size);
     } else {
       put_coll(from_addr, to_addr, size);
@@ -785,20 +787,20 @@ private:
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
-        common::mpi_put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
-                           owner, pm_offset + (req_addr_b - blk_addr), cm.win());
+        common::rma::put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
+                            cm.win(), owner, pm_offset + (req_addr_b - blk_addr));
         putting = true;
       });
 
     if (putting) {
-      common::mpi_win_flush_all(cm.win());
+      common::rma::flush(cm.win());
     }
   }
 
   void put_noncoll(const std::byte* from_addr, std::byte* to_addr, std::size_t size) {
-    ITYR_CHECK(noncoll_allocator_.has(to_addr));
+    ITYR_CHECK(noncoll_mem_.has(to_addr));
 
-    auto target_rank = noncoll_allocator_.get_owner(to_addr);
+    auto target_rank = noncoll_mem_.get_owner(to_addr);
     ITYR_CHECK(0 <= target_rank);
     ITYR_CHECK(target_rank < common::topology::n_ranks());
 
@@ -810,19 +812,19 @@ private:
     for_each_block<BlockSize>(to_addr, size, [&](std::byte* blk_addr,
                                                  std::byte* req_addr_b,
                                                  std::byte* req_addr_e) {
-      common::mpi_put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
-                         target_rank, noncoll_allocator_.get_disp(blk_addr) + (req_addr_b - blk_addr),
-                         noncoll_allocator_.win());
+      common::rma::put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
+                          noncoll_mem_.win(), target_rank,
+                          noncoll_mem_.get_disp(blk_addr) + (req_addr_b - blk_addr));
     });
 
-    common::mpi_win_flush(target_rank, noncoll_allocator_.win());
+    common::rma::flush(noncoll_mem_.win());
   }
 
   template <block_size_t BS>
   using default_mem_mapper = mem_mapper::ITYR_ORI_DEFAULT_MEM_MAPPER<BS>;
 
-  coll_mem_manager           cm_manager_;
-  common::remotable_resource noncoll_allocator_;
+  coll_mem_manager cm_manager_;
+  noncoll_mem      noncoll_mem_;
 };
 
 template <block_size_t BlockSize>
@@ -902,6 +904,7 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc/free with block policy") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
 
@@ -929,6 +932,7 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc/free with cyclic policy") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
 
@@ -956,6 +960,7 @@ ITYR_TEST_CASE("[ityr::ori::core] malloc and free (noncollective)") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   core<bs> c(16 * bs, bs / 4);
 
@@ -1003,6 +1008,7 @@ ITYR_TEST_CASE("[ityr::ori::core] get/put") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
   core<bs> c(n_cb * bs, bs / 4);
@@ -1085,6 +1091,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (small, aligned)") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
   core<bs> c(n_cb * bs, bs / 4);
@@ -1163,6 +1170,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (large, not aligned)") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
   core<bs> c(n_cb * bs, bs / 4);
@@ -1258,6 +1266,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncontig)") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 8;
   core<bs> c(n_cb * bs, bs / 4);
@@ -1328,6 +1337,7 @@ ITYR_TEST_CASE("[ityr::ori::core] checkout/checkin (noncollective)") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
   core<bs> c(n_cb * bs, bs / 4);
@@ -1417,6 +1427,7 @@ ITYR_TEST_CASE("[ityr::ori::core] release/acquire fence") {
   common::runtime_options common_opts;
   runtime_options opts;
   common::singleton_initializer<common::topology::instance> topo;
+  common::singleton_initializer<common::rma::instance> rma;
   constexpr block_size_t bs = 65536;
   int n_cb = 16;
   core<bs> c(n_cb * bs, bs / 4);

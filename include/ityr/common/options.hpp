@@ -24,6 +24,11 @@ inline void print_compile_options() {
 #endif
   ITYR_PRINT_MACRO(ITYR_PROFILER_MODE);
 
+#ifndef ITYR_RMA_IMPL
+#define ITYR_RMA_IMPL mpi
+#endif
+  ITYR_PRINT_MACRO(ITYR_RMA_IMPL);
+
 #ifndef ITYR_ALLOCATOR_USE_BOOST
 #define ITYR_ALLOCATOR_USE_BOOST 0
 #endif

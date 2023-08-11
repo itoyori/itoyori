@@ -5,9 +5,9 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
-#include "ityr/common/mpi_rma.hpp"
 #include "ityr/common/topology.hpp"
 #include "ityr/common/logger.hpp"
+#include "ityr/common/rma.hpp"
 #include "ityr/common/virtual_mem.hpp"
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
@@ -34,7 +34,7 @@ public:
       vm_(cache_size_, BlockSize),
       pm_(init_cache_pm()),
       cs_(cache_size / BlockSize, cache_block(this)),
-      win_(common::topology::mpicomm(), reinterpret_cast<std::byte*>(vm_.addr()), vm_.size()),
+      cache_win_(common::rma::create_win(reinterpret_cast<std::byte*>(vm_.addr()), vm_.size())),
       max_dirty_cache_blocks_(max_dirty_cache_size_option::value() / BlockSize),
       cprof_(cs_.num_entries()) {
     ITYR_CHECK(cache_size_ > 0);
@@ -68,7 +68,7 @@ public:
       cb.valid_regions.add(br);
     } else {
       if (fetch_begin(cb, br)) {
-        add_fetching_win(cb.win);
+        add_fetching_win(*cb.win);
       }
     }
 
@@ -83,7 +83,7 @@ public:
   void checkout_blk(std::byte*               blk_addr,
                     std::byte*               req_addr_b,
                     std::byte*               req_addr_e,
-                    MPI_Win                  win,
+                    const common::rma::win&  win,
                     common::topology::rank_t owner,
                     std::size_t              pm_offset) {
     ITYR_CHECK(blk_addr <= req_addr_b);
@@ -96,7 +96,7 @@ public:
 
     if (blk_addr != cb.mapped_addr) {
       cb.addr      = blk_addr;
-      cb.win       = win;
+      cb.win       = &win;
       cb.owner     = owner;
       cb.pm_offset = pm_offset;
       if constexpr (enable_vm_map) {
@@ -321,7 +321,7 @@ private:
     cache_entry_idx_t        entry_idx       = std::numeric_limits<cache_entry_idx_t>::max();
     std::byte*               addr            = nullptr;
     std::byte*               mapped_addr     = nullptr;
-    MPI_Win                  win             = MPI_WIN_NULL;
+    const common::rma::win*  win             = nullptr;
     common::topology::rank_t owner           = -1;
     std::size_t              pm_offset       = 0;
     int                      ref_count       = 0;
@@ -450,7 +450,7 @@ private:
                          cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
                          cb.entry_idx, cb.owner, cb.win, pm_offset);
 
-      common::mpi_get_nb(addr, size, cb.owner, pm_offset, cb.win);
+      common::rma::get_nb(*cache_win_, addr, size, *cb.win, cb.owner, pm_offset);
     }
 
     cb.valid_regions.add(br_pad);
@@ -462,19 +462,19 @@ private:
 
   void fetch_complete() {
     if (!fetching_wins_.empty()) {
-      for (auto&& win : fetching_wins_) {
+      for (const common::rma::win* win : fetching_wins_) {
         // TODO: remove duplicates
-        common::mpi_win_flush_all(win);
+        common::rma::flush(*win);
         common::verbose<3>("Fetch complete (win=%p)", win);
       }
       fetching_wins_.clear();
     }
   }
 
-  void add_fetching_win(MPI_Win win) {
-    if (fetching_wins_.empty() || fetching_wins_.back() != win) {
+  void add_fetching_win(const common::rma::win& win) {
+    if (fetching_wins_.empty() || fetching_wins_.back() != &win) {
       // best effort to avoid duplicates
-      fetching_wins_.push_back(win);
+      fetching_wins_.push_back(&win);
     }
   }
 
@@ -527,7 +527,7 @@ private:
                          cb.addr + blk_offset_b, cb.addr + blk_offset_e, size,
                          cb.owner, cb.win, pm_offset);
 
-      common::mpi_put_nb(addr, size, cb.owner, pm_offset, cb.win);
+      common::rma::put_nb(*cache_win_, addr, size, *cb.win, cb.owner, pm_offset);
     }
 
     cb.dirty_regions.clear();
@@ -544,8 +544,8 @@ private:
       std::sort(writing_back_wins_.begin(), writing_back_wins_.end());
       writing_back_wins_.erase(std::unique(writing_back_wins_.begin(), writing_back_wins_.end()), writing_back_wins_.end());
 
-      for (auto win : writing_back_wins_) {
-        MPI_Win_flush_all(win);
+      for (const common::rma::win* win : writing_back_wins_) {
+        common::rma::flush(*win);
         common::verbose<3>("Writing back complete (win=%p)", win);
       }
       writing_back_wins_.clear();
@@ -577,13 +577,11 @@ private:
 
   cache_system<cache_key_t, cache_block> cs_;
 
-  // The cache region is not remotely accessible, but we make an MPI window here because
-  // it will pre-register the memory region for RDMA and MPI_Get to the cache will speedup.
-  common::mpi_win_manager<std::byte>     win_;
+  std::unique_ptr<common::rma::win>      cache_win_;
 
   tlb<std::byte*, cache_block*>          cache_tlb_;
 
-  std::vector<MPI_Win>                   fetching_wins_;
+  std::vector<const common::rma::win*>   fetching_wins_;
   std::vector<cache_block*>              cache_blocks_to_map_;
 
   std::vector<cache_block*>              dirty_cache_blocks_;
@@ -593,7 +591,7 @@ private:
   // Writeback epochs are conceptually different from epochs used in the lazy release manager.
   // Even if the writeback epoch is incremented, some cache blocks might be dirty.
   writeback_epoch_t                      writeback_epoch_ = 1;
-  std::vector<MPI_Win>                   writing_back_wins_;
+  std::vector<const common::rma::win*>   writing_back_wins_;
 
   // A pending dirty cache block is marked dirty but not yet started to writeback.
   // Only if the writeback is completed and there is no pending dirty cache, we can say
