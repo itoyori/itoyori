@@ -19,10 +19,10 @@
 
 #define ITYR_TEST_CASE(name)                 DOCTEST_TEST_CASE(name)
 #define ITYR_SUBCASE(name)                   DOCTEST_SUBCASE(name)
-#define ITYR_CHECK(cond)                     DOCTEST_CHECK(cond)
-#define ITYR_CHECK_MESSAGE(cond, ...)        DOCTEST_CHECK_MESSAGE(cond, __VA_ARGS__)
 #define ITYR_REQUIRE(cond)                   DOCTEST_REQUIRE(cond)
 #define ITYR_REQUIRE_MESSAGE(cond, ...)      DOCTEST_REQUIRE_MESSAGE(cond, __VA_ARGS__)
+#define ITYR_CHECK(cond)                     DOCTEST_CHECK(cond)
+#define ITYR_CHECK_MESSAGE(cond, ...)        DOCTEST_CHECK_MESSAGE(cond, __VA_ARGS__)
 #define ITYR_CHECK_THROWS_AS(exp, exception) DOCTEST_CHECK_THROWS_AS(exp, exception)
 
 #else
@@ -35,19 +35,17 @@
 
 #define ITYR_TEST_CASE(name)                 [[maybe_unused]] static inline void ITYR_ANON_NAME(__ityr_test_anon_fn)()
 #define ITYR_SUBCASE(name)
-#define ITYR_CHECK(cond)                     ITYR_ASSERT(cond)
-#define ITYR_CHECK_MESSAGE(cond, ...)        ITYR_ASSERT(cond)
 #define ITYR_REQUIRE(cond)                   if (!(cond)) { ityr::common::die("Assertion failed (%s:%d)", __FILE__, __LINE__); }
 #define ITYR_REQUIRE_MESSAGE(cond, msg, ...) if (!(cond)) { ityr::common::die(msg " (%s:%d)", ##__VA_ARGS__, __FILE__, __LINE__); }
+#ifdef NDEBUG
+#define ITYR_CHECK(cond)                     do { (void)sizeof(cond); } while (0)
+#define ITYR_CHECK_MESSAGE(cond, ...)        do { (void)sizeof(cond); } while (0)
+#else
+#define ITYR_CHECK(cond)                     ITYR_REQUIRE(cond)
+#define ITYR_CHECK_MESSAGE(cond, ...)        ITYR_REQUIRE_MESSAGE(cond, __VA_ARGS__)
+#endif
 #define ITYR_CHECK_THROWS_AS(exp, exception) exp
 
-#endif
-
-#ifdef NDEBUG
-#define ITYR_ASSERT(cond) do { (void)sizeof(cond); } while (0)
-#else
-#include <cassert>
-#define ITYR_ASSERT(cond) assert(cond)
 #endif
 
 #define ITYR_ANON_VAR ITYR_CONCAT(anon_, __LINE__)

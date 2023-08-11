@@ -54,6 +54,11 @@ if(ITYR_USE_BOOST_MEMORY_RESOURCE)
   target_compile_definitions(itoyori INTERFACE -DITYR_ALLOCATOR_USE_BOOST=1)
 endif()
 
+check_include_file_cxx(utofu.h HAS_UTOFU)
+if(HAS_UTOFU)
+  target_link_libraries(itoyori INTERFACE tofucom)
+endif()
+
 install(TARGETS itoyori EXPORT itoyori-targets)
 
 include(GNUInstallDirs)
