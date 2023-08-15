@@ -195,7 +195,7 @@ inline auto reduce_generic(const execution::parallel_policy& policy,
 }
 
 /**
- * @brief Apply an operation to each element in a range.
+ * @brief Apply an operator to each element in a range.
  *
  * @param policy Execution policy (`ityr::execution`).
  * @param first  Begin iterator.
@@ -239,7 +239,7 @@ inline void for_each(const ExecutionPolicy& policy,
 }
 
 /**
- * @brief Apply an operation to each element in a range.
+ * @brief Apply an operator to each element in a range.
  *
  * @param policy Execution policy (`ityr::execution`).
  * @param first1 1st begin iterator.
@@ -287,7 +287,7 @@ inline void for_each(const ExecutionPolicy& policy,
 }
 
 /**
- * @brief Apply an operation to each element in a range.
+ * @brief Apply an operator to each element in a range.
  *
  * @param policy Execution policy (`ityr::execution`).
  * @param first1 1st begin iterator.
@@ -571,7 +571,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for_each") {
 }
 
 /**
- * @brief Calculate reduction by transforming each element.
+ * @brief Calculate reduction while transforming each element.
  *
  * @param policy             Execution policy (`ityr::execution`).
  * @param first              Begin iterator.
@@ -785,18 +785,18 @@ inline T transform_reduce(const ExecutionPolicy& policy,
  * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
  * as global iterators.
  *
- * Itoyori's reduce operation resembles the standard `std::reduce`, but it differs from the standard
+ * Itoyori's reduce operation resembles the standard `std::reduce()`, but it differs from the standard
  * one in the following two respects:
  *
- * - `ityr::reduce` does not require that `binary_reduce_op` be *commutative*.
+ * - `ityr::reduce()` does not require that `binary_reduce_op` be *commutative*.
  *   That is, only *associativity* is required for `binary_reduce_op`. Specifically, it must satisfy
  *   `binary_reduce_op(x, binary_reduce_op(y, z)) == binary_reduce_op(binary_reduce_op(x, y), z)`.
- * - `ityr::reduce` receives an identity element (`identity`), while `std::reduce` an initial element
- *   (`init`). In `std::reduce`, `init` is accumulated only once, while in `ityr::reduce`, `identity`
+ * - `ityr::reduce()` receives an identity element (`identity`), while `std::reduce()` an initial element
+ *   (`init`). In `std::reduce()`, `init` is accumulated only once, while in `ityr::reduce()`, `identity`
  *   can be accumulated multiple times. Therefore, the user must provide an identity element that
  *   satisfies both `binary_reduce_op(identity, x) == x` and `binary_reduce_op(x, identity) == x`.
  *
- * This means that `ityr::reduce` requires a *monoid*, which consists of an identity element and an
+ * This means that `ityr::reduce()` requires a *monoid*, which consists of an identity element and an
  * associative binary operator.
  *
  * Example:
@@ -868,7 +868,7 @@ reduce(const ExecutionPolicy& policy,
 }
 
 /**
- * @brief Apply an operator to each element in a range.
+ * @brief Transform elements in a given range and store them in another range.
  *
  * @param policy   Execution policy (`ityr::execution`).
  * @param first1   Input begin iterator.
@@ -950,7 +950,7 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
 }
 
 /**
- * @brief Apply an operator to each element in a range.
+ * @brief Transform elements in given ranges and store them in another range.
  *
  * @param policy    Execution policy (`ityr::execution`).
  * @param first1    1st input begin iterator.
@@ -1100,6 +1100,58 @@ inline void fill(const ExecutionPolicy& policy,
   internal::loop_generic(policy, op, first, last);
 }
 
+/**
+ * @brief Calculate a prefix sum (inclusive scan) while transforming each element.
+ *
+ * @param policy             Execution policy (`ityr::execution`).
+ * @param first1             Input begin iterator.
+ * @param last1              Input end iterator.
+ * @param first_d            Output begin iterator.
+ * @param identity           Identity element.
+ * @param binary_op          Associative binary operator.
+ * @param unary_transform_op Unary operator to transform each element.
+ * @param init               Initial value for the prefix sum.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * This function applies `unary_transform_op` to each element in the range `[first1, last1)` and
+ * calculates a prefix sum over them. The prefix sum is inclusive, which means that the i-th element
+ * of the prefix sum includes the i-th element in the input range. That is, the i-th element of the
+ * prefix sum is: `init + f(*first1) + ... + f(*(first1 + i))`, where `+` is the associative binary
+ * operator (`binary_op`) and `f()` is the transform operator (`unary_transform_op`).
+ * The calculated prefix sum is stored in the output range `[first_d, first_d + (last1 - first1))`.
+ *
+ * If the input iterators (`first1` and `last1`) are global pointers, they are automatically checked
+ * out with the read-only mode in the specified granularity
+ * (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * Similarly, if the output iterator (`first_d`) is a global pointer, the output region is checked
+ * out with the write-only mode if the output type is *trivially copyable*; otherwise, it is checked
+ * out with the read-write mode.
+ * Overlapping regions can be specified for `first1` and `first_d`, as long as no data race occurs.
+ *
+ * Unlike the standard `std::transform_inclusive_scan()`, Itoyori's `ityr::transform_inclusive_scan()`
+ * requires an `identity` element so that `identity` and `binary_op` constitute a monoid.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<double> v2(v1.size());
+ * ityr::transform_inclusive_scan(ityr::execution::par, v1.begin(), v1.end(), v2.begin(),
+ *                                1.0, std::multiplies<>{},
+ *                                [](int x) { return static_cast<double>(x); }, 0.01);
+ * // v2 = {0.01, 0.02, 0.06, 0.24, 1.2}
+ * ```
+ *
+ * @see [std::transform_inclusive_scan -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform_inclusive_scan)
+ * @see `ityr::inclusive_scan()`
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename T, typename BinaryOp, typename UnaryTransformOp>
 inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
@@ -1176,6 +1228,38 @@ inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
   return std::next(first_d, std::distance(first1, last1));
 }
 
+/**
+ * @brief Calculate a prefix sum (inclusive scan) while transforming each element.
+ *
+ * @param policy             Execution policy (`ityr::execution`).
+ * @param first1             Input begin iterator.
+ * @param last1              Input end iterator.
+ * @param first_d            Output begin iterator.
+ * @param identity           Identity element.
+ * @param binary_op          Associative binary operator.
+ * @param unary_transform_op Unary operator to transform each element.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * Equivalent to `ityr::transform_inclusive_reduce(policy, first1, last1, first_d, identity, first_d, identity, binary_op, unary_transform_op, identity)`.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<double> v2(v1.size());
+ * ityr::transform_inclusive_scan(ityr::execution::par, v1.begin(), v1.end(), v2.begin(),
+ *                                1.0, std::multiplies<>{}, [](int x) { return 0.1 * x; });
+ * // v2 = {0.1, 0.02, 0.006, 0.0024, 0.0012}
+ * ```
+ *
+ * @see [std::transform_inclusive_scan -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/transform_inclusive_scan)
+ * @see `ityr::inclusive_scan()`
+ * @see `ityr::reduce()`
+ * @see `ityr::transform()`
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename T, typename BinaryOp, typename UnaryTransformOp>
 inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
@@ -1189,6 +1273,52 @@ inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
                                   unary_transform_op, identity);
 }
 
+/**
+ * @brief Calculate a prefix sum (inclusive scan).
+ *
+ * @param policy    Execution policy (`ityr::execution`).
+ * @param first1    Input begin iterator.
+ * @param last1     Input end iterator.
+ * @param first_d   Output begin iterator.
+ * @param identity  Identity element.
+ * @param binary_op Associative binary operator.
+ * @param init      Initial value for the prefix sum.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * This function calculates a prefix sum over the elements in the input range `[first1, last1)`.
+ * The prefix sum is inclusive, which means that the i-th element of the prefix sum includes the
+ * i-th element in the input range. That is, the i-th element of the prefix sum is:
+ * `init + *first1 + ... + *(first1 + i)`, where `+` is the associative binary operator (`binary_op`).
+ * The calculated prefix sum is stored in the output range `[first_d, first_d + (last1 - first1))`.
+ *
+ * If the input iterators (`first1` and `last1`) are global pointers, they are automatically checked
+ * out with the read-only mode in the specified granularity
+ * (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * Similarly, if the output iterator (`first_d`) is a global pointer, the output region is checked
+ * out with the write-only mode if the output type is *trivially copyable*; otherwise, it is checked
+ * out with the read-write mode.
+ * Overlapping regions can be specified for `first1` and `first_d`, as long as no data race occurs.
+ *
+ * Unlike the standard `std::inclusive_scan()`, Itoyori's `ityr::inclusive_scan()`
+ * requires an `identity` element so that `identity` and `binary_op` constitute a monoid.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::inclusive_scan(ityr::execution::par, v1.begin(), v1.end(), v2.begin(), 1, std::multiplies<>{}, 10);
+ * // v2 = {10, 20, 60, 240, 1200}
+ * ```
+ *
+ * @see [std::inclusive_scan -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/inclusive_scan)
+ * @see `ityr::transform_inclusive_scan()`
+ * @see `ityr::reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename T, typename BinaryOp>
 inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
@@ -1202,6 +1332,34 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
                                   [](auto&& v) { return std::forward<decltype(v)>(v); }, init);
 }
 
+/**
+ * @brief Calculate a prefix sum (inclusive scan).
+ *
+ * @param policy    Execution policy (`ityr::execution`).
+ * @param first1    Input begin iterator.
+ * @param last1     Input end iterator.
+ * @param first_d   Output begin iterator.
+ * @param identity  Identity element.
+ * @param binary_op Associative binary operator.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * Equivalent to `ityr::inclusive_scan(policy, first1, last1, first_d, identity, binary_op, identity)`.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::inclusive_scan(ityr::execution::par, v1.begin(), v1.end(), v2.begin(), 1, std::multiplies<>{});
+ * // v2 = {1, 2, 6, 24, 120}
+ * ```
+ *
+ * @see [std::inclusive_scan -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/inclusive_scan)
+ * @see `ityr::transform_inclusive_scan()`
+ * @see `ityr::reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename T, typename BinaryOp>
 inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
@@ -1213,6 +1371,33 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
   return inclusive_scan(policy, first1, last1, first_d, identity, binary_op, identity);
 }
 
+/**
+ * @brief Calculate a prefix sum (inclusive scan).
+ *
+ * @param policy  Execution policy (`ityr::execution`).
+ * @param first1  Input begin iterator.
+ * @param last1   Input end iterator.
+ * @param first_d Output begin iterator.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * Equivalent to `ityr::inclusive_scan(policy, first1, last1, first_d, T{}, std::plus<>{})`, where
+ * `T` is the value type of the input iterator.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::inclusive_scan(ityr::execution::par, v1.begin(), v1.end(), v2.begin());
+ * // v2 = {1, 3, 6, 10, 15}
+ * ```
+ *
+ * @see [std::inclusive_scan -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/inclusive_scan)
+ * @see `ityr::transform_inclusive_scan()`
+ * @see `ityr::reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD>
 inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
                                        ForwardIterator1       first1,
