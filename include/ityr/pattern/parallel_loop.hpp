@@ -39,14 +39,13 @@ inline void parallel_loop_generic(execution::parallel_policy policy,
 
   auto tgdata = ito::task_group_begin();
 
-  ito::thread<void> th(ito::with_callback,
-                       [=] { ori::acquire(rh); },
-                       [=] { ori::release(); },
-                       ito::with_workhint, 1, 1,
-                       [=] {
-                         parallel_loop_generic(policy, op, rh,
-                                               first, mid, firsts...);
-                       });
+  ito::thread<void> th(
+      ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
+      ito::with_workhint, 1, 1,
+      [=] {
+        parallel_loop_generic(policy, op, rh,
+                              first, mid, firsts...);
+      });
 
   parallel_loop_generic(policy, op, rh,
                         mid, last, std::next(firsts, d / 2)...);
@@ -57,9 +56,7 @@ inline void parallel_loop_generic(execution::parallel_policy policy,
 
   th.join();
 
-  ito::task_group_end(tgdata,
-                      [] { ori::release(); },
-                      [] { ori::acquire(); });
+  ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
 
   // TODO: needed?
   if (!th.serialized()) {
@@ -97,37 +94,32 @@ inline T parallel_reduce_generic(execution::parallel_policy policy,
 
   auto tgdata = ito::task_group_begin();
 
-  ito::thread<T> th(ito::with_callback,
-                    [=] { ori::acquire(rh); },
-                    [=] { ori::release(); },
-                    ito::with_workhint, 1, 1,
-                    [=] {
-                      return parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
-                                                     acc, rh, first, mid, firsts...);
-                    });
+  ito::thread<T> th(
+      ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
+      ito::with_workhint, 1, 1,
+      [=] {
+        return parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
+                                       acc, rh, first, mid, firsts...);
+      });
 
   if (th.serialized()) {
     T acc1 = th.join();
     T acc2 = parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
                                      acc1, rh, mid, last, std::next(firsts, d / 2)...);
 
-    ito::task_group_end(tgdata,
-                        [] { ori::release(); },
-                        [] { ori::acquire(); });
+    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
 
     return acc2;
 
   } else {
-    ori::release();
-
     T acc2 = parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
                                      identity, rh, mid, last, std::next(firsts, d / 2)...);
 
-    auto acc1 = th.join();
+    ori::release();
 
-    ito::task_group_end(tgdata,
-                        [] { ori::release(); },
-                        [] { ori::acquire(); });
+    T acc1 = th.join();
+
+    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
 
     ori::acquire();
 
@@ -1209,9 +1201,11 @@ inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
     auto dm = std::distance(first_, mid_);
     auto dl = std::distance(first_, last_);
     if constexpr (!is_global_iterator_v<ForwardIteratorD>) {
+      for_each(policy, std::next(first_d_, dm), std::next(first_d_, dl), [=](auto&& v) { v = binary_op(acc1, v); });
       transform(policy, std::next(first_d_, dm), std::next(first_d_, dl), std::next(first_d_, dm),
                 [=](const auto& v) { return binary_op(acc1, v); });
     } else if constexpr (std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>) {
+      for_each(policy, std::next(first_d_, dm), std::next(first_d_, dl), [=](auto&& v) { v = binary_op(acc1, v); });
       transform(policy, std::next(first_d_, dm), std::next(first_d_, dl), std::next(first_d_, dm),
                 [=](const auto& v) { return binary_op(acc1, v); });
     } else {
