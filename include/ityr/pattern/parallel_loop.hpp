@@ -12,108 +12,184 @@ namespace ityr {
 
 namespace internal {
 
-template <typename SerialFn, typename CombineFn, typename ReleaseHandler,
+template <typename Op, typename ReleaseHandler,
           typename ForwardIterator, typename... ForwardIterators>
-inline std::invoke_result_t<SerialFn, ForwardIterator, ForwardIterator, ForwardIterators...>
-parallel_loop_generic(const execution::parallel_policy& policy,
-                      SerialFn                          serial_fn,
-                      CombineFn                         combine_fn,
-                      ReleaseHandler                    rh,
-                      ForwardIterator                   first,
-                      ForwardIterator                   last,
-                      ForwardIterators...               firsts) {
-  using retval_t = std::invoke_result_t<SerialFn,
-                                        ForwardIterator, ForwardIterator, ForwardIterators...>;
+inline void parallel_loop_generic(execution::parallel_policy policy,
+                                  Op                         op,
+                                  ReleaseHandler             rh,
+                                  ForwardIterator            first,
+                                  ForwardIterator            last,
+                                  ForwardIterators...        firsts) {
   ori::poll();
 
   // for immediately executing cross-worker tasks in ADWS
-  ito::poll([]() { return ori::release_lazy(); },
+  ito::poll([] { return ori::release_lazy(); },
             [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
 
   auto d = std::distance(first, last);
   if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
-    return serial_fn(first, last, firsts...);
+    auto seq_policy = execution::internal::to_sequenced_policy(policy);
+    for_each_aux(seq_policy, [&](auto&&... its) {
+      op(std::forward<decltype(its)>(its)...);
+    }, first, last, firsts...);
+    return;
   }
 
   auto mid = std::next(first, d / 2);
-  auto recur_fn_left = [=]() -> retval_t {
-    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
-                                 first, mid, firsts...);
-  };
-
-  auto recur_fn_right = [&]() -> retval_t {
-    return parallel_loop_generic(policy, serial_fn, combine_fn, rh,
-                                 mid, last, std::next(firsts, d / 2)...);
-  };
 
   auto tgdata = ito::task_group_begin();
 
-  ito::thread<retval_t> th(ito::with_callback,
-                           [=]() { ori::acquire(rh); },
-                           [=]() { ori::release(); },
-                           ito::with_workhint, 1, 1,
-                           recur_fn_left);
+  ito::thread<void> th(ito::with_callback,
+                       [=] { ori::acquire(rh); },
+                       [=] { ori::release(); },
+                       ito::with_workhint, 1, 1,
+                       [=] {
+                         parallel_loop_generic(policy, op, rh,
+                                               first, mid, firsts...);
+                       });
 
-  if constexpr (std::is_void_v<retval_t>) {
-    recur_fn_right();
+  parallel_loop_generic(policy, op, rh,
+                        mid, last, std::next(firsts, d / 2)...);
 
-    if (!th.serialized()) {
-      ori::release();
-    }
+  if (!th.serialized()) {
+    ori::release();
+  }
 
-    th.join();
+  th.join();
 
-    ito::task_group_end(tgdata,
-                        []() { ori::release(); },
-                        []() { ori::acquire(); });
+  ito::task_group_end(tgdata,
+                      [] { ori::release(); },
+                      [] { ori::acquire(); });
 
-    if (!th.serialized()) {
-      ori::acquire();
-    }
-  } else {
-    auto ret2 = recur_fn_right();
-
-    if (!th.serialized()) {
-      ori::release();
-    }
-
-    auto ret1 = th.join();
-
-    ito::task_group_end(tgdata,
-                        []() { ori::release(); },
-                        []() { ori::acquire(); });
-
-    if (!th.serialized()) {
-      ori::acquire();
-    }
-
-    return combine_fn(ret1, ret2);
+  // TODO: needed?
+  if (!th.serialized()) {
+    ori::acquire();
   }
 }
 
-template <typename SerialFn, typename CombineFn,
-          typename ForwardIterator, typename... ForwardIterators>
-inline auto loop_generic(const execution::sequenced_policy& policy,
-                         SerialFn                           serial_fn,
-                         CombineFn                          combine_fn [[maybe_unused]],
+template <typename AccumulateOp, typename CombineOp, typename T,
+          typename ReleaseHandler, typename ForwardIterator, typename... ForwardIterators>
+inline T parallel_reduce_generic(execution::parallel_policy policy,
+                                 AccumulateOp               accumulate_op,
+                                 CombineOp                  combine_op,
+                                 T                          identity,
+                                 T                          acc,
+                                 ReleaseHandler             rh,
+                                 ForwardIterator            first,
+                                 ForwardIterator            last,
+                                 ForwardIterators...        firsts) {
+  ori::poll();
+
+  // for immediately executing cross-worker tasks in ADWS
+  ito::poll([] { return ori::release_lazy(); },
+            [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
+
+  auto d = std::distance(first, last);
+  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
+    auto seq_policy = execution::internal::to_sequenced_policy(policy);
+    for_each_aux(seq_policy, [&](auto&&... its) {
+      accumulate_op(acc, std::forward<decltype(its)>(its)...);
+    }, first, last, firsts...);
+    return acc;
+  }
+
+  auto mid = std::next(first, d / 2);
+
+  auto tgdata = ito::task_group_begin();
+
+  ito::thread<T> th(ito::with_callback,
+                    [=] { ori::acquire(rh); },
+                    [=] { ori::release(); },
+                    ito::with_workhint, 1, 1,
+                    [=] {
+                      return parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
+                                                     acc, rh, first, mid, firsts...);
+                    });
+
+  if (th.serialized()) {
+    T acc1 = th.join();
+    T acc2 = parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
+                                     acc1, rh, mid, last, std::next(firsts, d / 2)...);
+
+    ito::task_group_end(tgdata,
+                        [] { ori::release(); },
+                        [] { ori::acquire(); });
+
+    return acc2;
+
+  } else {
+    ori::release();
+
+    T acc2 = parallel_reduce_generic(policy, accumulate_op, combine_op, identity,
+                                     identity, rh, mid, last, std::next(firsts, d / 2)...);
+
+    auto acc1 = th.join();
+
+    ito::task_group_end(tgdata,
+                        [] { ori::release(); },
+                        [] { ori::acquire(); });
+
+    ori::acquire();
+
+    return combine_op(acc1, acc2, first, mid, last, firsts...);
+  }
+}
+
+template <typename Op, typename ForwardIterator, typename... ForwardIterators>
+inline void loop_generic(const execution::sequenced_policy& policy,
+                         Op                                 op,
                          ForwardIterator                    first,
                          ForwardIterator                    last,
                          ForwardIterators...                firsts) {
   execution::internal::assert_policy(policy);
-  return serial_fn(first, last, firsts...);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
+  for_each_aux(seq_policy, [&](auto&&... its) {
+    op(std::forward<decltype(its)>(its)...);
+  }, first, last, firsts...);
 }
 
-template <typename SerialFn, typename CombineFn,
-          typename ForwardIterator, typename... ForwardIterators>
-inline auto loop_generic(const execution::parallel_policy& policy,
-                         SerialFn                          serial_fn,
-                         CombineFn                         combine_fn,
+template <typename Op, typename ForwardIterator, typename... ForwardIterators>
+inline void loop_generic(const execution::parallel_policy& policy,
+                         Op                                op,
                          ForwardIterator                   first,
                          ForwardIterator                   last,
                          ForwardIterators...               firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
-  return parallel_loop_generic(policy, serial_fn, combine_fn, rh, first, last, firsts...);
+  parallel_loop_generic(policy, op, rh, first, last, firsts...);
+}
+
+template <typename AccumulateOp, typename CombineOp, typename T,
+          typename ForwardIterator, typename... ForwardIterators>
+inline auto reduce_generic(const execution::sequenced_policy& policy,
+                           AccumulateOp                       accumulate_op,
+                           CombineOp                          combine_op [[maybe_unused]],
+                           T                                  identity [[maybe_unused]],
+                           T                                  acc,
+                           ForwardIterator                    first,
+                           ForwardIterator                    last,
+                           ForwardIterators...                firsts) {
+  execution::internal::assert_policy(policy);
+  auto seq_policy = execution::internal::to_sequenced_policy(policy);
+  for_each_aux(seq_policy, [&](auto&&... its) {
+    accumulate_op(acc, std::forward<decltype(its)>(its)...);
+  }, first, last, firsts...);
+  return acc;
+}
+
+template <typename AccumulateOp, typename CombineOp, typename T,
+          typename ForwardIterator, typename... ForwardIterators>
+inline auto reduce_generic(const execution::parallel_policy& policy,
+                           AccumulateOp                      accumulate_op,
+                           CombineOp                         combine_op,
+                           T                                 identity,
+                           T                                 acc,
+                           ForwardIterator                   first,
+                           ForwardIterator                   last,
+                           ForwardIterators...               firsts) {
+  execution::internal::assert_policy(policy);
+  auto rh = ori::release_lazy();
+  return parallel_reduce_generic(policy, accumulate_op, combine_op, identity, acc, rh, first, last, firsts...);
 }
 
 }
@@ -159,12 +235,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator        first,
                      ForwardIterator        last,
                      Op                     op) {
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator first_,
-                       ForwardIterator last_) mutable {
-    internal::for_each_aux(seq_policy, op, first_, last_);
-  };
-  internal::loop_generic(policy, serial_fn, []{}, first, last);
+  internal::loop_generic(policy, op, first, last);
 }
 
 /**
@@ -212,13 +283,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator1       last1,
                      ForwardIterator2       first2,
                      Op                     op) {
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator1 first1_,
-                       ForwardIterator1 last1_,
-                       ForwardIterator2 first2_) mutable {
-    internal::for_each_aux(seq_policy, op, first1_, last1_, first2_);
-  };
-  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2);
+  internal::loop_generic(policy, op, first1, last1, first2);
 }
 
 /**
@@ -270,14 +335,7 @@ inline void for_each(const ExecutionPolicy& policy,
                      ForwardIterator2       first2,
                      ForwardIterator3       first3,
                      Op                     op) {
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator1 first1_,
-                       ForwardIterator1 last1_,
-                       ForwardIterator2 first2_,
-                       ForwardIterator3 first3_) mutable {
-    internal::for_each_aux(seq_policy, op, first1_, last1_, first2_, first3_);
-  };
-  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2, first3);
+  internal::loop_generic(policy, op, first1, last1, first2, first3);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
@@ -572,17 +630,17 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     return transform_reduce(policy, first_, last_, identity, binary_reduce_op, unary_transform_op);
   }
 
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator first_,
-                       ForwardIterator last_) mutable {
-    T acc = identity;
-    internal::for_each_aux(seq_policy, [&](const auto& v) {
-      acc = binary_reduce_op(acc, unary_transform_op(v));
-    }, first_, last_);
-    return acc;
+  auto accumulate_op = [=](T& acc, const auto& v) {
+    acc = binary_reduce_op(acc, unary_transform_op(v));
   };
 
-  return internal::loop_generic(policy, serial_fn, binary_reduce_op, first, last);
+  auto combine_op = [=](const auto& acc1, const auto& acc2,
+                        ForwardIterator, ForwardIterator, ForwardIterator) {
+    return binary_reduce_op(acc1, acc2);
+  };
+
+  return internal::reduce_generic(policy, accumulate_op, combine_op, identity,
+                                  identity, first, last);
 }
 
 /**
@@ -659,18 +717,17 @@ inline T transform_reduce(const ExecutionPolicy& policy,
     return transform_reduce(policy, first1, last1, first2_, identity, binary_reduce_op, binary_transform_op);
   }
 
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator1 first1_,
-                       ForwardIterator1 last1_,
-                       ForwardIterator2 first2_) mutable {
-    T acc = identity;
-    internal::for_each_aux(seq_policy, [&](const auto& v1, const auto& v2) {
-      acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
-    }, first1_, last1_, first2_);
-    return acc;
+  auto accumulate_op = [=](T& acc, const auto& v1, const auto& v2) {
+    acc = binary_reduce_op(acc, binary_transform_op(v1, v2));
   };
 
-  return internal::loop_generic(policy, serial_fn, binary_reduce_op, first1, last1, first2);
+  auto combine_op = [=](const auto& acc1, const auto& acc2,
+                        ForwardIterator1, ForwardIterator1, ForwardIterator1, ForwardIterator2) {
+    return binary_reduce_op(acc1, acc2);
+  };
+
+  return internal::reduce_generic(policy, accumulate_op, combine_op, identity,
+                                  identity, first1, last1, first2);
 }
 
 /**
@@ -762,7 +819,6 @@ inline T reduce(const ExecutionPolicy& policy,
                 BinaryReduceOp         binary_reduce_op) {
   using it_ref = typename std::iterator_traits<ForwardIterator>::reference;
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, it_ref>);
-  static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, T&>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, T&, T&>);
   static_assert(std::is_invocable_r_v<T, BinaryReduceOp, it_ref, it_ref>);
 
@@ -884,16 +940,11 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     return transform(policy, first1, last1, first_d_, unary_op);
   }
 
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator1 first1_,
-                       ForwardIterator1 last1_,
-                       ForwardIteratorD first_d_) mutable {
-    internal::for_each_aux(seq_policy, [&](const auto& v1, auto&& d) {
-      d = unary_op(v1);
-    }, first1_, last1_, first_d_);
+  auto op = [=](const auto& v1, auto&& d) {
+    d = unary_op(v1);
   };
 
-  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first_d);
+  internal::loop_generic(policy, op, first1, last1, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
 }
@@ -985,17 +1036,11 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
     return transform(policy, first1, last1, first2, first_d_, binary_op);
   }
 
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator1 first1_,
-                       ForwardIterator1 last1_,
-                       ForwardIterator2 first2_,
-                       ForwardIteratorD first_d_) mutable {
-    internal::for_each_aux(seq_policy, [&](const auto& v1, const auto& v2, auto&& d) {
-      d = binary_op(v1, v2);
-    }, first1_, last1_, first2_, first_d_);
+  auto op = [=](const auto& v1, const auto& v2, auto&& d) {
+    d = binary_op(v1, v2);
   };
 
-  internal::loop_generic(policy, serial_fn, []{}, first1, last1, first2, first_d);
+  internal::loop_generic(policy, op, first1, last1, first2, first_d);
 
   return std::next(first_d, std::distance(first1, last1));
 }
@@ -1048,15 +1093,133 @@ inline void fill(const ExecutionPolicy& policy,
     return;
   }
 
-  auto seq_policy = execution::internal::to_sequenced_policy(policy);
-  auto serial_fn = [=](ForwardIterator first_,
-                       ForwardIterator last_) mutable {
-    internal::for_each_aux(seq_policy, [&](auto&& d) {
-      d = value;
-    }, first_, last_);
+  auto op = [=](auto&& d) {
+    d = value;
   };
 
-  internal::loop_generic(policy, serial_fn, []{}, first, last);
+  internal::loop_generic(policy, op, first, last);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
+          typename T, typename BinaryOp, typename UnaryTransformOp>
+inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
+                                                 ForwardIterator1       first1,
+                                                 ForwardIterator1       last1,
+                                                 ForwardIteratorD       first_d,
+                                                 T                      identity,
+                                                 BinaryOp               binary_op,
+                                                 UnaryTransformOp       unary_transform_op,
+                                                 T                      init) {
+  using it1_ref = typename std::iterator_traits<ForwardIterator1>::reference;
+  using transformed_t = std::invoke_result_t<UnaryTransformOp, it1_ref>;
+  static_assert(std::is_invocable_r_v<T, BinaryOp, T&, transformed_t>);
+  static_assert(std::is_invocable_r_v<T, BinaryOp, T&, T&>);
+  static_assert(std::is_invocable_r_v<T, BinaryOp, transformed_t, transformed_t>);
+
+  if constexpr (is_global_iterator_v<ForwardIterator1>) {
+    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
+                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
+    // automatically convert global pointers to global iterators with read-only access
+    auto first1_ = make_global_iterator(first1, checkout_mode::read);
+    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
+    return transform_inclusive_scan(policy, first1_, last1_, first_d, identity, binary_op, unary_transform_op, init);
+  }
+
+  // If the destination value type is trivially copyable, write-only access is possible
+  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
+                                             checkout_mode::write_t,
+                                             checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
+    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
+                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
+    // automatically convert global pointers to global iterators
+    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
+    return transform_inclusive_scan(policy, first1, last1, first_d_, identity, binary_op, unary_transform_op, init);
+  }
+
+  auto accumulate_op = [=](T& acc, const auto& v1, auto&& d) {
+    acc = binary_op(acc, unary_transform_op(v1));
+    d = acc;
+  };
+
+  // TODO: more efficient scan implementation
+  auto combine_op = [=](const auto&      acc1,
+                        const auto&      acc2,
+                        ForwardIterator1 first_,
+                        ForwardIterator1 mid_,
+                        ForwardIterator1 last_,
+                        ForwardIteratorD first_d_) {
+    auto dm = std::distance(first_, mid_);
+    auto dl = std::distance(first_, last_);
+    if constexpr (!is_global_iterator_v<ForwardIteratorD>) {
+      transform(policy, std::next(first_d_, dm), std::next(first_d_, dl), std::next(first_d_, dm),
+                [=](const auto& v) { return binary_op(acc1, v); });
+    } else if constexpr (std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>) {
+      transform(policy, std::next(first_d_, dm), std::next(first_d_, dl), std::next(first_d_, dm),
+                [=](const auto& v) { return binary_op(acc1, v); });
+    } else {
+      // convert global_iterator -> global_ref -> global_ptr
+      transform(policy, std::next(&*first_d_, dm), std::next(&*first_d_, dl), std::next(&*first_d_, dm),
+                [=](const auto& v) { return binary_op(acc1, v); });
+    }
+    return binary_op(acc1, acc2);
+  };
+
+  internal::reduce_generic(policy, accumulate_op, combine_op, identity,
+                           init, first1, last1, first_d);
+
+  return std::next(first_d, std::distance(first1, last1));
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
+          typename T, typename BinaryOp, typename UnaryTransformOp>
+inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
+                                                 ForwardIterator1       first1,
+                                                 ForwardIterator1       last1,
+                                                 ForwardIteratorD       first_d,
+                                                 T                      identity,
+                                                 BinaryOp               binary_op,
+                                                 UnaryTransformOp       unary_transform_op) {
+  return transform_inclusive_scan(policy, first1, last1, first_d, identity, binary_op,
+                                  unary_transform_op, identity);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
+          typename T, typename BinaryOp>
+inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
+                                       ForwardIterator1       first1,
+                                       ForwardIterator1       last1,
+                                       ForwardIteratorD       first_d,
+                                       T                      identity,
+                                       BinaryOp               binary_op,
+                                       T                      init) {
+  return transform_inclusive_scan(policy, first1, last1, first_d, identity, binary_op,
+                                  [](auto&& v) { return std::forward<decltype(v)>(v); }, init);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
+          typename T, typename BinaryOp>
+inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
+                                       ForwardIterator1       first1,
+                                       ForwardIterator1       last1,
+                                       ForwardIteratorD       first_d,
+                                       T                      identity,
+                                       BinaryOp               binary_op) {
+  return inclusive_scan(policy, first1, last1, first_d, identity, binary_op, identity);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD>
+inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
+                                       ForwardIterator1       first1,
+                                       ForwardIterator1       last1,
+                                       ForwardIteratorD       first_d) {
+  using value_type = typename std::iterator_traits<ForwardIterator1>::value_type;
+  return inclusive_scan(policy, first1, last1, first_d, value_type{}, std::plus<>{});
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
@@ -1270,6 +1433,53 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel fill") {
   });
 
   ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] inclusive scan") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p1, p1 + n, 1);
+
+    inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2);
+
+    ITYR_CHECK(p2[0].get() == 1);
+    ITYR_CHECK(p2[n - 1].get() == n);
+
+    auto sum = reduce(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p2, p2 + n);
+
+    ITYR_CHECK(sum == n * (n + 1) / 2);
+
+    inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2, 1, std::multiplies<>{}, 10);
+
+    ITYR_CHECK(p2[0].get() == 10);
+    ITYR_CHECK(p2[n - 1].get() == 10);
+
+    transform_inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2, 0, std::plus<>{}, [](long x) { return x + 1; }, 10);
+
+    ITYR_CHECK(p2[0].get() == 12);
+    ITYR_CHECK(p2[n - 1].get() == 10 + n * 2);
+  });
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
 
   ori::fini();
   ito::fini();
