@@ -263,8 +263,10 @@ public:
     std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
 
     auto coll_task_fn = [&, fn, args...] {
-      auto&& ret = fn(args...);
-      if constexpr (!std::is_void_v<retval_t>) {
+      if constexpr (std::is_void_v<retval_t>) {
+        fn(args...);
+      } else {
+        auto&& ret = fn(args...);
         if (common::topology::my_rank() == begin_rank) {
           retv = std::forward<decltype(ret)>(ret);
         }
@@ -282,7 +284,7 @@ public:
     suspended_thread_allocator_.deallocate(t, task_size);
 
     if constexpr (!std::is_void_v<retval_t>) {
-      return std::move(retv);
+      return retv;
     }
   }
 
