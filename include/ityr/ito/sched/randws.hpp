@@ -259,6 +259,10 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
+  bool is_executing_root() const {
+    return cf_top_ && cf_top_ == cf_top_root_;
+  }
+
   template <typename T>
   static bool is_serialized(thread_handler<T> th) {
     return th.serialized;
@@ -451,6 +455,7 @@ private:
     // Add a margin of sizeof(context_frame) to the bottom of the stack, because
     // this region can be accessed by the clear_parent_frame() function later
     cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
+    cf_top_root_ = cf_top_;
     context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
                            [](void* fn_, void*, void*, void*) {
       Fn fn = *reinterpret_cast<Fn*>(fn_); // copy closure to the new stack frame
@@ -481,6 +486,7 @@ private:
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;
   common::remotable_resource suspended_thread_allocator_;
+  context_frame*             cf_top_root_         = nullptr;
   context_frame*             cf_top_              = nullptr;
   context_frame*             sched_cf_            = nullptr;
   MPI_Request                sched_loop_exit_req_ = MPI_REQUEST_NULL;

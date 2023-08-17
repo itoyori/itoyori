@@ -62,6 +62,11 @@ inline bool is_spmd() {
   return w.is_spmd();
 }
 
+inline bool is_root() {
+  auto& w = worker::instance::get();
+  return w.sched().is_executing_root();
+}
+
 template <typename PreSuspendCallback, typename PostSuspendCallback>
 inline void poll(PreSuspendCallback&&  pre_suspend_cb,
                  PostSuspendCallback&& post_suspend_cb) {
@@ -123,19 +128,30 @@ ITYR_TEST_CASE("[ityr::ito] fib") {
 ITYR_TEST_CASE("[ityr::ito] load balancing") {
   init();
 
+  ITYR_CHECK(is_spmd());
+  ITYR_CHECK(!is_root());
+
   std::function<void(int)> lb = [&](int n) {
     if (n == 0) {
       return;
     } else if (n == 1) {
       common::mpi_barrier(common::topology::mpicomm());
     } else {
-      thread<void> th([=]{ return lb(n / 2); });
+      thread<void> th([=]{ ITYR_CHECK(!is_root()); return lb(n / 2); });
       lb(n - n / 2);
       th.join();
     }
   };
 
-  root_exec(lb, common::topology::n_ranks());
+  root_exec([&] {
+    ITYR_CHECK(!is_spmd());
+    ITYR_CHECK(is_root());
+
+    lb(common::topology::n_ranks());
+  });
+
+  ITYR_CHECK(is_spmd());
+  ITYR_CHECK(!is_root());
 
   fini();
 }

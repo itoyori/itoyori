@@ -254,45 +254,6 @@ private:
   std::vector<version_t>                          versions_;
 };
 
-template <typename Entry>
-class oneslot_mailbox {
-  static_assert(std::is_trivially_copyable_v<Entry>);
-
-public:
-  oneslot_mailbox()
-    : win_(common::topology::mpicomm(), 1) {}
-
-  void put(const Entry& entry, common::topology::rank_t target_rank) {
-    ITYR_PROFILER_RECORD(prof_event_sched_adws_mail_put, target_rank);
-
-    ITYR_CHECK(!common::mpi_get_value<int>(target_rank, offsetof(mailbox, arrived), win_.win()));
-    common::mpi_put_value(entry, target_rank, offsetof(mailbox, entry), win_.win());
-    common::mpi_atomic_put_value(1, target_rank, offsetof(mailbox, arrived), win_.win());
-  }
-
-  std::optional<Entry> pop() {
-    mailbox& mb = win_.local_buf()[0];
-    if (mb.arrived.load(std::memory_order_acquire)) {
-      mb.arrived.store(0, std::memory_order_relaxed);
-      return mb.entry;
-    } else {
-      return std::nullopt;
-    }
-  }
-
-  bool arrived() const {
-    return win_.local_buf()[0].arrived.load(std::memory_order_relaxed);
-  }
-
-private:
-  struct mailbox {
-    Entry            entry;
-    std::atomic<int> arrived = 0; // TODO: better to use std::atomic_ref in C++20
-  };
-
-  common::mpi_win_manager<mailbox> win_;
-};
-
 class scheduler_adws {
 public:
   struct suspended_state {
@@ -777,6 +738,10 @@ public:
     check_cross_worker_task_arrival<prof_phase_thread, prof_phase_thread>(
         std::forward<PreSuspendCallback>(pre_suspend_cb),
         std::forward<PostSuspendCallback>(post_suspend_cb));
+  }
+
+  bool is_executing_root() const {
+    return cf_top_ && cf_top_ == cf_top_root_;
   }
 
   template <typename T>
@@ -1456,6 +1421,7 @@ private:
     // Add a margin of sizeof(context_frame) to the bottom of the stack, because
     // this region can be accessed by the clear_parent_frame() function later
     cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
+    cf_top_root_ = cf_top_;
     context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
                            [](void* fn_, void*, void*, void*) {
       Fn fn = *reinterpret_cast<Fn*>(fn_); // copy closure to the new stack frame
@@ -1484,6 +1450,7 @@ private:
   wsqueue<migration_wsq_entry, true> migration_wsq_;
   common::remotable_resource         thread_state_allocator_;
   common::remotable_resource         suspended_thread_allocator_;
+  context_frame*                     cf_top_root_         = nullptr;
   context_frame*                     cf_top_              = nullptr;
   context_frame*                     sched_cf_            = nullptr;
   thread_local_storage*              tls_                 = nullptr;

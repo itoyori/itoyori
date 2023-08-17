@@ -87,9 +87,9 @@ private:
   bool                           success_mode_;
 };
 
-struct prof_event_sched_adws_mail_put : public common::prof_event_target_base {
+struct prof_event_sched_mailbox_put : public common::prof_event_target_base {
   using prof_event_target_base::prof_event_target_base;
-  std::string str() const override { return "sched_adws_mail_put"; }
+  std::string str() const override { return "sched_mailbox_put"; }
 };
 
 struct prof_event_sched_adws_scan_tree : public common::profiler::event {
@@ -223,7 +223,7 @@ public:
 
 private:
   common::profiler::event_initializer<prof_event_sched_steal>          ITYR_ANON_VAR;
-  common::profiler::event_initializer<prof_event_sched_adws_mail_put>  ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_sched_mailbox_put>    ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_sched_adws_scan_tree> ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_push>         ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_wsqueue_pop>          ITYR_ANON_VAR;
