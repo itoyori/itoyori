@@ -721,10 +721,6 @@ public:
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
         cb();
       }
-
-      if (sched_loop_make_mpi_progress_option::value()) {
-        common::mpi_make_progress();
-      }
     }
 
     dtree_local_bottom_ref_ = {};
@@ -740,8 +736,39 @@ public:
         std::forward<PostSuspendCallback>(post_suspend_cb));
   }
 
+  template <typename Fn, typename... Args>
+  auto coll_exec(Fn&& fn, Args&&... args) {
+    using retval_t = std::invoke_result_t<Fn, Args...>;
+
+    auto begin_rank = common::topology::my_rank();
+    std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
+
+    auto coll_task_fn = [&, fn, args...] {
+      auto&& ret = fn(args...);
+      if constexpr (!std::is_void_v<retval_t>) {
+        if (common::topology::my_rank() == begin_rank) {
+          retv = std::forward<decltype(ret)>(ret);
+        }
+      }
+    };
+
+    size_t task_size = sizeof(callable_task<decltype(coll_task_fn)>);
+    void* task_ptr = suspended_thread_allocator_.allocate(task_size);
+
+    auto t = new (task_ptr) callable_task(coll_task_fn);
+
+    coll_task ct {.task_ptr = task_ptr, .task_size = task_size, .begin_rank = begin_rank};
+    execute_coll_task(t, ct);
+
+    suspended_thread_allocator_.deallocate(t, task_size);
+
+    if constexpr (!std::is_void_v<retval_t>) {
+      return std::move(retv);
+    }
+  }
+
   bool is_executing_root() const {
-    return cf_top_ && cf_top_ == cf_top_root_;
+    return cf_top_ && cf_top_ == stack_top();
   }
 
   template <typename T>
@@ -759,6 +786,12 @@ public:
   }
 
 private:
+  struct coll_task {
+    void*                    task_ptr;
+    std::size_t              task_size;
+    common::topology::rank_t begin_rank;
+  };
+
   struct cross_worker_task {
     void*       evacuation_ptr;
     void*       frame_base;
@@ -1416,12 +1449,15 @@ private:
         std::forward<Callback>(cb), std::forward<CallbackArgs>(cb_args)...);
   }
 
-  template <typename Fn>
-  void root_on_stack(Fn&& fn) {
+  context_frame* stack_top() const {
     // Add a margin of sizeof(context_frame) to the bottom of the stack, because
     // this region can be accessed by the clear_parent_frame() function later
-    cf_top_ = reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
-    cf_top_root_ = cf_top_;
+    return reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
+  }
+
+  template <typename Fn>
+  void root_on_stack(Fn&& fn) {
+    cf_top_ = stack_top();
     context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
                            [](void* fn_, void*, void*, void*) {
       Fn fn = *reinterpret_cast<Fn*>(fn_); // copy closure to the new stack frame
@@ -1429,8 +1465,56 @@ private:
     }, &fn, nullptr, nullptr, nullptr);
   }
 
+  void execute_coll_task(task_general* t, coll_task ct) {
+    coll_task ct_ {.task_ptr = t, .task_size = ct.task_size, .begin_rank = ct.begin_rank};
+
+    // pass coll task to other processes in a binary tree form
+    auto n_ranks = common::topology::n_ranks();
+    auto my_rank_shifted = (common::topology::my_rank() + n_ranks - ct.begin_rank) % n_ranks;
+    for (common::topology::rank_t i = common::next_pow2(n_ranks); i > 1; i /= 2) {
+      if (my_rank_shifted % i == 0) {
+        auto target_rank_shifted = my_rank_shifted + i / 2;
+        if (target_rank_shifted < n_ranks) {
+          auto target_rank = (target_rank_shifted + ct.begin_rank) % n_ranks;
+          coll_task_mailbox_.put(ct_, target_rank);
+        }
+      }
+    }
+
+    // Ensure all processes have finished coll task execution before deallocation
+    common::mpi_barrier(common::topology::mpicomm());
+
+    t->execute();
+
+    // Ensure all processes have finished coll task execution before deallocation
+    common::mpi_barrier(common::topology::mpicomm());
+  }
+
+  void execute_coll_task_if_arrived() {
+    auto ct = coll_task_mailbox_.pop();
+    if (ct.has_value()) {
+      task_general* t = reinterpret_cast<task_general*>(
+          suspended_thread_allocator_.allocate(ct->task_size));
+
+      common::remote_get(suspended_thread_allocator_,
+                         reinterpret_cast<std::byte*>(t),
+                         reinterpret_cast<std::byte*>(ct->task_ptr),
+                         ct->task_size);
+
+      execute_coll_task(t, *ct);
+
+      suspended_thread_allocator_.deallocate(t, ct->task_size);
+    }
+  }
+
   template <typename CondFn>
   bool should_exit_sched_loop(CondFn&& cond_fn) {
+    if (sched_loop_make_mpi_progress_option::value()) {
+      common::mpi_make_progress();
+    }
+
+    execute_coll_task_if_arrived();
+
     if (sched_loop_exit_req_ == MPI_REQUEST_NULL &&
         std::forward<CondFn>(cond_fn)()) {
       // If a given condition is met, enters a barrier
@@ -1445,12 +1529,12 @@ private:
 
   int                                max_depth_;
   callstack                          stack_;
+  oneslot_mailbox<coll_task>         coll_task_mailbox_;
   oneslot_mailbox<cross_worker_task> cross_worker_mailbox_;
   wsqueue<primary_wsq_entry, false>  primary_wsq_;
   wsqueue<migration_wsq_entry, true> migration_wsq_;
   common::remotable_resource         thread_state_allocator_;
   common::remotable_resource         suspended_thread_allocator_;
-  context_frame*                     cf_top_root_         = nullptr;
   context_frame*                     cf_top_              = nullptr;
   context_frame*                     sched_cf_            = nullptr;
   thread_local_storage*              tls_                 = nullptr;

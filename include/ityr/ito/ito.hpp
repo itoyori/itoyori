@@ -67,6 +67,14 @@ inline bool is_root() {
   return w.sched().is_executing_root();
 }
 
+template <typename Fn, typename... Args>
+inline auto coll_exec(Fn&& fn, Args&&... args) {
+  ITYR_CHECK(!is_spmd());
+  ITYR_CHECK(is_root());
+  auto& w = worker::instance::get();
+  return w.sched().coll_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+}
+
 template <typename PreSuspendCallback, typename PostSuspendCallback>
 inline void poll(PreSuspendCallback&&  pre_suspend_cb,
                  PostSuspendCallback&& post_suspend_cb) {
@@ -148,6 +156,12 @@ ITYR_TEST_CASE("[ityr::ito] load balancing") {
     ITYR_CHECK(is_root());
 
     lb(common::topology::n_ranks());
+
+    auto my_rank = common::topology::my_rank();
+    int ret = coll_exec([=] {
+      return common::mpi_reduce_value(1, my_rank, common::topology::mpicomm());
+    });
+    ITYR_CHECK(ret == common::topology::n_ranks());
   });
 
   ITYR_CHECK(is_spmd());

@@ -103,7 +103,7 @@ public:
 };
 
 template <typename Fn, typename... Args>
-class callable_task : task_general {
+class callable_task : public task_general {
 public:
   callable_task(Fn fn, Args... args) : fn_(fn), arg_(args...) {}
   void execute() { std::apply(fn_, arg_); }
