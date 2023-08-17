@@ -49,10 +49,10 @@ struct global_vector_options {
  * Global vectors have two types (collective or noncollective), which can be configured with the
  * `ityr::global_vector_options::collective` option.
  *
- * - A collective global vector must be allocated and deallocated by all processes collectively
- *   (i.e., in the SPMD region), and its global memory is distributed to the processes by following
- *   the memory distribution policy. Some operations that modify the global memory size
- *   (e.g., `push_back()`) are not permitted for collective global vectors.
+ * - A collective global vector must be allocated and deallocated by all processes collectively,
+ *   either in the SPMD region or in the root thread. Its global memory is distributed to the
+ *   processes by following the memory distribution policy. Some operations that modify the global
+ *   memory size (e.g., `push_back()`) are not permitted for collective global vectors.
  * - A noncollective global vector can be independently allocated and deallocated in each process.
  *   Its memory is allocated in the local process and can be deallocated from any other processes.
  *
@@ -80,7 +80,7 @@ struct global_vector_options {
  * });
  * ```
  *
- * In addition, the construction and destruction of vector elements can also be parallelised by
+ * In addition, the construction and destruction of vector elements can also be parallelized by
  * setting the `ityr::global_vector_options::parallel_construct` and
  * `ityr::global_vector_options::parallel_destruct` options. The cutoff count for leaf tasks can
  * be configured by the `ityr::global_vector_options::cutoff_count` option.
@@ -259,8 +259,9 @@ private:
 
   pointer allocate_mem(size_type count) const {
     if (opts_.collective) {
-      ITYR_CHECK(ito::is_spmd());
-      return ori::malloc_coll<T>(count);
+      return coll_exec_if_coll([=] {
+        return ori::malloc_coll<T>(count);
+      });
     } else {
       return ori::malloc<T>(count);
     }
@@ -268,20 +269,41 @@ private:
 
   void free_mem(pointer p, size_type count) const {
     if (opts_.collective) {
-      ITYR_CHECK(ito::is_spmd());
-      ori::free_coll<T>(p);
+      coll_exec_if_coll([=] {
+        ori::free_coll<T>(p);
+      });
     } else {
       ori::free<T>(p, count);
     }
   }
 
   template <typename Fn, typename... Args>
-  auto root_exec_if_coll(Fn&& f, Args&&... args) const {
+  auto root_exec_if_coll(Fn&& fn, Args&&... args) const {
     if (opts_.collective) {
-      ITYR_CHECK(ito::is_spmd());
-      return root_exec(std::forward<Fn>(f), std::forward<Args>(args)...);
+      if (ito::is_spmd()) {
+        return root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+      } else if (ito::is_root()) {
+        return std::forward<Fn>(fn)(std::forward<Args>(args)...);
+      } else {
+        common::die("Collective operations for ityr::global_vector must be executed on the root thread or SPMD region.");
+      }
     } else {
-      return std::forward<Fn>(f)(std::forward<Args>(args)...);
+      return std::forward<Fn>(fn)(std::forward<Args>(args)...);
+    }
+  }
+
+  template <typename Fn, typename... Args>
+  auto coll_exec_if_coll(Fn&& fn, Args&&... args) const {
+    if (opts_.collective) {
+      if (ito::is_spmd()) {
+        return std::forward<Fn>(fn)(std::forward<Args>(args)...);
+      } else if (ito::is_root()) {
+        return ito::coll_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+      } else {
+        common::die("Collective operations for ityr::global_vector must be executed on the root thread or SPMD region.");
+      }
+    } else {
+      return std::forward<Fn>(fn)(std::forward<Args>(args)...);
     }
   }
 
@@ -514,6 +536,17 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
                                        .checkout_count = 128},
             gv2.begin(), gv2.end());
         ITYR_CHECK(count2 == n * (n - 1));
+
+        // collective allocation on the root thread
+        global_vector<long> gv3 = gv1;
+
+        for_each(
+            execution::parallel_policy{.cutoff_count   = 128,
+                                       .checkout_count = 128},
+            make_global_iterator(gv1.begin(), checkout_mode::read),
+            make_global_iterator(gv1.end()  , checkout_mode::read),
+            make_global_iterator(gv3.begin(), checkout_mode::read),
+            [](long i, long j) { ITYR_CHECK(i == j); });
       });
     }
 
