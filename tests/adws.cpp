@@ -59,8 +59,7 @@ void adws_test() {
             ityr::execution::par,
             ityr::count_iterator<int>(0),
             ityr::count_iterator<int>(n_tasks),
-            0,
-            std::plus<int>{},
+            ityr::reducer::plus<int>{},
             [=](int i) {
               usleep(i);
               ityr::common::mpi_make_progress();

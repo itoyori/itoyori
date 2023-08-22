@@ -603,8 +603,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
                                        .checkout_count = 128},
             gv2.begin(),
             gv2.end(),
-            long(0),
-            std::plus<long>{},
+            reducer::plus<long>{},
             [](const move_only_t& mo) { return mo.value(); });
 
         ITYR_CHECK(count == n * (n - 1) / 2 - (next_size - n));
@@ -635,8 +634,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             execution::par,
             make_global_iterator(gvs.begin(), checkout_mode::no_access),
             make_global_iterator(gvs.end()  , checkout_mode::no_access),
-            long(0),
-            std::plus<long>{},
+            reducer::plus<long>{},
             [&](auto&& gv_ref) {
               auto cs = make_checkout(&gv_ref, 1, checkout_mode::read_write);
               auto gv_begin = cs[0].begin();
@@ -679,7 +677,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
   ITYR_SUBCASE("initializer list") {
     root_exec([&]() {
       ityr::global_vector<int> v = {1, 2, 3, 4, 5};
-      int product = ityr::reduce(ityr::execution::par, v.begin(), v.end(), 1, std::multiplies<>{});
+      int product = ityr::reduce(ityr::execution::par, v.begin(), v.end(), reducer::multiplies<int>{});
       ITYR_CHECK(product == 120);
     });
   }

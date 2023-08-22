@@ -180,7 +180,7 @@ bool check_sorted(ityr::global_span<T> s) {
       ityr::execution::parallel_policy{.cutoff_count   = cutoff_count,
                                        .checkout_count = cutoff_count},
       s.begin(), s.end() - 1, s.begin() + 1,
-      true, std::logical_and<>{}, std::less_equal<>{});
+      ityr::reducer::logical_and{}, std::less_equal<>{});
 }
 
 void run() {

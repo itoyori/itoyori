@@ -90,11 +90,12 @@ result_t nqueens(int n, int j, board b, int depth) {
         ityr::execution::par,
         ityr::count_iterator<int>(0),
         ityr::count_iterator<int>(n),
-        result_t(0), std::plus<>{},
-        [=](int i) mutable -> result_t {
-          b.array[j] = static_cast<state_t>(i);
-          if (ok(j + 1, b.array)) {
-            return nqueens(n, j + 1, b, depth + 1);
+        ityr::reducer::plus<result_t>{},
+        [=](int i) -> result_t {
+          board b_ = b;
+          b_.array[j] = static_cast<state_t>(i);
+          if (ok(j + 1, b_.array)) {
+            return nqueens(n, j + 1, b_, depth + 1);
           } else {
             return 0;
           }

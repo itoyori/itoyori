@@ -8,9 +8,11 @@
 #include <unistd.h>
 #include <iostream>
 #include <sstream>
-#include <optional>
-#include <tuple>
 #include <new>
+#include <optional>
+#include <limits>
+#include <vector>
+#include <tuple>
 
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)
