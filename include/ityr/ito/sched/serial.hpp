@@ -37,6 +37,15 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
+  template <typename Fn, typename... Args>
+  auto coll_exec(Fn&& fn, Args&&... args) {
+    return std::forward<Fn>(fn)(std::forward<Args>(args)...);
+  }
+
+  bool is_executing_root() const {
+    return true;
+  }
+
   template <typename T>
   static bool is_serialized(thread_handler<T>) {
     return true;
