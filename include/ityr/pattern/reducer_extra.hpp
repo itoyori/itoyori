@@ -60,6 +60,29 @@ private:
   value_type  highest_ = std::numeric_limits<value_type>::max();
 };
 
+template <typename T>
+struct concat_vec {
+  using value_type       = global_vector<T>;
+  using accumulator_type = global_vector<T>;
+
+  static constexpr bool direct_accumulation = true;
+
+  void foldl(accumulator_type& acc_l, accumulator_type&& acc_r) const {
+    acc_l.insert(acc_l.end(), make_move_iterator(acc_r.begin()), make_move_iterator(acc_r.end()));
+  }
+
+  void foldr(accumulator_type&& acc_l, accumulator_type& acc_r) const {
+    acc_r.insert(acc_r.begin(), make_move_iterator(acc_l.begin()), make_move_iterator(acc_l.end()));
+  }
+
+  accumulator_type identity() const {
+    return global_vector<T>();
+  }
+
+  accumulator_type view(accumulator_type& x) const { return x; }
+  accumulator_type clone(const accumulator_type& x) const { return x; }
+};
+
 ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
   ito::init();
   ori::init();
@@ -93,6 +116,29 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
           [=](auto count) {
             ITYR_CHECK(count == n_samples / n_bins);
           });
+    });
+  }
+
+  ITYR_SUBCASE("concat_vec") {
+    root_exec([=] {
+      int n = 10000;
+
+      global_vector<int> ret = transform_reduce(
+          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          count_iterator<int>(0),
+          count_iterator<int>(n),
+          reducer::concat_vec<int>{},
+          [](int i) { return global_vector<int>(1, i); });
+      ITYR_CHECK(ret.size() == n);
+
+      global_vector<int> ans(n);
+      copy(
+          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          count_iterator<int>(0),
+          count_iterator<int>(n),
+          ans.begin());
+
+      ITYR_CHECK(ret == ans);
     });
   }
 

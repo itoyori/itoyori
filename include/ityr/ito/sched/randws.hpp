@@ -85,7 +85,7 @@ public:
 
         tls_->dag_prof.stop();
 
-        on_root_die(ts, ret);
+        on_root_die(ts, std::move(ret));
       });
     });
 
@@ -94,7 +94,7 @@ public:
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
-    thread_retval<T> retval = ts->retval;
+    thread_retval<T> retval = std::move(ts->retval);
     std::destroy_at(ts);
     thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
 
@@ -104,7 +104,7 @@ public:
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
 
-    return retval.value;
+    return std::move(retval.value);
   }
 
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
@@ -139,7 +139,7 @@ public:
       common::verbose<2>("Thread %p is completed", ts);
 
       on_task_die();
-      on_die(ts, ret, std::forward<OnDriftDieCallback>(on_drift_die_cb));
+      on_die(ts, std::move(ret), std::forward<OnDriftDieCallback>(on_drift_die_cb));
 
       common::verbose<2>("Thread %p is serialized (fast path)", ts);
 
@@ -148,7 +148,7 @@ public:
       thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
       th.state      = nullptr;
       th.serialized = true;
-      th.retval_ser = {ret, tls_->dag_prof};
+      th.retval_ser = {std::move(ret), tls_->dag_prof};
 
       common::verbose<2>("Resume parent context frame [%p, %p) (fast path)", cf, cf->parent_frame);
 
@@ -184,7 +184,7 @@ public:
       common::verbose<2>("Skip join for serialized thread (fast path)");
       // We can skip deallocaton for its thread state because it has been already deallocated
       // when the thread is serialized (i.e., at a fork)
-      retval = th.retval_ser;
+      retval = std::move(th.retval_ser);
 
     } else {
       ITYR_CHECK(th.state != nullptr);
@@ -226,7 +226,9 @@ public:
         }
       }
 
-      std::destroy_at(ts);
+      // TODO: correctly destroy T remotely if nontrivially destructible
+      /* std::destroy_at(ts); */
+
       thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
       th.state = nullptr;
     }
@@ -234,7 +236,7 @@ public:
     tls_->dag_prof.merge_parallel(retval.dag_prof);
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
-    return retval.value;
+    return std::move(retval.value);
   }
 
   template <typename SchedLoopCallback, typename CondFn>
@@ -341,41 +343,57 @@ private:
   }
 
   template <typename T, typename OnDriftDieCallback>
-  void on_die(thread_state<T>* ts, const T& ret, OnDriftDieCallback&& on_drift_die_cb) {
+  void on_die(thread_state<T>* ts, T&& ret, OnDriftDieCallback&& on_drift_die_cb) {
     auto qe = wsq_.pop();
     bool serialized = qe.has_value();
 
-    if (!serialized) {
-      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_cb_drift_die>();
-        on_drift_die_cb();
-        common::profiler::switch_phase<prof_phase_cb_drift_die, prof_phase_sched_die>();
-      }
+    if (serialized) {
+      return;
+    }
 
-      if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-        thread_retval<T> retval = {ret, tls_->dag_prof};
+    if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_cb_drift_die>();
+      on_drift_die_cb();
+      common::profiler::switch_phase<prof_phase_cb_drift_die, prof_phase_sched_die>();
+    }
+
+    if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
+      if constexpr (std::is_trivially_copyable_v<T>) {
+        thread_retval<T> retval = {std::move(ret), tls_->dag_prof};
         remote_put_value(thread_state_allocator_, retval, &ts->retval);
-      }
-
-      // race
-      if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
-        common::verbose("Win the join race for thread %p (joined thread)", ts);
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
-        resume_sched();
       } else {
-        common::verbose("Lose the join race for thread %p (joined thread)", ts);
-        common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_join>();
-        suspended_state ss = remote_get_value(thread_state_allocator_, &ts->suspended);
-        resume(ss);
+        // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
+        std::byte* retvalp = reinterpret_cast<std::byte*>(new (alloca(sizeof(thread_retval<T>)))
+            thread_retval<T>{std::move(ret), tls_->dag_prof});
+        remote_put(thread_state_allocator_, retvalp, reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
       }
+    }
+
+    // race
+    if (remote_faa_value(thread_state_allocator_, 1, &ts->resume_flag) == 0) {
+      common::verbose("Win the join race for thread %p (joined thread)", ts);
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
+      resume_sched();
+    } else {
+      common::verbose("Lose the join race for thread %p (joined thread)", ts);
+      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_resume_join>();
+      suspended_state ss = remote_get_value(thread_state_allocator_, &ts->suspended);
+      resume(ss);
     }
   }
 
   template <typename T>
-  void on_root_die(thread_state<T>* ts, const T& ret) {
+  void on_root_die(thread_state<T>* ts, T&& ret) {
     if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-      thread_retval<T> retval = {ret, tls_->dag_prof};
-      remote_put_value(thread_state_allocator_, retval, &ts->retval);
+      if constexpr (std::is_trivially_copyable_v<T>) {
+        thread_retval<T> retval = {std::move(ret), tls_->dag_prof};
+        remote_put_value(thread_state_allocator_, retval, &ts->retval);
+      } else {
+        // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
+        std::byte* retvalp = reinterpret_cast<std::byte*>(new (alloca(sizeof(thread_retval<T>)))
+            thread_retval<T>{std::move(ret), tls_->dag_prof});
+        remote_put(thread_state_allocator_, retvalp, reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
+      }
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
 

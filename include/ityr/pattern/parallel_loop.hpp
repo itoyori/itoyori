@@ -126,7 +126,7 @@ inline AccView parallel_reduce_generic(execution::parallel_policy policy,
 
     ori::acquire();
 
-    combine_op(acc1, acc2, first, mid, last, firsts...);
+    combine_op(acc1, std::move(acc2), first, mid, last, firsts...);
 
     return acc1;
   }
@@ -622,13 +622,13 @@ transform_reduce(const ExecutionPolicy& policy,
   }
 
   if constexpr (!ori::is_global_ptr_v<ForwardIterator>) {
-    auto accumulate_op = [=](auto& acc, const auto& v) {
-      reducer.foldl(acc, unary_transform_op(v));
+    auto accumulate_op = [=](auto&& acc, const auto& v) {
+      reducer.foldl(std::forward<decltype(acc)>(acc), unary_transform_op(v));
     };
 
-    auto combine_op = [=](auto& acc1, const auto& acc2,
+    auto combine_op = [=](auto&& acc1, auto&& acc2,
                           ForwardIterator, ForwardIterator, ForwardIterator) {
-      reducer.foldl(acc1, acc2);
+      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     if constexpr (Reducer::direct_accumulation) {
@@ -713,13 +713,13 @@ transform_reduce(const ExecutionPolicy& policy,
 
   if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
                 !ori::is_global_ptr_v<ForwardIterator2>) {
-    auto accumulate_op = [=](auto& acc, const auto& v1, const auto& v2) {
-      reducer.foldl(acc, binary_transform_op(v1, v2));
+    auto accumulate_op = [=](auto&& acc, const auto& v1, const auto& v2) {
+      reducer.foldl(std::forward<decltype(acc)>(acc), binary_transform_op(v1, v2));
     };
 
-    auto combine_op = [=](auto& acc1, const auto& acc2,
+    auto combine_op = [=](auto&& acc1, auto&& acc2,
                           ForwardIterator1, ForwardIterator1, ForwardIterator1, ForwardIterator2) {
-      reducer.foldl(acc1, acc2);
+      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     if constexpr (Reducer::direct_accumulation) {
@@ -1182,14 +1182,14 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
 
   if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
                 !ori::is_global_ptr_v<ForwardIteratorD>) {
-    auto accumulate_op = [=](auto& acc, const auto& v1, auto&& d) {
+    auto accumulate_op = [=](auto&& acc, const auto& v1, auto&& d) {
       reducer.foldl(acc, unary_transform_op(v1));
       d = reducer.clone(acc);
     };
 
     // TODO: more efficient scan implementation
-    auto combine_op = [=](auto&            acc1,
-                          const auto&      acc2,
+    auto combine_op = [=](auto&&           acc1,
+                          auto&&           acc2,
                           ForwardIterator1 first_,
                           ForwardIterator1 mid_,
                           ForwardIterator1 last_,
@@ -1209,7 +1209,7 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
         for_each(policy, std::next(fd, dm), std::next(fd, dl),
                  [=](auto&& acc_r) { reducer.foldr(acc1, acc_r); });
       }
-      reducer.foldl(acc1, acc2);
+      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     internal::reduce_generic(policy, accumulate_op, combine_op, reducer,

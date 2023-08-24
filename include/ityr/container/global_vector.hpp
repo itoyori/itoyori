@@ -122,8 +122,8 @@ public:
   global_vector(InputIterator first, InputIterator last)
     : global_vector(global_vector_options(), first, last) {}
 
-  global_vector(std::initializer_list<T> init)
-    : global_vector(global_vector_options(), init) {}
+  global_vector(std::initializer_list<T> il)
+    : global_vector(global_vector_options(), il) {}
 
   /* with options */
 
@@ -137,14 +137,15 @@ public:
     initialize_uniform(count, value);
   }
 
-  template <typename InputIterator>
+  template <typename InputIterator,
+            typename = std::void_t<typename std::iterator_traits<InputIterator>::iterator_category>>
   global_vector(const global_vector_options& opts, InputIterator first, InputIterator last) : opts_(opts) {
     initialize_from_iter(first, last,
                          typename std::iterator_traits<InputIterator>::iterator_category{});
   }
 
-  global_vector(const global_vector_options& opts, std::initializer_list<T> init) : opts_(opts) {
-    initialize_from_iter(init.begin(), init.end(), std::random_access_iterator_tag{});
+  global_vector(const global_vector_options& opts, std::initializer_list<T> il) : opts_(opts) {
+    initialize_from_iter(il.begin(), il.end(), std::random_access_iterator_tag{});
   }
 
   ~global_vector() {
@@ -308,8 +309,8 @@ public:
                        typename std::iterator_traits<InputIterator>::iterator_category{});
   }
 
-  iterator insert(const_iterator position, std::initializer_list<T> init) {
-    return insert_iter(position - cbegin(), init.begin(), init.end(),
+  iterator insert(const_iterator position, std::initializer_list<T> il) {
+    return insert_iter(position - cbegin(), il.begin(), il.end(),
                        std::random_access_iterator_tag{});
   }
 

@@ -28,7 +28,7 @@ public:
 
   template <typename T>
   T join(thread_handler<T>& th) {
-    return th;
+    return std::move(th);
   }
 
   template <typename SchedLoopCallback, typename CondFn>
