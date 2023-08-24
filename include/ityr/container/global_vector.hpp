@@ -140,7 +140,7 @@ public:
   template <typename InputIterator>
   global_vector(const global_vector_options& opts, InputIterator first, InputIterator last) : opts_(opts) {
     initialize_from_iter(first, last,
-                         typename std::iterator_traits<InputIterator>::iterator_category());
+                         typename std::iterator_traits<InputIterator>::iterator_category{});
   }
 
   global_vector(const global_vector_options& opts, std::initializer_list<T> init) : opts_(opts) {
@@ -207,24 +207,24 @@ public:
   const_reverse_iterator crbegin() const noexcept { return std::make_reverse_iterator(cend()); }
   const_reverse_iterator crend() const noexcept { return std::make_reverse_iterator(cbegin()); }
 
-  reference operator[](size_type n) {
-    ITYR_CHECK(n <= size());
-    return *(begin() + n);
+  reference operator[](size_type i) {
+    ITYR_CHECK(i <= size());
+    return *(begin() + i);
   }
 
-  const_reference operator[](size_type n) const {
-    ITYR_CHECK(n <= size());
-    return *(begin() + n);
+  const_reference operator[](size_type i) const {
+    ITYR_CHECK(i <= size());
+    return *(begin() + i);
   }
 
-  reference at(size_type n) {
-    check_range(n);
-    return (*this)[n];
+  reference at(size_type i) {
+    check_range(i);
+    return (*this)[i];
   }
 
-  const_reference at(size_type n) const {
-    check_range(n);
-    return (*this)[n];
+  const_reference at(size_type i) const {
+    check_range(i);
+    return (*this)[i];
   }
 
   reference front() { return *begin(); }
@@ -290,16 +290,32 @@ public:
   }
 
   iterator insert(const_iterator position, const T& x) {
-    return insert_impl(position - begin(), x);
+    return insert_one(position - cbegin(), x);
   }
 
   iterator insert(const_iterator position, T&& x) {
-    return insert_impl(position - begin(), std::move(x));
+    return insert_one(position - cbegin(), std::move(x));
+  }
+
+  iterator insert(const_iterator position, size_type n, const T& x) {
+    return insert_n(position - cbegin(), n, x);
+  }
+
+  template <typename InputIterator,
+            typename = std::void_t<typename std::iterator_traits<InputIterator>::iterator_category>>
+  iterator insert(const_iterator position, InputIterator first, InputIterator last) {
+    return insert_iter(position - cbegin(), first, last,
+                       typename std::iterator_traits<InputIterator>::iterator_category{});
+  }
+
+  iterator insert(const_iterator position, std::initializer_list<T> init) {
+    return insert_iter(position - cbegin(), init.begin(), init.end(),
+                       std::random_access_iterator_tag{});
   }
 
   template <typename... Args>
   iterator emplace(const_iterator position, Args&&... args) {
-    return insert_impl(position - begin(), std::forward<Args>(args)...);
+    return insert_iter(position - begin(), std::forward<Args>(args)...);
   }
 
 private:
@@ -364,12 +380,12 @@ private:
   }
 
   template <typename... Args>
-  void initialize_uniform(size_type count, Args&&... args) {
+  void initialize_uniform(size_type count, const Args&... args) {
     begin_        = allocate_mem(count);
     end_          = begin_ + count;
     reserved_end_ = begin_ + count;
 
-    construct_elems(begin(), end(), std::forward<Args>(args)...);
+    construct_elems(begin(), end(), args...);
   }
 
   template <typename InputIterator>
@@ -378,7 +394,7 @@ private:
     ITYR_CHECK(!opts_.parallel_construct);
 
     for (; first != last; ++first) {
-      emplace_back(*first);
+      push_back_impl(*first);
     }
   }
 
@@ -399,7 +415,7 @@ private:
   }
 
   template <typename... Args>
-  void construct_elems(pointer b, pointer e, Args&&... args) const {
+  void construct_elems(pointer b, pointer e, const Args&... args) const {
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
         for_each(
@@ -484,13 +500,13 @@ private:
   }
 
   template <typename... Args>
-  void resize_impl(size_type count, Args&&... args) {
+  void resize_impl(size_type count, const Args&... args) {
     if (count > size()) {
       if (count > capacity()) {
         size_type new_cap = next_size(count);
         realloc_mem(new_cap);
       }
-      construct_elems(end(), begin() + count, std::forward<Args>(args)...);
+      construct_elems(end(), begin() + count, args...);
       end_ = begin() + count;
 
     } else if (count < size()) {
@@ -514,27 +530,71 @@ private:
     ++end_;
   }
 
-  template <typename... Args>
-  iterator insert_impl(difference_type i, Args&&... args) {
-    ITYR_CHECK(0 <= i);
+  void make_space_for_insertion(size_type i, size_type n) {
     ITYR_CHECK(i <= size());
 
     if (size() == capacity()) {
-      size_type new_cap = next_size(size() + 1);
+      size_type new_cap = next_size(size() + n);
       realloc_mem(new_cap);
     }
 
+    construct_elems(end(), end() + n);
+
     move_backward(
         execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
-        begin() + i, end(), end() + 1);
+        begin() + i, end(), end() + n);
+  }
+
+  template <typename... Args>
+  iterator insert_one(size_type i, Args&&... args) {
+    if (i == size()) {
+      push_back_impl(std::forward<Args>(args)...);
+      return begin() + i;
+    }
+
+    make_space_for_insertion(i, 1);
 
     root_exec_if_coll([&] {
-      auto cs = make_checkout(begin() + i, 1, checkout_mode::write);
-      new (&cs[0]) T(std::forward<Args>(args)...);
+      auto cs = make_checkout(begin() + i, 1, internal::destination_checkout_mode<T>{});
+      cs[0] = T(std::forward<Args>(args)...);
     });
 
     ++end_;
+    return begin() + i;
+  }
 
+  iterator insert_n(size_type i, size_type n, const value_type& value) {
+    make_space_for_insertion(i, n);
+
+    root_exec_if_coll([&] {
+      fill(execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+           begin() + i, begin() + i + n, value);
+    });
+
+    end_ += n;
+    return begin() + i;
+  }
+
+  template <typename InputIterator>
+  iterator insert_iter(size_type i, InputIterator first, InputIterator last, std::input_iterator_tag) {
+    size_type pos = i;
+    for (; first != last; ++first) {
+      insert_one(pos++, *first);
+    }
+    return begin() + i;
+  }
+
+  template <typename ForwardIterator>
+  iterator insert_iter(size_type i, ForwardIterator first, ForwardIterator last, std::forward_iterator_tag) {
+    size_type n = std::distance(first, last);
+    make_space_for_insertion(i, n);
+
+    root_exec_if_coll([&] {
+      copy(execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+           first, last, begin() + i);
+    });
+
+    end_ += n;
     return begin() + i;
   }
 
@@ -770,19 +830,31 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     });
   }
 
-  ITYR_SUBCASE("initializer list") {
+  ITYR_SUBCASE("insert") {
     root_exec([&]() {
-      global_vector<int> v = {1, 2, 3, 4, 5};
-      int product = reduce(execution::par, v.begin(), v.end(), reducer::multiplies<int>{});
-      ITYR_CHECK(product == 120);
+      global_vector<int> v1 = {1, 2, 3, 4, 5};
+      global_vector<int> v2 = {10, 20, 30};
+
+      v1.insert(v1.begin() + 2, 0);
+      ITYR_CHECK(v1 == global_vector<int>({1, 2, 0, 3, 4, 5}));
+
+      v1.insert(v1.end() - 1, 3, -1);
+      ITYR_CHECK(v1 == global_vector<int>({1, 2, 0, 3, 4, -1, -1, -1, 5}));
+
+      v1.insert(v1.begin(), v2.begin(), v2.end());
+      ITYR_CHECK(v1 == global_vector<int>({10, 20, 30, 1, 2, 0, 3, 4, -1, -1, -1, 5}));
     });
   }
 
-  ITYR_SUBCASE("insert") {
+  ITYR_SUBCASE("initializer list") {
     root_exec([&]() {
       global_vector<int> v = {1, 2, 3, 4, 5};
-      v.insert(v.begin() + 2, 0);
-      ITYR_CHECK(v == global_vector<int>({1, 2, 0, 3, 4, 5}));
+
+      int product = reduce(execution::par, v.begin(), v.end(), reducer::multiplies<int>{});
+      ITYR_CHECK(product == 120);
+
+      v.insert(v.end(), {6, 7, 8});
+      ITYR_CHECK(v == global_vector<int>({1, 2, 3, 4, 5, 6, 7, 8}));
     });
   }
 

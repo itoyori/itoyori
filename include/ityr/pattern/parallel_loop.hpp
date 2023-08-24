@@ -1439,6 +1439,24 @@ inline bool equal(const ExecutionPolicy& policy,
          equal(policy, first1, last1, first2);
 }
 
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD>
+inline ForwardIteratorD copy(const ExecutionPolicy& policy,
+                             ForwardIterator1       first1,
+                             ForwardIterator1       last1,
+                             ForwardIteratorD       first_d) {
+  return transform(policy, first1, last1, first_d,
+                   [](auto&& v) { return std::forward<decltype(v)>(v); });
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD>
+inline ForwardIteratorD move(const ExecutionPolicy& policy,
+                             ForwardIterator1       first1,
+                             ForwardIterator1       last1,
+                             ForwardIteratorD       first_d) {
+  using std::make_move_iterator;
+  return copy(policy, make_move_iterator(first1), make_move_iterator(last1), first_d);
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
   ito::init();
   ori::init();

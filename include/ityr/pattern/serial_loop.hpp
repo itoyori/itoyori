@@ -145,12 +145,12 @@ inline void for_each_aux(const execution::sequenced_policy& policy,
 
 }
 
-template <typename BidirectionalIterator1, typename BidirectionalIterator2>
-inline BidirectionalIterator2
+template <typename BidirectionalIterator1, typename BidirectionalIteratorD>
+inline BidirectionalIteratorD
 move_backward(const execution::sequenced_policy& policy,
-              BidirectionalIterator1             first,
-              BidirectionalIterator1             last,
-              BidirectionalIterator2             result) {
+              BidirectionalIterator1             first1,
+              BidirectionalIterator1             last1,
+              BidirectionalIteratorD             first_d) {
   // If the source value type is trivially copyable, read-only access is possible
   using value_type1 = typename std::iterator_traits<BidirectionalIterator1>::value_type;
   using checkout_mode1 = std::conditional_t<std::is_trivially_copyable_v<value_type1>,
@@ -162,28 +162,28 @@ move_backward(const execution::sequenced_policy& policy,
 
   } else if constexpr (ori::is_global_ptr_v<BidirectionalIterator1>) {
     // automatically convert global pointers to global iterators
-    auto first_ = make_global_iterator(first, checkout_mode1{});
-    auto last_  = make_global_iterator(last , checkout_mode1{});
-    return move_backward(policy, first_, last_, result);
+    auto first1_ = make_global_iterator(first1, checkout_mode1{});
+    auto last1_  = make_global_iterator(last1 , checkout_mode1{});
+    return move_backward(policy, first1_, last1_, first_d);
   }
 
   // If the destination value type is trivially copyable, write-only access is possible
-  using value_type2 = typename std::iterator_traits<BidirectionalIterator2>::value_type;
-  using checkout_mode2 = std::conditional_t<std::is_trivially_copyable_v<value_type2>,
+  using value_type_d = typename std::iterator_traits<BidirectionalIteratorD>::value_type;
+  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
                                             checkout_mode::write_t,
                                             checkout_mode::read_write_t>;
-  if constexpr (is_global_iterator_v<BidirectionalIterator2>) {
-    static_assert(std::is_same_v<typename BidirectionalIterator2::mode, checkout_mode2> ||
-                  std::is_same_v<typename BidirectionalIterator2::mode, checkout_mode::no_access_t>);
+  if constexpr (is_global_iterator_v<BidirectionalIteratorD>) {
+    static_assert(std::is_same_v<typename BidirectionalIteratorD::mode, checkout_mode_d> ||
+                  std::is_same_v<typename BidirectionalIteratorD::mode, checkout_mode::no_access_t>);
 
-  } else if constexpr (ori::is_global_ptr_v<BidirectionalIterator2>) {
+  } else if constexpr (ori::is_global_ptr_v<BidirectionalIteratorD>) {
     // automatically convert global pointers to global iterators
-    auto result_ = make_global_iterator(result, checkout_mode2{});
-    return move_backward(policy, first, last, result_);
+    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
+    return move_backward(policy, first1, last1, first_d_);
   }
 
   if constexpr (!ori::is_global_ptr_v<BidirectionalIterator1> &&
-                !ori::is_global_ptr_v<BidirectionalIterator2>) {
+                !ori::is_global_ptr_v<BidirectionalIteratorD>) {
     using std::make_move_iterator;
     using std::make_reverse_iterator;
     internal::for_each_aux(
@@ -191,12 +191,12 @@ move_backward(const execution::sequenced_policy& policy,
         [&](auto&& from, auto&& to) {
           to = std::move(from);
         },
-        make_reverse_iterator(make_move_iterator(last)),
-        make_reverse_iterator(make_move_iterator(first)),
-        make_reverse_iterator(result));
+        make_reverse_iterator(make_move_iterator(last1)),
+        make_reverse_iterator(make_move_iterator(first1)),
+        make_reverse_iterator(first_d));
   }
 
-  return std::prev(result, std::distance(first, last));
+  return std::prev(first_d, std::distance(first1, last1));
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
