@@ -11,6 +11,7 @@
 #include "ityr/pattern/root_exec.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 #include "ityr/pattern/parallel_invoke.hpp"
+#include "ityr/pattern/reducer_extra.hpp"
 #include "ityr/container/global_span.hpp"
 #include "ityr/container/global_vector.hpp"
 #include "ityr/container/checkout_span.hpp"
