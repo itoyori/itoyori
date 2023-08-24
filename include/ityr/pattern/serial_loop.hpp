@@ -1,10 +1,10 @@
 #pragma once
 
 #include "ityr/common/util.hpp"
+#include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/count_iterator.hpp"
+#include "ityr/pattern/root_exec.hpp"
 #include "ityr/pattern/global_iterator.hpp"
-#include "ityr/container/checkout_span.hpp"
 
 namespace ityr {
 
@@ -79,38 +79,6 @@ inline void assert_policy(const parallel_policy& opts) {
 
 namespace internal {
 
-template <typename T, typename Mode>
-inline auto make_checkout_iter_nb(global_iterator<T, Mode> it,
-                                  std::size_t              count) {
-  checkout_span<T, Mode> cs;
-  cs.checkout_nb(&*it, count, Mode{});
-  return std::make_tuple(std::move(cs), cs.data());
-}
-
-template <typename T>
-inline auto make_checkout_iter_nb(global_move_iterator<T> it,
-                                  std::size_t             count) {
-  checkout_span<T, checkout_mode::read_write_t> cs;
-  cs.checkout_nb(&*it, count, checkout_mode::read_write);
-  return std::make_tuple(std::move(cs), std::make_move_iterator(cs.data()));
-}
-
-template <typename T>
-inline auto make_checkout_iter_nb(global_construct_iterator<T> it,
-                                  std::size_t                  count) {
-  checkout_span<T, checkout_mode::write_t> cs;
-  cs.checkout_nb(&*it, count, checkout_mode::write);
-  return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
-}
-
-template <typename T>
-inline auto make_checkout_iter_nb(global_destruct_iterator<T> it,
-                                  std::size_t                 count) {
-  checkout_span<T, checkout_mode::read_write_t> cs;
-  cs.checkout_nb(&*it, count, checkout_mode::read_write);
-  return std::make_tuple(std::move(cs), make_count_iterator(cs.data()));
-}
-
 inline auto checkout_global_iterators_aux(std::size_t) {
   return std::make_tuple(std::make_tuple(), std::make_tuple());
 }
@@ -118,19 +86,12 @@ inline auto checkout_global_iterators_aux(std::size_t) {
 template <typename ForwardIterator, typename... ForwardIterators>
 inline auto checkout_global_iterators_aux(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
   if constexpr (is_global_iterator_v<ForwardIterator>) {
-    if constexpr (ForwardIterator::auto_checkout) {
-      auto [cs, it_] = make_checkout_iter_nb(it, n);
-      auto [css, its] = checkout_global_iterators_aux(n, rest...);
-      return std::make_tuple(std::tuple_cat(std::make_tuple(std::move(cs)), std::move(css)),
-                             std::tuple_cat(std::make_tuple(it_), its));
-    } else {
-      auto [css, its] = checkout_global_iterators_aux(n, rest...);
-      // &*: convert global_iterator -> global_ref -> global_ptr
-      return std::make_tuple(std::move(css),
-                             std::tuple_cat(std::make_tuple(&*it), its));
-    }
+    auto&& [cs, it_] = it.checkout_nb(n);
+    auto&& [css, its] = checkout_global_iterators_aux(n, rest...);
+    return std::make_tuple(std::tuple_cat(std::make_tuple(std::move(cs)), std::move(css)),
+                           std::tuple_cat(std::make_tuple(it_), its));
   } else {
-    auto [css, its] = checkout_global_iterators_aux(n, rest...);
+    auto&& [css, its] = checkout_global_iterators_aux(n, rest...);
     return std::make_tuple(std::move(css),
                            std::tuple_cat(std::make_tuple(it), its));
   }
@@ -182,6 +143,125 @@ inline void for_each_aux(const execution::sequenced_policy& policy,
   }
 }
 
+}
+
+template <typename BidirectionalIterator1, typename BidirectionalIterator2>
+inline BidirectionalIterator2
+move_backward(const execution::sequenced_policy& policy,
+              BidirectionalIterator1             first,
+              BidirectionalIterator1             last,
+              BidirectionalIterator2             result) {
+  // If the source value type is trivially copyable, read-only access is possible
+  using value_type1 = typename std::iterator_traits<BidirectionalIterator1>::value_type;
+  using checkout_mode1 = std::conditional_t<std::is_trivially_copyable_v<value_type1>,
+                                            checkout_mode::read_t,
+                                            checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<BidirectionalIterator1>) {
+    static_assert(std::is_same_v<typename BidirectionalIterator1::mode, checkout_mode1> ||
+                  std::is_same_v<typename BidirectionalIterator1::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<BidirectionalIterator1>) {
+    // automatically convert global pointers to global iterators
+    auto first_ = make_global_iterator(first, checkout_mode1{});
+    auto last_  = make_global_iterator(last , checkout_mode1{});
+    return move_backward(policy, first_, last_, result);
+  }
+
+  // If the destination value type is trivially copyable, write-only access is possible
+  using value_type2 = typename std::iterator_traits<BidirectionalIterator2>::value_type;
+  using checkout_mode2 = std::conditional_t<std::is_trivially_copyable_v<value_type2>,
+                                            checkout_mode::write_t,
+                                            checkout_mode::read_write_t>;
+  if constexpr (is_global_iterator_v<BidirectionalIterator2>) {
+    static_assert(std::is_same_v<typename BidirectionalIterator2::mode, checkout_mode2> ||
+                  std::is_same_v<typename BidirectionalIterator2::mode, checkout_mode::no_access_t>);
+
+  } else if constexpr (ori::is_global_ptr_v<BidirectionalIterator2>) {
+    // automatically convert global pointers to global iterators
+    auto result_ = make_global_iterator(result, checkout_mode2{});
+    return move_backward(policy, first, last, result_);
+  }
+
+  if constexpr (!ori::is_global_ptr_v<BidirectionalIterator1> &&
+                !ori::is_global_ptr_v<BidirectionalIterator2>) {
+    using std::make_move_iterator;
+    using std::make_reverse_iterator;
+    internal::for_each_aux(
+        policy,
+        [&](auto&& from, auto&& to) {
+          to = std::move(from);
+        },
+        make_reverse_iterator(make_move_iterator(last)),
+        make_reverse_iterator(make_move_iterator(first)),
+        make_reverse_iterator(result));
+  }
+
+  return std::prev(result, std::distance(first, last));
+}
+
+ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
+  class move_only_t {
+  public:
+    move_only_t() {}
+    move_only_t(const long v) : value_(v) {}
+
+    long value() const { return value_; }
+
+    move_only_t(const move_only_t&) = delete;
+    move_only_t& operator=(const move_only_t&) = delete;
+
+    move_only_t(move_only_t&& mo) : value_(mo.value_) {
+      mo.value_ = -1;
+    }
+    move_only_t& operator=(move_only_t&& mo) {
+      value_ = mo.value_;
+      mo.value_ = -1;
+      return *this;
+    }
+
+  private:
+    long value_ = -1;
+  };
+
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<move_only_t> p = ori::malloc_coll<move_only_t>(n);
+
+  root_exec([=] {
+    internal::for_each_aux(
+        execution::sequenced_policy{.checkout_count = 128},
+        [&](move_only_t& mo, long i) {
+          mo = move_only_t{i};
+        },
+        make_global_iterator(p    , checkout_mode::read_write),
+        make_global_iterator(p + n, checkout_mode::read_write),
+        count_iterator<long>(0));
+
+    long offset = 1000;
+    move_backward(
+        execution::sequenced_policy{.checkout_count = 128},
+        p, p + n - offset, p + n);
+
+    internal::for_each_aux(
+        execution::sequenced_policy{.checkout_count = 128},
+        [&](const move_only_t& mo, long i) {
+          if (i < offset) {
+            ITYR_CHECK(mo.value() == -1);
+          } else {
+            ITYR_CHECK(mo.value() == i - offset);
+          }
+        },
+        make_global_iterator(p    , checkout_mode::read),
+        make_global_iterator(p + n, checkout_mode::read),
+        count_iterator<long>(0));
+  });
+
+  ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
 }
 
 }

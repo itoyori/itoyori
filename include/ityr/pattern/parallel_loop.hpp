@@ -367,10 +367,11 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
   ITYR_SUBCASE("without global_ptr") {
     ITYR_SUBCASE("count iterator") {
       long count = 0;
-      for_each(execution::seq,
-               count_iterator<long>(0),
-               count_iterator<long>(n),
-               [&](long i) { count += i; });
+      for_each(
+          execution::seq,
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          [&](long i) { count += i; });
       ITYR_CHECK(count == n * (n - 1) / 2);
 
       count = 0;

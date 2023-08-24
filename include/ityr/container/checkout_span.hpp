@@ -2,10 +2,52 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/ori/ori.hpp"
-#include "ityr/pattern/global_iterator.hpp"
 #include "ityr/container/global_span.hpp"
 
 namespace ityr {
+
+namespace checkout_mode {
+
+/** @brief See `ityr::checkout_mode::read`. */
+using read_t = ori::mode::read_t;
+
+/**
+ * @brief Read-only checkout mode.
+ * @see `ityr::make_checkout()`.
+ * @see `ityr::make_global_iterator()`.
+ */
+inline constexpr read_t read;
+
+/** @brief See `ityr::checkout_mode::write`. */
+using write_t = ori::mode::write_t;
+
+/**
+ * @brief Write-only checkout mode.
+ * @see `ityr::make_checkout()`.
+ * @see `ityr::make_global_iterator()`.
+ */
+inline constexpr write_t write;
+
+/** @brief See `ityr::checkout_mode::read_write`. */
+using read_write_t = ori::mode::read_write_t;
+
+/**
+ * @brief Read+Write checkout mode.
+ * @see `ityr::make_checkout()`.
+ * @see `ityr::make_global_iterator()`.
+ */
+inline constexpr read_write_t read_write;
+
+/** @brief See `ityr::checkout_mode::no_access`. */
+struct no_access_t {};
+
+/**
+ * @brief Checkout mode to disable automatic checkout.
+ * @see `ityr::make_global_iterator()`.
+ */
+inline constexpr no_access_t no_access;
+
+}
 
 /**
  * @brief Checkout span to automatically manage the lifetime of checked-out memory.
