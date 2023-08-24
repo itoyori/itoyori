@@ -274,7 +274,7 @@ inline auto make_checkouts_aux(global_span<T> gspan, Mode mode, Rest&&... rest) 
  * ityr::global_vector<int> v2 = {2, 3, 4, 5, 6};
  * ityr::global_vector<int> v3(10);
  *
- * ityr::global_span<int> s2(v2.begin(), v2.end());
+ * ityr::global_span<int> s2(v2);
  *
  * auto [cs1, cs2, cs3] =
  *   ityr::make_checkouts(

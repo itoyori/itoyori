@@ -25,7 +25,6 @@ struct histogram {
     if (lowest_ <= x && x <= highest_) {
       auto delta = (highest_ - lowest_) / n_bins_;
       std::size_t key = (x - lowest_) / delta;
-      ITYR_CHECK(0 <= key);
       ITYR_CHECK(key < n_bins_);
       acc[key]++;
     }
@@ -47,8 +46,8 @@ struct histogram {
     return global_vector<Counter>(n_bins_, 0);
   }
 
-  accumulator_view_type view(const accumulator_type& x) const {
-    return global_span<Counter>(x.begin(), x.end());
+  accumulator_view_type view(accumulator_type& x) const {
+    return global_span<Counter>(x);
   }
 
   accumulator_type clone(const accumulator_view_type& v) const {

@@ -1399,6 +1399,46 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
   return inclusive_scan(policy, first1, last1, first_d, reducer::plus<T>{});
 }
 
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename BinaryPredicate>
+inline bool equal(const ExecutionPolicy& policy,
+                  ForwardIterator1       first1,
+                  ForwardIterator1       last1,
+                  ForwardIterator2       first2,
+                  BinaryPredicate        pred) {
+  return transform_reduce(policy, first1, last1, first2, reducer::logical_and{}, pred);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename BinaryPredicate>
+inline bool equal(const ExecutionPolicy& policy,
+                  ForwardIterator1       first1,
+                  ForwardIterator1       last1,
+                  ForwardIterator2       first2,
+                  ForwardIterator2       last2,
+                  BinaryPredicate        pred) {
+  return std::distance(first1, last1) == std::distance(first2, last2) &&
+         equal(policy, first1, last1, first2, pred);
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2>
+inline bool equal(const ExecutionPolicy& policy,
+                  ForwardIterator1       first1,
+                  ForwardIterator1       last1,
+                  ForwardIterator2       first2) {
+  return equal(policy, first1, last1, first2, std::equal_to<>{});
+}
+
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2>
+inline bool equal(const ExecutionPolicy& policy,
+                  ForwardIterator1       first1,
+                  ForwardIterator1       last1,
+                  ForwardIterator2       first2,
+                  ForwardIterator2       last2) {
+  return std::distance(first1, last1) == std::distance(first2, last2) &&
+         equal(policy, first1, last1, first2);
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
   ito::init();
   ori::init();

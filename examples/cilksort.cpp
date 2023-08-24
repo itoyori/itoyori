@@ -194,8 +194,8 @@ void run() {
   ityr::global_vector<elem_t> a_vec(gvec_coll_opts, n_input);
   ityr::global_vector<elem_t> b_vec(gvec_coll_opts, n_input);
 
-  ityr::global_span<elem_t> a(a_vec.begin(), a_vec.end());
-  ityr::global_span<elem_t> b(b_vec.begin(), b_vec.end());
+  ityr::global_span<elem_t> a(a_vec);
+  ityr::global_span<elem_t> b(b_vec);
 
   for (int r = 0; r < n_repeats; r++) {
     ityr::root_exec([=] {

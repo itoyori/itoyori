@@ -81,6 +81,11 @@ public:
     std::swap(raw_ptr_, p.raw_ptr_);
   }
 
+  // inplicit conversion to const pointers
+  operator global_ptr<const value_type>() const {
+    return global_ptr<const value_type>(raw_ptr());
+  }
+
 private:
   T* raw_ptr_ = nullptr;
 };

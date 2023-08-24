@@ -4,6 +4,7 @@
 #include "ityr/ito/ito.hpp"
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/root_exec.hpp"
+#include "ityr/pattern/serial_loop.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 #include "ityr/container/checkout_span.hpp"
 
@@ -39,8 +40,7 @@ struct global_vector_options {
  * @brief Global vector to manage a global memory region.
  *
  * A global vector is a container for managing a contiguous global memory region.
- * This resembles the standard `std::vector` container, but `ityr::global_vector` has some
- * limitations and extensions.
+ * This resembles the standard `std::vector` container and has some extensions for global memory.
  *
  * As a global vector manages global memory, its elements cannot be directly accessed. Access to
  * its elements must be granted by checkout/checkin operations (e.g., `ityr::make_checkout()`).
@@ -51,8 +51,9 @@ struct global_vector_options {
  *
  * - A collective global vector must be allocated and deallocated by all processes collectively,
  *   either in the SPMD region or in the root thread. Its global memory is distributed to the
- *   processes by following the memory distribution policy. Some operations that modify the global
- *   memory size (e.g., `push_back()`) are not permitted for collective global vectors.
+ *   processes by following the memory distribution policy. Some operations that modify the vector
+ *   capacity (e.g., `push_back()`) are not permitted in the fork-join region (except for the root
+ *   thread) for collective global vectors.
  * - A noncollective global vector can be independently allocated and deallocated in each process.
  *   Its memory is allocated in the local process and can be deallocated from any other processes.
  *
@@ -67,7 +68,7 @@ struct global_vector_options {
  * ityr::global_vector<int> v_coll({.collective = true}, {1, 2, 3, 4, 5});
  *
  * // Create a global span to prevent copying the global vector
- * ityr::global_span<int> s_coll(v_coll.begin(), v_coll.end());
+ * ityr::global_span<int> s_coll(v_coll);
  *
  * ityr::root_exec([=] {
  *   // Noncollective global vector's memory is allocated in the local process
@@ -95,24 +96,38 @@ class global_vector {
   using this_t = global_vector;
 
 public:
-  using value_type      = T;
-  using size_type       = std::size_t;
-  using pointer         = ori::global_ptr<T>;
-  using const_pointer   = ori::global_ptr<std::add_const_t<T>>;
-  using iterator        = pointer;
-  using const_iterator  = const_pointer;
-  using difference_type = typename std::iterator_traits<pointer>::difference_type;
-  using reference       = typename std::iterator_traits<pointer>::reference;
-  using const_reference = typename std::iterator_traits<const_pointer>::reference;
+  using element_type           = T;
+  using value_type             = std::remove_cv_t<element_type>;
+  using size_type              = std::size_t;
+  using pointer                = ori::global_ptr<element_type>;
+  using const_pointer          = ori::global_ptr<std::add_const_t<element_type>>;
+  using difference_type        = typename std::iterator_traits<pointer>::difference_type;
+  using reference              = typename std::iterator_traits<pointer>::reference;
+  using const_reference        = typename std::iterator_traits<const_pointer>::reference;
+  using iterator               = pointer;
+  using const_iterator         = const_pointer;
+  using reverse_iterator       = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-  global_vector() : global_vector(global_vector_options()) {}
-  explicit global_vector(size_type count) : global_vector(global_vector_options(), count) {}
-  explicit global_vector(size_type count, const T& value) : global_vector(global_vector_options(), count, value) {}
+  global_vector() noexcept
+    : global_vector(global_vector_options()) {}
+
+  explicit global_vector(size_type count)
+    : global_vector(global_vector_options(), count) {}
+
+  explicit global_vector(size_type count, const value_type& value)
+    : global_vector(global_vector_options(), count, value) {}
+
   template <typename InputIterator>
-  global_vector(InputIterator first, InputIterator last) : global_vector(global_vector_options(), first, last) {}
-  global_vector(std::initializer_list<T> init) : global_vector(global_vector_options(), init) {}
+  global_vector(InputIterator first, InputIterator last)
+    : global_vector(global_vector_options(), first, last) {}
 
-  explicit global_vector(const global_vector_options& opts) : opts_(opts) {}
+  global_vector(std::initializer_list<T> init)
+    : global_vector(global_vector_options(), init) {}
+
+  /* with options */
+
+  explicit global_vector(const global_vector_options& opts) noexcept : opts_(opts) {}
 
   explicit global_vector(const global_vector_options& opts, size_type count) : opts_(opts) {
     initialize_uniform(count);
@@ -151,14 +166,14 @@ public:
     return *this;
   }
 
-  global_vector(this_t&& other)
+  global_vector(this_t&& other) noexcept
     : opts_(other.opts_),
       begin_(other.begin_),
       end_(other.end_),
       reserved_end_(other.reserved_end_) {
     other.begin_ = other.end_ = other.reserved_end_ = nullptr;
   }
-  this_t& operator=(this_t&& other) {
+  this_t& operator=(this_t&& other) noexcept {
     this->~global_vector();
     opts_         = other.opts_;
     begin_        = other.begin_;
@@ -168,33 +183,54 @@ public:
     return *this;
   }
 
-  pointer data() const noexcept { return begin_; }
+  pointer data() noexcept { return begin_; }
+  const_pointer data() const noexcept { return begin_; }
+
   size_type size() const noexcept { return end_ - begin_; }
   size_type capacity() const noexcept { return reserved_end_ - begin_; }
 
   global_vector_options options() const noexcept { return opts_; }
 
-  iterator begin() const noexcept { return begin_; }
-  iterator end() const noexcept { return end_; }
+  iterator begin() noexcept { return begin_; }
+  iterator end() noexcept { return end_; }
+  const_iterator begin() const noexcept { return begin_; }
+  const_iterator end() const noexcept { return end_; }
 
   const_iterator cbegin() const noexcept { return ori::const_pointer_cast<std::add_const_t<T>>(begin_); }
   const_iterator cend() const noexcept { return ori::const_pointer_cast<std::add_const_t<T>>(end_); }
 
-  reference operator[](size_type i) const {
-    ITYR_CHECK(i <= size());
-    return *(begin() + i);
-  }
-  reference at(size_type i) const {
-    if (i >= size()) {
-      std::stringstream ss;
-      ss << "Global vector: Index " << i << " is out of range [0, " << size() << ").";
-      throw std::out_of_range(ss.str());
-    }
-    return (*this)[i];
+  reverse_iterator rbegin() const noexcept { return std::make_reverse_iterator(end()); }
+  reverse_iterator rend() const noexcept { return std::make_reverse_iterator(begin()); }
+  const_reverse_iterator rbegin() noexcept { return std::make_reverse_iterator(end()); }
+  const_reverse_iterator rend() noexcept { return std::make_reverse_iterator(begin()); }
+
+  const_reverse_iterator crbegin() const noexcept { return std::make_reverse_iterator(cend()); }
+  const_reverse_iterator crend() const noexcept { return std::make_reverse_iterator(cbegin()); }
+
+  reference operator[](size_type n) {
+    ITYR_CHECK(n <= size());
+    return *(begin() + n);
   }
 
-  reference front() const { return *begin(); }
-  reference back() const { return *(end() - 1); }
+  const_reference operator[](size_type n) const {
+    ITYR_CHECK(n <= size());
+    return *(begin() + n);
+  }
+
+  reference at(size_type n) {
+    check_range(n);
+    return (*this)[n];
+  }
+
+  const_reference at(size_type n) const {
+    check_range(n);
+    return (*this)[n];
+  }
+
+  reference front() { return *begin(); }
+  reference back() { return *(end() - 1); }
+  const_reference front() const { return *begin(); }
+  const_reference back() const { return *(end() - 1); }
 
   bool empty() const noexcept { return size() == 0; }
 
@@ -245,14 +281,36 @@ public:
   }
 
   void pop_back() {
-    ITYR_CHECK(!opts_.collective);
     ITYR_CHECK(size() > 0);
-    auto cs = make_checkout(end() - 1, 1, checkout_mode::read_write);
-    std::destroy_at(&cs[0]);
+    root_exec_if_coll([&] {
+      auto cs = make_checkout(end() - 1, 1, checkout_mode::read_write);
+      std::destroy_at(&cs[0]);
+    });
     --end_;
   }
 
+  iterator insert(const_iterator position, const T& x) {
+    return insert_impl(position - begin(), x);
+  }
+
+  iterator insert(const_iterator position, T&& x) {
+    return insert_impl(position - begin(), std::move(x));
+  }
+
+  template <typename... Args>
+  iterator emplace(const_iterator position, Args&&... args) {
+    return insert_impl(position - begin(), std::forward<Args>(args)...);
+  }
+
 private:
+  void check_range(size_type i) const {
+    if (i >= size()) {
+      std::stringstream ss;
+      ss << "Global vector: Index " << i << " is out of range [0, " << size() << ").";
+      throw std::out_of_range(ss.str());
+    }
+  }
+
   size_type next_size(size_type least) const {
     return std::max(least, size() * 2);
   }
@@ -282,10 +340,8 @@ private:
     if (opts_.collective) {
       if (ito::is_spmd()) {
         return root_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
-      } else if (ito::is_root()) {
-        return std::forward<Fn>(fn)(std::forward<Args>(args)...);
       } else {
-        common::die("Collective operations for ityr::global_vector must be executed on the root thread or SPMD region.");
+        return std::forward<Fn>(fn)(std::forward<Args>(args)...);
       }
     } else {
       return std::forward<Fn>(fn)(std::forward<Args>(args)...);
@@ -445,14 +501,41 @@ private:
 
   template <typename... Args>
   void push_back_impl(Args&&... args) {
-    ITYR_CHECK(!opts_.collective);
     if (size() == capacity()) {
       size_type new_cap = next_size(size() + 1);
       realloc_mem(new_cap);
     }
-    auto cs = make_checkout(end(), 1, checkout_mode::write);
-    new (&cs[0]) T(std::forward<Args>(args)...);
+
+    root_exec_if_coll([&] {
+      auto cs = make_checkout(end(), 1, checkout_mode::write);
+      new (&cs[0]) T(std::forward<Args>(args)...);
+    });
+
     ++end_;
+  }
+
+  template <typename... Args>
+  iterator insert_impl(difference_type i, Args&&... args) {
+    ITYR_CHECK(0 <= i);
+    ITYR_CHECK(i <= size());
+
+    if (size() == capacity()) {
+      size_type new_cap = next_size(size() + 1);
+      realloc_mem(new_cap);
+    }
+
+    move_backward(
+        execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+        begin() + i, end(), end() + 1);
+
+    root_exec_if_coll([&] {
+      auto cs = make_checkout(begin() + i, 1, checkout_mode::write);
+      new (&cs[0]) T(std::forward<Args>(args)...);
+    });
+
+    ++end_;
+
+    return begin() + i;
   }
 
   global_vector_options opts_;
@@ -464,6 +547,19 @@ private:
 template <typename T>
 inline void swap(global_vector<T>& v1, global_vector<T>& v2) noexcept {
   v1.swap(v2);
+}
+
+template <typename T>
+bool operator==(const global_vector<T>& x, const global_vector<T>& y) {
+  return equal(
+      execution::parallel_policy{.cutoff_count   = x.options().cutoff_count,
+                                 .checkout_count = x.options().cutoff_count},
+      x.begin(), x.end(), y.begin(), y.end());
+}
+
+template <typename T>
+bool operator!=(const global_vector<T>& x, const global_vector<T>& y) {
+  return !(x == y);
 }
 
 ITYR_TEST_CASE("[ityr::container::global_vector] test") {
@@ -676,9 +772,17 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
 
   ITYR_SUBCASE("initializer list") {
     root_exec([&]() {
-      ityr::global_vector<int> v = {1, 2, 3, 4, 5};
-      int product = ityr::reduce(ityr::execution::par, v.begin(), v.end(), reducer::multiplies<int>{});
+      global_vector<int> v = {1, 2, 3, 4, 5};
+      int product = reduce(execution::par, v.begin(), v.end(), reducer::multiplies<int>{});
       ITYR_CHECK(product == 120);
+    });
+  }
+
+  ITYR_SUBCASE("insert") {
+    root_exec([&]() {
+      global_vector<int> v = {1, 2, 3, 4, 5};
+      v.insert(v.begin() + 2, 0);
+      ITYR_CHECK(v == global_vector<int>({1, 2, 0, 3, 4, 5}));
     });
   }
 

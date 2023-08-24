@@ -106,7 +106,7 @@ inline const T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) 
   if constexpr (force_getput) {
     return checkout_with_getput<false>(ptr, count);
   }
-  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::read);
+  core::instance::get().checkout_nb(const_cast<std::remove_const_t<T>*>(ptr.raw_ptr()), count * sizeof(T), mode::read);
   return ptr.raw_ptr();
 }
 
