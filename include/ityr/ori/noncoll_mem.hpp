@@ -60,7 +60,7 @@ public:
       collect_threshold_max_(local_max_size_ * 8 / 10) {
     // Set the flag value for deallocation
     *reinterpret_cast<int*>(
-      reinterpret_cast<std::byte*>(local_base_addr_) + local_max_size_ - sizeof(int)) = 1;
+      reinterpret_cast<std::byte*>(local_base_addr_) + local_max_size_ - sizeof(int)) = remote_free_flag_value;
   }
 
   const common::rma::win& win() const { return *win_; }
@@ -161,7 +161,9 @@ public:
 
     header *h = allocated_list_.next;
     while (h) {
-      if (h->freed.load(std::memory_order_acquire)) {
+      int flag = h->freed.load(std::memory_order_acquire);
+      if (flag) {
+        ITYR_CHECK_MESSAGE(flag == remote_free_flag_value, "noncoll memory corruption");
         header* h_next = h->next;
         local_deallocate_impl(h, h->size, h->alignment);
         h = h_next;
@@ -270,6 +272,8 @@ private:
     ITYR_CHECK(allocated_size_ >= size);
     allocated_size_ -= size;
   }
+
+  static constexpr int remote_free_flag_value = 417;
 
   std::size_t                               local_max_size_;
   std::size_t                               global_max_size_;

@@ -166,7 +166,7 @@ move_backward(const execution::sequenced_policy& policy,
               BidirectionalIteratorD             first_d) {
   if constexpr (ori::is_global_ptr_v<BidirectionalIterator1> ||
                 ori::is_global_ptr_v<BidirectionalIteratorD>) {
-    using value_type1 = typename std::iterator_traits<BidirectionalIterator1>::value_type;
+    using value_type1  = typename std::iterator_traits<BidirectionalIterator1>::value_type;
     using value_type_d = typename std::iterator_traits<BidirectionalIteratorD>::value_type;
     return move_backward(
         policy,
@@ -179,8 +179,8 @@ move_backward(const execution::sequenced_policy& policy,
     using std::make_reverse_iterator;
     internal::for_each_aux(
         policy,
-        [&](auto&& from, auto&& to) {
-          to = std::move(from);
+        [&](auto&& r1, auto&& d) {
+          d = std::move(r1);
         },
         make_reverse_iterator(make_move_iterator(last1)),
         make_reverse_iterator(make_move_iterator(first1)),

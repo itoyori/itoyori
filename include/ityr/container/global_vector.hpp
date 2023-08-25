@@ -518,7 +518,7 @@ private:
 
   template <typename... Args>
   void push_back_impl(Args&&... args) {
-    if (size() == capacity()) {
+    if (size() + 1 > capacity()) {
       size_type new_cap = next_size(size() + 1);
       realloc_mem(new_cap);
     }
@@ -533,8 +533,9 @@ private:
 
   void make_space_for_insertion(size_type i, size_type n) {
     ITYR_CHECK(i <= size());
+    ITYR_CHECK(n > 0);
 
-    if (size() == capacity()) {
+    if (size() + n > capacity()) {
       size_type new_cap = next_size(size() + n);
       realloc_mem(new_cap);
     }
@@ -565,6 +566,10 @@ private:
   }
 
   iterator insert_n(size_type i, size_type n, const value_type& value) {
+    if (n == 0) {
+      return begin() + i;
+    }
+
     make_space_for_insertion(i, n);
 
     root_exec_if_coll([&] {
@@ -587,6 +592,10 @@ private:
 
   template <typename ForwardIterator>
   iterator insert_iter(size_type i, ForwardIterator first, ForwardIterator last, std::forward_iterator_tag) {
+    if (first == last) {
+      return begin() + i;
+    }
+
     size_type n = std::distance(first, last);
     make_space_for_insertion(i, n);
 

@@ -330,7 +330,7 @@ public:
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T ret = invoke_fn<T>(fn, args...);
+        T&& ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Root thread %p is completed", ts);
@@ -356,7 +356,7 @@ public:
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
 
-    return std::move(retval.value);
+    return retval.value;
   }
 
   task_group_data task_group_begin() {
@@ -513,7 +513,7 @@ public:
         common::verbose<3>("Starting new thread %p", ts);
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T ret = invoke_fn<T>(fn, args...);
+        T&& ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose<3>("Thread %p is completed", ts);
@@ -577,7 +577,7 @@ public:
           common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
         }
 
-        T ret = invoke_fn<T>(fn, args...);
+        T&& ret = invoke_fn<T>(fn, args...);
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("A migrated thread %p [%f, %f) is completed",
@@ -636,7 +636,7 @@ public:
       if (remote_get_value(thread_state_allocator_, &ts->resume_flag) >= 1) {
         common::verbose("Thread %p is already joined", ts);
         if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-          retval = remote_get_value(thread_state_allocator_, &ts->retval);
+          retval = get_retval_remote(ts);
         }
 
       } else {
@@ -667,7 +667,7 @@ public:
         }
 
         if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-          retval = remote_get_value(thread_state_allocator_, &ts->retval);
+          retval = get_retval_remote(ts);
         }
       }
 
@@ -920,15 +920,7 @@ private:
     }
 
     if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-      if constexpr (std::is_trivially_copyable_v<T>) {
-        thread_retval<T> retval = {std::move(ret), tls_->dag_prof};
-        remote_put_value(thread_state_allocator_, retval, &ts->retval);
-      } else {
-        // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
-        std::byte* retvalp = reinterpret_cast<std::byte*>(new (alloca(sizeof(thread_retval<T>)))
-            thread_retval<T>{std::move(ret), tls_->dag_prof});
-        remote_put(thread_state_allocator_, retvalp, reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
-      }
+      put_retval_remote(ts, {std::move(ret), tls_->dag_prof});
     }
 
     // race
@@ -953,15 +945,7 @@ private:
   template <typename T>
   void on_root_die(thread_state<T>* ts, T&& ret) {
     if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
-      if constexpr (std::is_trivially_copyable_v<T>) {
-        thread_retval<T> retval = {std::move(ret), tls_->dag_prof};
-        remote_put_value(thread_state_allocator_, retval, &ts->retval);
-      } else {
-        // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
-        std::byte* retvalp = reinterpret_cast<std::byte*>(new (alloca(sizeof(thread_retval<T>)))
-            thread_retval<T>{std::move(ret), tls_->dag_prof});
-        remote_put(thread_state_allocator_, retvalp, reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
-      }
+      put_retval_remote(ts, {std::move(ret), tls_->dag_prof});
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
 
@@ -1543,6 +1527,29 @@ private:
       return common::mpi_test(sched_loop_exit_req_);
     }
     return false;
+  }
+
+  template <typename T>
+  thread_retval<T> get_retval_remote(thread_state<T>* ts) {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      return remote_get_value(thread_state_allocator_, &ts->retval);
+    } else {
+      // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
+      thread_retval<T> retval;
+      remote_get(thread_state_allocator_, reinterpret_cast<std::byte*>(&retval), reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
+      return retval;
+    }
+  }
+
+  template <typename T>
+  void put_retval_remote(thread_state<T>* ts, thread_retval<T>&& retval) {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      remote_put_value(thread_state_allocator_, retval, &ts->retval);
+    } else {
+      // TODO: Fix this ugly hack of avoiding object destruction by using checkout/checkin
+      std::byte* retvalp = reinterpret_cast<std::byte*>(new (alloca(sizeof(thread_retval<T>))) thread_retval<T>{std::move(retval)});
+      remote_put(thread_state_allocator_, retvalp, reinterpret_cast<std::byte*>(&ts->retval), sizeof(thread_retval<T>));
+    }
   }
 
   int                                max_depth_;

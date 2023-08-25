@@ -20,10 +20,12 @@ class thread {
 
 public:
   thread() {}
+
   template <typename Fn, typename... Args>
-  thread(Fn&& fn, Args&&... args) {
+  explicit thread(Fn&& fn, Args&&... args) {
     fork(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
+
   template <typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
   thread(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
          Fn&& fn, Args&&... args) {
@@ -32,10 +34,12 @@ public:
          std::forward<OnDriftDieCallback>(on_drift_die_cb),
          std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
+
   template <typename WorkHint, typename Fn, typename... Args>
   thread(with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
     fork(with_workhint, w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
+
   template <typename OnDriftForkCallback, typename OnDriftDieCallback,
             typename WorkHint, typename Fn, typename... Args>
   thread(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
@@ -49,13 +53,8 @@ public:
   thread(const thread&) = delete;
   thread& operator=(const thread&) = delete;
 
-  thread(thread&& th) : handler_(th.handler_) { th.handler_ = scheduler::thread_handler<sched_retval_t>{}; }
-  thread& operator=(thread&& th) {
-    this->~thread();
-    handler_ = th.handler_;
-    th.handler_ = scheduler::thread_handler<sched_retval_t>{};
-    return *this;
-  }
+  thread(thread&& th) = default;
+  thread& operator=(thread&& th) = default;
 
   template <typename Fn, typename... Args>
   void fork(Fn&& fn, Args&&... args) {
