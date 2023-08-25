@@ -610,18 +610,15 @@ transform_reduce(const ExecutionPolicy& policy,
                  ForwardIterator        last,
                  Reducer                reducer,
                  UnaryTransformOp       unary_transform_op) {
-  if constexpr (is_global_iterator_v<ForwardIterator>) {
-    static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
+    return transform_reduce(
+        policy,
+        internal::convert_to_global_iterator(first, checkout_mode::read),
+        internal::convert_to_global_iterator(last , checkout_mode::read),
+        reducer,
+        unary_transform_op);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first_ = make_global_iterator(first, checkout_mode::read);
-    auto last_  = make_global_iterator(last , checkout_mode::read);
-    return transform_reduce(policy, first_, last_, reducer, unary_transform_op);
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator>) {
+  } else {
     auto accumulate_op = [=](auto&& acc, const auto& v) {
       reducer.foldl(std::forward<decltype(acc)>(acc), unary_transform_op(v));
     };
@@ -640,9 +637,6 @@ transform_reduce(const ExecutionPolicy& policy,
                                reducer.view(acc), first, last);
       return acc;
     }
-
-  } else {
-    ITYR_CHECK(false);
   }
 }
 
@@ -690,29 +684,17 @@ transform_reduce(const ExecutionPolicy& policy,
                  ForwardIterator2       first2,
                  Reducer                reducer,
                  BinaryTransformOp      binary_transform_op) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
+                ori::is_global_ptr_v<ForwardIterator2>) {
+    return transform_reduce(
+        policy,
+        internal::convert_to_global_iterator(first1, checkout_mode::read),
+        internal::convert_to_global_iterator(last1 , checkout_mode::read),
+        internal::convert_to_global_iterator(first2, checkout_mode::read),
+        reducer,
+        binary_transform_op);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first1_ = make_global_iterator(first1, checkout_mode::read);
-    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    return transform_reduce(policy, first1_, last1_, first2, reducer, binary_transform_op);
-  }
-
-  if constexpr (is_global_iterator_v<ForwardIterator2>) {
-    static_assert(std::is_same_v<typename ForwardIterator2::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator2::mode, checkout_mode::no_access_t>);
-
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first2_ = make_global_iterator(first2, checkout_mode::read);
-    return transform_reduce(policy, first1, last1, first2_, reducer, binary_transform_op);
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
-                !ori::is_global_ptr_v<ForwardIterator2>) {
+  } else {
     auto accumulate_op = [=](auto&& acc, const auto& v1, const auto& v2) {
       reducer.foldl(std::forward<decltype(acc)>(acc), binary_transform_op(v1, v2));
     };
@@ -731,9 +713,6 @@ transform_reduce(const ExecutionPolicy& policy,
                                reducer.view(acc), first1, last1, first2);
       return acc;
     }
-
-  } else {
-    ITYR_CHECK(false);
   }
 }
 
@@ -889,45 +868,25 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
                                   ForwardIterator1       last1,
                                   ForwardIteratorD       first_d,
                                   UnaryOp                unary_op) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
+                ori::is_global_ptr_v<ForwardIteratorD>) {
+    using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+    return transform(
+        policy,
+        internal::convert_to_global_iterator(first1 , checkout_mode::read),
+        internal::convert_to_global_iterator(last1  , checkout_mode::read),
+        internal::convert_to_global_iterator(first_d, internal::dest_checkout_mode_t<value_type_d>{}),
+        unary_op);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first1_ = make_global_iterator(first1, checkout_mode::read);
-    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    return transform(policy, first1_, last1_, first_d, unary_op);
-  }
-
-  // If the destination value type is trivially copyable, write-only access is possible
-  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
-  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
-                                             checkout_mode::write_t,
-                                             checkout_mode::read_write_t>;
-  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
-    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
-                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
-
-  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
-    // automatically convert global pointers to global iterators
-    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
-    return transform(policy, first1, last1, first_d_, unary_op);
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
-                !ori::is_global_ptr_v<ForwardIteratorD>) {
+  } else {
     auto op = [=](const auto& v1, auto&& d) {
       d = unary_op(v1);
     };
 
     internal::loop_generic(policy, op, first1, last1, first_d);
 
-  } else {
-    ITYR_CHECK(false);
+    return std::next(first_d, std::distance(first1, last1));
   }
-
-  return std::next(first_d, std::distance(first1, last1));
 }
 
 /**
@@ -981,56 +940,27 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
                                   ForwardIterator2       first2,
                                   ForwardIteratorD       first_d,
                                   BinaryOp               binary_op) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
+                ori::is_global_ptr_v<ForwardIterator2> ||
+                ori::is_global_ptr_v<ForwardIteratorD>) {
+    using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+    return transform(
+        policy,
+        internal::convert_to_global_iterator(first1 , checkout_mode::read),
+        internal::convert_to_global_iterator(last1  , checkout_mode::read),
+        internal::convert_to_global_iterator(first2 , checkout_mode::read),
+        internal::convert_to_global_iterator(first_d, internal::dest_checkout_mode_t<value_type_d>{}),
+        binary_op);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first1_ = make_global_iterator(first1, checkout_mode::read);
-    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    return transform(policy, first1_, last1_, first2, first_d, binary_op);
-  }
-
-  if constexpr (is_global_iterator_v<ForwardIterator2>) {
-    static_assert(std::is_same_v<typename ForwardIterator2::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator2::mode, checkout_mode::no_access_t>);
-
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator2>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first2_ = make_global_iterator(first2, checkout_mode::read);
-    return transform(policy, first1, last1, first2_, first_d, binary_op);
-  }
-
-  // If the destination value type is trivially copyable, write-only access is possible
-  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
-  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
-                                             checkout_mode::write_t,
-                                             checkout_mode::read_write_t>;
-  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
-    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
-                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
-
-  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
-    // automatically convert global pointers to global iterators
-    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
-    return transform(policy, first1, last1, first2, first_d_, binary_op);
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
-                !ori::is_global_ptr_v<ForwardIterator2> &&
-                !ori::is_global_ptr_v<ForwardIteratorD>) {
+  } else {
     auto op = [=](const auto& v1, const auto& v2, auto&& d) {
       d = binary_op(v1, v2);
     };
 
     internal::loop_generic(policy, op, first1, last1, first2, first_d);
 
-  } else {
-    ITYR_CHECK(false);
+    return std::next(first_d, std::distance(first1, last1));
   }
-
-  return std::next(first_d, std::distance(first1, last1));
 }
 
 /**
@@ -1065,31 +995,20 @@ inline void fill(const ExecutionPolicy& policy,
                  ForwardIterator        first,
                  ForwardIterator        last,
                  const T&               value) {
-  // If the value type is trivially copyable, write-only access is possible
-  using checkout_mode_t = std::conditional_t<std::is_trivially_copyable_v<T>,
-                                             checkout_mode::write_t,
-                                             checkout_mode::read_write_t>;
-  if constexpr (is_global_iterator_v<ForwardIterator>) {
-    static_assert(std::is_same_v<typename ForwardIterator::mode, checkout_mode_t> ||
-                  std::is_same_v<typename ForwardIterator::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
+    using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+    fill(
+        policy,
+        internal::convert_to_global_iterator(first, internal::dest_checkout_mode_t<value_type>{}),
+        internal::convert_to_global_iterator(last , internal::dest_checkout_mode_t<value_type>{}),
+        value);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator>) {
-    // automatically convert global pointers to global iterators
-    auto first_ = make_global_iterator(first, checkout_mode_t{});
-    auto last_  = make_global_iterator(last , checkout_mode_t{});
-    fill(policy, first_, last_, value);
-    return;
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator>) {
+  } else {
     auto op = [=](auto&& d) {
       d = value;
     };
 
     internal::loop_generic(policy, op, first, last);
-
-  } else {
-    ITYR_CHECK(false);
   }
 }
 
@@ -1154,34 +1073,19 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
                          Reducer                                   reducer,
                          UnaryTransformOp                          unary_transform_op,
                          const typename Reducer::accumulator_type& init) {
-  if constexpr (is_global_iterator_v<ForwardIterator1>) {
-    static_assert(std::is_same_v<typename ForwardIterator1::mode, checkout_mode::read_t> ||
-                  std::is_same_v<typename ForwardIterator1::mode, checkout_mode::no_access_t>);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
+                ori::is_global_ptr_v<ForwardIteratorD>) {
+    using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+    return transform_inclusive_scan(
+        policy,
+        internal::convert_to_global_iterator(first1 , checkout_mode::read),
+        internal::convert_to_global_iterator(last1  , checkout_mode::read),
+        internal::convert_to_global_iterator(first_d, internal::dest_checkout_mode_t<value_type_d>{}),
+        reducer,
+        unary_transform_op,
+        init);
 
-  } else if constexpr (ori::is_global_ptr_v<ForwardIterator1>) {
-    // automatically convert global pointers to global iterators with read-only access
-    auto first1_ = make_global_iterator(first1, checkout_mode::read);
-    auto last1_  = make_global_iterator(last1 , checkout_mode::read);
-    return transform_inclusive_scan(policy, first1_, last1_, first_d, reducer, unary_transform_op, init);
-  }
-
-  // If the destination value type is trivially copyable, write-only access is possible
-  using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
-  using checkout_mode_d = std::conditional_t<std::is_trivially_copyable_v<value_type_d>,
-                                             checkout_mode::write_t,
-                                             checkout_mode::read_write_t>;
-  if constexpr (is_global_iterator_v<ForwardIteratorD>) {
-    static_assert(std::is_same_v<typename ForwardIteratorD::mode, checkout_mode_d> ||
-                  std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>);
-
-  } else if constexpr (ori::is_global_ptr_v<ForwardIteratorD>) {
-    // automatically convert global pointers to global iterators
-    auto first_d_ = make_global_iterator(first_d, checkout_mode_d{});
-    return transform_inclusive_scan(policy, first1, last1, first_d_, reducer, unary_transform_op, init);
-  }
-
-  if constexpr (!ori::is_global_ptr_v<ForwardIterator1> &&
-                !ori::is_global_ptr_v<ForwardIteratorD>) {
+  } else {
     auto accumulate_op = [=](auto&& acc, const auto& v1, auto&& d) {
       reducer.foldl(acc, unary_transform_op(v1));
       d = reducer.clone(acc);
@@ -1215,11 +1119,8 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
     internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
                              reducer.view(init), first1, last1, first_d);
 
-  } else {
-    ITYR_CHECK(false);
+    return std::next(first_d, std::distance(first1, last1));
   }
-
-  return std::next(first_d, std::distance(first1, last1));
 }
 
 /**

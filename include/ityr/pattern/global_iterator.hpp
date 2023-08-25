@@ -7,6 +7,21 @@
 
 namespace ityr {
 
+/** @brief See `ityr::is_global_iterator_v`. */
+template <typename T, typename = void>
+struct is_global_iterator : public std::false_type {};
+
+/** @brief See `ityr::is_global_iterator_v`. */
+template <typename T>
+struct is_global_iterator<T, std::void_t<typename T::checkout_iterator>> : public std::true_type {};
+
+/**
+ * @brief True if `T` is a global iterator (`ityr::global_iterator`).
+ * @see `ityr::make_global_iterator()`.
+ */
+template <typename T>
+inline constexpr bool is_global_iterator_v = is_global_iterator<T>::value;
+
 namespace internal {
 
 template <typename GPtr, typename Mode>
@@ -18,14 +33,14 @@ using checkout_iterator_t =
                                         typename GPtr::value_type*>>;
 
 template <typename T>
-using source_checkout_mode = std::conditional_t<std::is_trivially_copyable_v<T>,
-                                                checkout_mode::read_t,
-                                                checkout_mode::read_write_t>;
+using src_checkout_mode_t = std::conditional_t<std::is_trivially_copyable_v<T>,
+                                               checkout_mode::read_t,
+                                               checkout_mode::read_write_t>;
 
 template <typename T>
-using destination_checkout_mode = std::conditional_t<std::is_trivially_copyable_v<T>,
-                                                     checkout_mode::write_t,
-                                                     checkout_mode::read_write_t>;
+using dest_checkout_mode_t = std::conditional_t<std::is_trivially_copyable_v<T>,
+                                                checkout_mode::write_t,
+                                                checkout_mode::read_write_t>;
 
 }
 
@@ -119,22 +134,6 @@ make_global_iterator(ori::global_ptr<T> gptr, Mode mode) {
   return global_iterator(gptr, mode);
 }
 
-/** @brief See `ityr::is_global_iterator_v`. */
-template <typename T, typename = void>
-struct is_global_iterator : public std::false_type {};
-
-/** @brief See `ityr::is_global_iterator_v`. */
-template <typename T>
-struct is_global_iterator<T, std::void_t<typename T::checkout_iterator>> : public std::true_type {};
-
-/**
- * @brief True if `T` is a global iterator (`ityr::global_iterator`).
- * @see `ityr::make_global_iterator()`.
- */
-template <typename T>
-inline constexpr bool is_global_iterator_v = is_global_iterator<T>::value;
-
-
 /**
  * @brief Global iterator for moving objects.
  * @see `ityr::make_move_iterator()`
@@ -142,9 +141,6 @@ inline constexpr bool is_global_iterator_v = is_global_iterator<T>::value;
 template <typename GlobalIterator>
 class global_move_iterator : public GlobalIterator {
   using base_t = GlobalIterator;
-
-  static_assert(std::is_same_v<typename GlobalIterator::mode,
-                               internal::source_checkout_mode<typename GlobalIterator::value_type>>);
 
 public:
   using value_type        = typename base_t::value_type;
@@ -154,6 +150,8 @@ public:
   using iterator_category = typename base_t::iterator_category;
   using mode              = typename GlobalIterator::mode;
   using checkout_iterator = std::move_iterator<typename GlobalIterator::checkout_iterator>;
+
+  static_assert(std::is_same_v<mode, internal::src_checkout_mode_t<value_type>>);
 
   explicit global_move_iterator(GlobalIterator git)
     : base_t(git) {}
@@ -206,9 +204,9 @@ public:
  * @see `ityr::make_global_iterator()`
  */
 template <typename T>
-inline global_move_iterator<global_iterator<T, internal::source_checkout_mode<T>>>
+inline global_move_iterator<global_iterator<T, internal::src_checkout_mode_t<T>>>
 make_move_iterator(ori::global_ptr<T> gptr) {
-  return global_move_iterator(make_global_iterator(gptr, internal::source_checkout_mode<T>{}));
+  return global_move_iterator(make_global_iterator(gptr, internal::src_checkout_mode_t<T>{}));
 }
 
 /**

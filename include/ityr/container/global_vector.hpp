@@ -556,7 +556,7 @@ private:
     make_space_for_insertion(i, 1);
 
     root_exec_if_coll([&] {
-      auto cs = make_checkout(begin() + i, 1, internal::destination_checkout_mode<T>{});
+      auto cs = make_checkout(begin() + i, 1, internal::dest_checkout_mode_t<T>{});
       cs[0] = T(std::forward<Args>(args)...);
     });
 
