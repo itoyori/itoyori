@@ -1009,10 +1009,10 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
  *
  * @param policy Execution policy (`ityr::execution`).
  * @param first  Input begin iterator.
- * @param middle Input iterator that should be placed at the beginning of the range.
+ * @param middle Input iterator to the element that should be placed at the beginning of the range.
  * @param last   Input end iterator.
  *
- * @return The iterator for the original first element (`first + (last - middle)`).
+ * @return The iterator to the original first element (`first + (last - middle)`).
  *
  * This function performs the left rotation for the given range.
  * The elements in the range are swapped so that the range `[first, middle)` is placed before
@@ -1031,6 +1031,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
  * ```
  *
  * @see [std::rotate -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/rotate)
+ * @see `ityr::rotate_copy`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
@@ -1051,36 +1052,93 @@ inline BidirectionalIterator rotate(const ExecutionPolicy& policy,
   return std::next(first, std::distance(middle, last));
 }
 
+/**
+ * @brief Copy a rotated range to another.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first1  Input begin iterator.
+ * @param middle1 Input iterator to the element that should be placed at the beginning of the output range.
+ * @param last1   Input end iterator.
+ * @param first_d Output begin iterator.
+ *
+ * @return The end iterator of the output range (`first_d + (last1 - first1)`).
+ *
+ * This function copies the left rotation for the input range to the output range..
+ *
+ * If given iterators are global pointers, they are automatically checked out in the specified
+ * granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ * Input global pointers (`first1` and `last1`) are automatically checked out with the read-only mode.
+ * if their value type is *trivially copyable*; otherwise, they are checked out with the read-write
+ * mode, even if they are actually not modified.
+ * Similarly, output global iterator (`first_d`) are checked out with the write-only mode if their
+ * value type is *trivially copyable*; otherwise, they are checked out with the read-write mode.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
+ * ityr::global_vector<int> v2(v1.size());
+ * ityr::rotate_copy(ityr::execution::par, v1.begin(), v1.begin() + 2, v1.end(), v2.begin());
+ * // v2 = {3, 4, 5, 1, 2}
+ * ```
+ *
+ * @see [std::rotate_copy -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/rotate_copy)
+ * @see `ityr::rotate`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD>
+inline ForwardIteratorD rotate_copy(const ExecutionPolicy& policy,
+                                    ForwardIterator1       first1,
+                                    ForwardIterator1       middle1,
+                                    ForwardIterator1       last1,
+                                    ForwardIteratorD       first_d) {
+  auto [_, last_d] = parallel_invoke(
+      [=] { copy(policy, middle1, last1, first_d); },
+      [=] { auto middle_d = std::next(first_d, std::distance(middle1, last1));
+            return copy(policy, first1, middle1, middle_d); });
+  return last_d;
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] rotate") {
   ito::init();
   ori::init();
 
   long n = 100000;
-  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
 
   ito::root_exec([=] {
     for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::write),
-        make_global_iterator(p + n, checkout_mode::write),
+        make_global_iterator(p1    , checkout_mode::write),
+        make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i; });
 
     long shift = n / 3;
     rotate(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-           p, p + shift, p + n);
+           p1, p1 + shift, p1 + n);
+
+    rotate_copy(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + (n - shift), p1 + n, p2);
 
     for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::read),
-        make_global_iterator(p + n, checkout_mode::read),
+        make_global_iterator(p1    , checkout_mode::read),
+        make_global_iterator(p1 + n, checkout_mode::read),
+        make_global_iterator(p2    , checkout_mode::read),
         count_iterator<long>(0),
-        [=](long v, long i) {
-          ITYR_CHECK(v == (i + shift) % n);
+        [=](long v1, long v2, long i) {
+          ITYR_CHECK(v1 == (i + shift) % n);
+          ITYR_CHECK(v2 == i);
         });
   });
 
-  ori::free_coll(p);
+  ori::free_coll(p1);
+  ori::free_coll(p2);
 
   ori::fini();
   ito::fini();
