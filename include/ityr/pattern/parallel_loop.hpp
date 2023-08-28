@@ -834,7 +834,6 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] copy") {
  * Equivalent to:
  * ```
  * using std::make_move_iterator;
- * using ityr::make_move_iterator;
  * ityr::copy(policy, make_move_iterator(first1), make_move_iterator(last1), first_d);
  * ```
  *
@@ -886,6 +885,31 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {
   ito::fini();
 }
 
+/**
+ * @brief Reverse a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Input begin iterator.
+ * @param last   Input end iterator.
+ *
+ * This function reverses the input region `[first1, last1)` (in-place).
+ *
+ * If given iterators are global pointers, they are automatically checked out in the read-write mode
+ * in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+ * ityr::reverse(ityr::execution::par, v.begin(), v.end());
+ * // v = {5, 4, 3, 2, 1}
+ * ```
+ *
+ * @see `ityr::reverse_copy()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
 template <typename ExecutionPolicy, typename BidirectionalIterator>
 inline void reverse(const ExecutionPolicy& policy,
                     BidirectionalIterator  first,
@@ -908,33 +932,70 @@ inline void reverse(const ExecutionPolicy& policy,
   }
 }
 
+/**
+ * @brief Copy a reversed range to another.
+ *
+ * @param policy  Execution policy (`ityr::execution`).
+ * @param first1  Input begin iterator.
+ * @param last1   Input end iterator.
+ * @param first_d Output begin iterator.
+ *
+ * Equivalent to:
+ * ```
+ * using std::make_reverse_iterator;
+ * ityr::copy(policy, make_reverse_iterator(last1), make_reverse_iterator(first1), first_d);
+ * ```
+ *
+ * @see `ityr::reverse()`
+ * @see `ityr::copy()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename BidirectionalIterator1, typename BidirectionalIteratorD>
+inline BidirectionalIteratorD reverse_copy(const ExecutionPolicy& policy,
+                                           BidirectionalIterator1 first1,
+                                           BidirectionalIterator1 last1,
+                                           BidirectionalIteratorD first_d) {
+  using std::make_reverse_iterator;
+  return copy(policy, make_reverse_iterator(last1), make_reverse_iterator(first1), first_d);
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
   ito::init();
   ori::init();
 
   long n = 100000;
-  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
 
   ito::root_exec([=] {
     for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::write),
-        make_global_iterator(p + n, checkout_mode::write),
+        make_global_iterator(p1    , checkout_mode::write),
+        make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i; });
 
     reverse(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-            p, p + n);
+            p1, p1 + n);
+
+    reverse_copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                 p1, p1 + n, p2);
 
     for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::read),
-        make_global_iterator(p + n, checkout_mode::read),
+        make_global_iterator(p1    , checkout_mode::read),
+        make_global_iterator(p1 + n, checkout_mode::read),
+        make_global_iterator(p2    , checkout_mode::read),
         count_iterator<long>(0),
-        [=](long v, long i) { ITYR_CHECK(v == n - i - 1); });
+        [=](long v1, long v2, long i) {
+          ITYR_CHECK(v1 == n - i - 1);
+          ITYR_CHECK(v2 == i);
+        });
   });
 
-  ori::free_coll(p);
+  ori::free_coll(p1);
+  ori::free_coll(p2);
 
   ori::fini();
   ito::fini();
