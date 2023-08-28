@@ -634,29 +634,6 @@ bool operator!=(const global_vector<T>& x, const global_vector<T>& y) {
 }
 
 ITYR_TEST_CASE("[ityr::container::global_vector] test") {
-  class move_only_t {
-  public:
-    move_only_t() {}
-    move_only_t(const long v) : value_(v) {}
-
-    long value() const { return value_; }
-
-    move_only_t(const move_only_t&) = delete;
-    move_only_t& operator=(const move_only_t&) = delete;
-
-    move_only_t(move_only_t&& mo) : value_(mo.value_) {
-      mo.value_ = -1;
-    }
-    move_only_t& operator=(move_only_t&& mo) {
-      value_ = mo.value_;
-      mo.value_ = -1;
-      return *this;
-    }
-
-  private:
-    long value_ = -1;
-  };
-
   ito::init();
   ori::init();
 
@@ -756,12 +733,12 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     }
 
     ITYR_SUBCASE("move-only elems") {
-      global_vector<move_only_t> gv2({.collective         = true,
-                                      .parallel_construct = true,
-                                      .parallel_destruct  = true,
-                                      .cutoff_count       = 256},
-                                     gv1.begin(),
-                                     gv1.end());
+      global_vector<common::move_only_t> gv2({.collective         = true,
+                                              .parallel_construct = true,
+                                              .parallel_destruct  = true,
+                                              .cutoff_count       = 256},
+                                             gv1.begin(),
+                                             gv1.end());
       long next_size = gv2.capacity() * 2;
       gv2.resize(next_size);
       root_exec([&] {
@@ -771,7 +748,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             gv2.begin(),
             gv2.end(),
             reducer::plus<long>{},
-            [](const move_only_t& mo) { return mo.value(); });
+            [](const common::move_only_t& mo) { return mo.value(); });
 
         ITYR_CHECK(count == n * (n - 1) / 2 - (next_size - n));
       });

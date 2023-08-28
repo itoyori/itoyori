@@ -191,40 +191,17 @@ move_backward(const execution::sequenced_policy& policy,
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
-  class move_only_t {
-  public:
-    move_only_t() {}
-    move_only_t(const long v) : value_(v) {}
-
-    long value() const { return value_; }
-
-    move_only_t(const move_only_t&) = delete;
-    move_only_t& operator=(const move_only_t&) = delete;
-
-    move_only_t(move_only_t&& mo) : value_(mo.value_) {
-      mo.value_ = -1;
-    }
-    move_only_t& operator=(move_only_t&& mo) {
-      value_ = mo.value_;
-      mo.value_ = -1;
-      return *this;
-    }
-
-  private:
-    long value_ = -1;
-  };
-
   ito::init();
   ori::init();
 
   long n = 100000;
-  ori::global_ptr<move_only_t> p = ori::malloc_coll<move_only_t>(n);
+  ori::global_ptr<common::move_only_t> p = ori::malloc_coll<common::move_only_t>(n);
 
   root_exec([=] {
     internal::for_each_aux(
         execution::sequenced_policy{.checkout_count = 128},
-        [&](move_only_t& mo, long i) {
-          mo = move_only_t{i};
+        [&](common::move_only_t& mo, long i) {
+          mo = common::move_only_t{i};
         },
         make_global_iterator(p    , checkout_mode::read_write),
         make_global_iterator(p + n, checkout_mode::read_write),
@@ -237,7 +214,7 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
 
     internal::for_each_aux(
         execution::sequenced_policy{.checkout_count = 128},
-        [&](const move_only_t& mo, long i) {
+        [&](const common::move_only_t& mo, long i) {
           if (i < offset) {
             ITYR_CHECK(mo.value() == -1);
           } else {

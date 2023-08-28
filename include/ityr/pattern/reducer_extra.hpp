@@ -11,17 +11,14 @@ template <typename T, typename Counter = std::size_t>
 struct histogram {
   static_assert(std::is_arithmetic_v<T>);
 
-  using value_type            = T;
-  using accumulator_type      = global_vector<Counter>;
-  using accumulator_view_type = global_span<Counter>;
-
-  static constexpr bool direct_accumulation = false;
+  using value_type       = T;
+  using accumulator_type = global_vector<Counter>;
 
   histogram(std::size_t n_bins) : n_bins_(n_bins) {}
   histogram(std::size_t n_bins, const value_type& lowest, const value_type& highest)
     : n_bins_(n_bins), lowest_(lowest), highest_(highest) {}
 
-  void foldl(accumulator_view_type& acc, const value_type& x) const {
+  void foldl(accumulator_type& acc, const value_type& x) const {
     if (lowest_ <= x && x <= highest_) {
       auto delta = (highest_ - lowest_) / n_bins_;
       std::size_t key = (x - lowest_) / delta;
@@ -30,28 +27,20 @@ struct histogram {
     }
   }
 
-  void foldl(accumulator_view_type& acc_l, const accumulator_view_type& acc_r) const {
+  void foldl(accumulator_type& acc_l, const accumulator_type& acc_r) const {
     transform(
         execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
         acc_l.begin(), acc_l.end(), acc_r.begin(), acc_l.begin(),
         [](const Counter& c1, const Counter& c2) { return c1 + c2; });
   }
 
-  void foldr(const accumulator_view_type& acc_l, accumulator_view_type& acc_r) const {
+  void foldr(const accumulator_type& acc_l, accumulator_type& acc_r) const {
     // commutative
     foldl(acc_r, acc_l);
   }
 
   accumulator_type identity() const {
     return global_vector<Counter>(n_bins_, 0);
-  }
-
-  accumulator_view_type view(accumulator_type& x) const {
-    return global_span<Counter>(x);
-  }
-
-  accumulator_type clone(const accumulator_view_type& v) const {
-    return global_vector<Counter>(v.begin(), v.end());
   }
 
 private:
@@ -65,8 +54,6 @@ struct concat_vec {
   using value_type       = global_vector<T>;
   using accumulator_type = global_vector<T>;
 
-  static constexpr bool direct_accumulation = true;
-
   void foldl(accumulator_type& acc_l, accumulator_type&& acc_r) const {
     acc_l.insert(acc_l.end(), make_move_iterator(acc_r.begin()), make_move_iterator(acc_r.end()));
   }
@@ -78,9 +65,6 @@ struct concat_vec {
   accumulator_type identity() const {
     return global_vector<T>();
   }
-
-  accumulator_type view(accumulator_type& x) const { return x; }
-  accumulator_type clone(const accumulator_type& x) const { return x; }
 };
 
 ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {

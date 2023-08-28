@@ -68,11 +68,11 @@ inline bool is_root() {
 }
 
 template <typename Fn, typename... Args>
-inline auto coll_exec(Fn&& fn, Args&&... args) {
+inline auto coll_exec(const Fn& fn, const Args&... args) {
   ITYR_CHECK(!is_spmd());
   ITYR_CHECK(is_root());
   auto& w = worker::instance::get();
-  return w.sched().coll_exec(std::forward<Fn>(fn), std::forward<Args>(args)...);
+  return w.sched().coll_exec(fn, args...);
 }
 
 template <typename PreSuspendCallback, typename PostSuspendCallback>
@@ -166,6 +166,26 @@ ITYR_TEST_CASE("[ityr::ito] load balancing") {
 
   ITYR_CHECK(is_spmd());
   ITYR_CHECK(!is_root());
+
+  fini();
+}
+
+ITYR_TEST_CASE("[ityr::ito] move semantics") {
+  init();
+
+  common::move_only_t mo1(2);
+  root_exec([](common::move_only_t mo1) {
+    common::move_only_t mo2(3 + mo1.value());
+
+    thread<common::move_only_t> th([](common::move_only_t mo2) {
+      common::move_only_t mo3(4 + mo2.value());
+      return mo3;
+    }, std::move(mo2));
+
+    common::move_only_t ret = th.join();
+
+    ITYR_CHECK(ret.value() == 9);
+  }, std::move(mo1));
 
   fini();
 }

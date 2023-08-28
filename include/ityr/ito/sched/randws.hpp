@@ -60,14 +60,15 @@ public:
       suspended_thread_allocator_(suspended_thread_allocator_size_option::value()) {}
 
   template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
-  T root_exec(SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
+  T root_exec(SchedLoopCallback cb, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_fork>();
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
 
-    suspend([&, ts](context_frame* cf) {
+    suspend([&](context_frame* cf) {
       sched_cf_ = cf;
-      root_on_stack([&, ts, fn, args...]() {
+      root_on_stack([&, ts, fn = std::forward<Fn>(fn),
+                     args_tuple = std::make_tuple(std::forward<Args>(args)...)]() mutable {
         common::verbose("Starting root thread %p", ts);
 
         tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{};
@@ -78,7 +79,7 @@ public:
 
         common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-        T&& ret = invoke_fn<T>(fn, args...);
+        T&& ret = invoke_fn<T>(std::forward<decltype(fn)>(fn), std::forward<decltype(args_tuple)>(args_tuple));
 
         common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
         common::verbose("Root thread %p is completed", ts);
@@ -89,8 +90,7 @@ public:
       });
     });
 
-    sched_loop(std::forward<SchedLoopCallback>(cb),
-               [=]() { return ts->resume_flag >= 1; });
+    sched_loop(cb, [=]() { return ts->resume_flag >= 1; });
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
@@ -110,7 +110,7 @@ public:
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
             typename WorkHint, typename Fn, typename... Args>
   void fork(thread_handler<T>& th,
-            OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+            OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
             WorkHint, WorkHint, Fn&& fn, Args&&... args) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_fork>();
 
@@ -118,7 +118,8 @@ public:
     th.state = ts;
     th.serialized = false;
 
-    suspend([&, ts, fn, args...](context_frame* cf) mutable {
+    suspend([&, ts, fn = std::forward<Fn>(fn),
+             args_tuple = std::make_tuple(std::forward<Args>(args)...)](context_frame* cf) mutable {
       common::verbose<2>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
       tls_ = new (alloca(sizeof(thread_local_storage))) thread_local_storage{};
@@ -133,13 +134,13 @@ public:
       common::verbose<2>("Starting new thread %p", ts);
       common::profiler::switch_phase<prof_phase_sched_fork, prof_phase_thread>();
 
-      T&& ret = invoke_fn<T>(fn, args...);
+      T&& ret = invoke_fn<T>(std::forward<decltype(fn)>(fn), std::forward<decltype(args_tuple)>(args_tuple));
 
       common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_die>();
       common::verbose<2>("Thread %p is completed", ts);
 
       on_task_die();
-      on_die(ts, std::move(ret), std::forward<OnDriftDieCallback>(on_drift_die_cb));
+      on_die(ts, std::move(ret), on_drift_die_cb);
 
       common::verbose<2>("Thread %p is serialized (fast path)", ts);
 
@@ -198,7 +199,7 @@ public:
 
       } else {
         bool migrated = true;
-        suspend([&, ts](context_frame* cf) {
+        suspend([&](context_frame* cf) {
           suspended_state ss = evacuate(cf);
 
           remote_put_value(thread_state_allocator_, ss, &ts->suspended);
@@ -236,14 +237,14 @@ public:
     tls_->dag_prof.merge_parallel(retval.dag_prof);
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
-    return retval.value;
+    return std::move(retval.value);
   }
 
   template <typename SchedLoopCallback, typename CondFn>
-  void sched_loop(SchedLoopCallback&& cb, CondFn&& cond_fn) {
+  void sched_loop(SchedLoopCallback cb, CondFn cond_fn) {
     common::verbose("Enter scheduling loop");
 
-    while (!should_exit_sched_loop(std::forward<CondFn>(cond_fn))) {
+    while (!should_exit_sched_loop(cond_fn)) {
       steal();
 
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
@@ -258,13 +259,13 @@ public:
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
   template <typename Fn, typename... Args>
-  auto coll_exec(Fn&& fn, Args&&... args) {
+  auto coll_exec(const Fn& fn, const Args&... args) {
     using retval_t = std::invoke_result_t<Fn, Args...>;
 
     auto begin_rank = common::topology::my_rank();
     std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
 
-    auto coll_task_fn = [&, fn, args...] {
+    auto coll_task_fn = [&, fn, args...]() {
       if constexpr (std::is_void_v<retval_t>) {
         fn(args...);
       } else {
@@ -275,10 +276,12 @@ public:
       }
     };
 
-    size_t task_size = sizeof(callable_task<decltype(coll_task_fn)>);
+    using callable_task_t = callable_task<decltype(coll_task_fn)>;
+
+    size_t task_size = sizeof(callable_task_t);
     void* task_ptr = suspended_thread_allocator_.allocate(task_size);
 
-    auto t = new (task_ptr) callable_task(coll_task_fn);
+    auto t = new (task_ptr) callable_task_t(coll_task_fn);
 
     coll_task ct {.task_ptr = task_ptr, .task_size = task_size, .begin_rank = begin_rank};
     execute_coll_task(t, ct);
@@ -343,7 +346,7 @@ private:
   }
 
   template <typename T, typename OnDriftDieCallback>
-  void on_die(thread_state<T>* ts, T&& ret, OnDriftDieCallback&& on_drift_die_cb) {
+  void on_die(thread_state<T>* ts, T&& ret, OnDriftDieCallback on_drift_die_cb) {
     auto qe = wsq_.pop();
     bool serialized = qe.has_value();
 
@@ -434,7 +437,7 @@ private:
     context::save_context_with_call(prev_cf_top,
         [](context_frame* cf, void* cf_top_p, void* fn_p) {
       context_frame*& cf_top = *reinterpret_cast<context_frame**>(cf_top_p);
-      Fn              fn     = *reinterpret_cast<Fn*>(fn_p); // copy closure to the new stack frame
+      Fn              fn     = std::forward<Fn>(*reinterpret_cast<Fn*>(fn_p)); // copy closure to the new stack frame
       cf_top = cf;
       fn(cf);
     }, &cf_top_, &fn, prev_tls);
@@ -498,12 +501,13 @@ private:
     cf_top_ = stack_top();
     context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
                            [](void* fn_, void*, void*, void*) {
-      Fn fn = *reinterpret_cast<Fn*>(fn_); // copy closure to the new stack frame
+      Fn fn = std::forward<Fn>(*reinterpret_cast<Fn*>(fn_)); // copy closure to the new stack frame
       fn();
     }, &fn, nullptr, nullptr, nullptr);
   }
 
   void execute_coll_task(task_general* t, coll_task ct) {
+    // TODO: consider copy semantics for tasks
     coll_task ct_ {.task_ptr = t, .task_size = ct.task_size, .begin_rank = ct.begin_rank};
 
     // pass coll task to other processes in a binary tree form
@@ -546,15 +550,14 @@ private:
   }
 
   template <typename CondFn>
-  bool should_exit_sched_loop(CondFn&& cond_fn) {
+  bool should_exit_sched_loop(CondFn cond_fn) {
     if (sched_loop_make_mpi_progress_option::value()) {
       common::mpi_make_progress();
     }
 
     execute_coll_task_if_arrived();
 
-    if (sched_loop_exit_req_ == MPI_REQUEST_NULL &&
-        std::forward<CondFn>(cond_fn)()) {
+    if (sched_loop_exit_req_ == MPI_REQUEST_NULL && cond_fn()) {
       // If a given condition is met, enters a barrier
       sched_loop_exit_req_ = common::mpi_ibarrier(common::topology::mpicomm());
     }

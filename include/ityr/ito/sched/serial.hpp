@@ -14,14 +14,14 @@ public:
   scheduler_serial() {}
 
   template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
-  T root_exec(SchedLoopCallback&&, Fn&& fn, Args&&... args) {
+  T root_exec(SchedLoopCallback, Fn&& fn, Args&&... args) {
     return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
             typename WorkHint, typename Fn, typename... Args>
   void fork(thread_handler<T>& th,
-            OnDriftForkCallback&&, OnDriftDieCallback&&,
+            OnDriftForkCallback, OnDriftDieCallback,
             WorkHint, WorkHint, Fn&& fn, Args&&... args) {
     th = invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
@@ -32,7 +32,7 @@ public:
   }
 
   template <typename SchedLoopCallback, typename CondFn>
-  void sched_loop(SchedLoopCallback&&, CondFn&&) {}
+  void sched_loop(SchedLoopCallback&&, CondFn) {}
 
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}

@@ -18,8 +18,6 @@ struct monoid {
   using value_type       = T;
   using accumulator_type = T;
 
-  static constexpr bool direct_accumulation = true;
-
   void foldl(T& l, const T& r) const {
     l = bop_(l, r);
   }
@@ -31,9 +29,6 @@ struct monoid {
   T identity() const {
     return IdentityProvider();
   }
-
-  accumulator_type view(const accumulator_type& x) const { return x; }
-  accumulator_type clone(const accumulator_type& x) const { return x; }
 
 private:
   static constexpr auto bop_ = BinaryOp();
@@ -113,8 +108,6 @@ struct minmax {
   using value_type       = T;
   using accumulator_type = std::pair<T, T>;
 
-  static constexpr bool direct_accumulation = true;
-
   void foldl(accumulator_type& acc, const value_type& x) const {
     acc.first = std::min(acc.first, x);
     acc.second = std::max(acc.second, x);
@@ -133,9 +126,6 @@ struct minmax {
   accumulator_type identity() const {
     return std::make_pair(std::numeric_limits<T>::max(), std::numeric_limits<T>::lowest());
   }
-
-  accumulator_type view(const accumulator_type& x) const { return x; }
-  accumulator_type clone(const accumulator_type& x) const { return x; }
 };
 
 using logical_and = monoid<bool, std::logical_and<>, std::true_type>;

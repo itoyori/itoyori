@@ -230,4 +230,28 @@ private:
   bool should_finalize_ = false;
 };
 
+// for testing
+class move_only_t {
+public:
+  move_only_t() {}
+  move_only_t(const long v) : value_(v) {}
+
+  long value() const { return value_; }
+
+  move_only_t(const move_only_t&) = delete;
+  move_only_t& operator=(const move_only_t&) = delete;
+
+  move_only_t(move_only_t&& mo) : value_(mo.value_) {
+    mo.value_ = -1;
+  }
+  move_only_t& operator=(move_only_t&& mo) {
+    value_ = mo.value_;
+    mo.value_ = -1;
+    return *this;
+  }
+
+private:
+  long value_ = -1;
+};
+
 }

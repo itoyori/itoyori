@@ -239,29 +239,6 @@ inline void for_each(const ExecutionPolicy& policy,
 }
 
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
-  class move_only_t {
-  public:
-    move_only_t() {}
-    move_only_t(const long v) : value_(v) {}
-
-    long value() const { return value_; }
-
-    move_only_t(const move_only_t&) = delete;
-    move_only_t& operator=(const move_only_t&) = delete;
-
-    move_only_t(move_only_t&& mo) : value_(mo.value_) {
-      mo.value_ = -1;
-    }
-    move_only_t& operator=(move_only_t&& mo) {
-      value_ = mo.value_;
-      mo.value_ = -1;
-      return *this;
-    }
-
-  private:
-    long value_ = -1;
-  };
-
   ori::init();
 
   long n = 100000;
@@ -316,28 +293,28 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
     }
 
     ITYR_SUBCASE("move iterator with vector") {
-      std::vector<move_only_t> mos1(count_iterator<long>(0),
-                                    count_iterator<long>(n));
+      std::vector<common::move_only_t> mos1(count_iterator<long>(0),
+                                            count_iterator<long>(n));
 
-      std::vector<move_only_t> mos2;
+      std::vector<common::move_only_t> mos2;
       for_each(
           execution::seq,
           std::make_move_iterator(mos1.begin()),
           std::make_move_iterator(mos1.end()),
           std::back_inserter(mos2),
-          [&](move_only_t&& in, auto&& out) { out = std::move(in); });
+          [&](common::move_only_t&& in, auto&& out) { out = std::move(in); });
 
       long count = 0;
       for_each(
           execution::seq,
           mos2.begin(), mos2.end(),
-          [&](move_only_t& mo) { count += mo.value(); });
+          [&](common::move_only_t& mo) { count += mo.value(); });
       ITYR_CHECK(count == n * (n - 1) / 2);
 
       for_each(
           execution::seq,
           mos1.begin(), mos1.end(),
-          [&](move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+          [&](common::move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
     }
   }
 
@@ -372,36 +349,36 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
     }
 
     ITYR_SUBCASE("move iterator") {
-      ori::global_ptr<move_only_t> mos1 = ori::malloc<move_only_t>(n);
-      ori::global_ptr<move_only_t> mos2 = ori::malloc<move_only_t>(n);
+      ori::global_ptr<common::move_only_t> mos1 = ori::malloc<common::move_only_t>(n);
+      ori::global_ptr<common::move_only_t> mos2 = ori::malloc<common::move_only_t>(n);
 
       for_each(
           execution::seq,
           make_global_iterator(gp    , checkout_mode::read),
           make_global_iterator(gp + n, checkout_mode::read),
           make_global_iterator(mos1  , checkout_mode::write),
-          [&](long i, move_only_t& out) { new (&out) move_only_t(i); });
+          [&](long i, common::move_only_t& out) { new (&out) common::move_only_t(i); });
 
       for_each(
           execution::seq,
           make_move_iterator(mos1),
           make_move_iterator(mos1 + n),
           make_global_iterator(mos2, checkout_mode::write),
-          [&](move_only_t&& in, move_only_t& out) { new (&out) move_only_t(std::move(in)); });
+          [&](common::move_only_t&& in, common::move_only_t& out) { new (&out) common::move_only_t(std::move(in)); });
 
       long count = 0;
       for_each(
           execution::seq,
           make_global_iterator(mos2    , checkout_mode::read),
           make_global_iterator(mos2 + n, checkout_mode::read),
-          [&](const move_only_t& mo) { count += mo.value(); });
+          [&](const common::move_only_t& mo) { count += mo.value(); });
       ITYR_CHECK(count == n * (n - 1) / 2);
 
       for_each(
           execution::seq,
           make_global_iterator(mos1    , checkout_mode::read),
           make_global_iterator(mos1 + n, checkout_mode::read),
-          [&](const move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
+          [&](const common::move_only_t& mo) { ITYR_CHECK(mo.value() == -1); });
 
       ori::free(mos1, n);
       ori::free(mos2, n);

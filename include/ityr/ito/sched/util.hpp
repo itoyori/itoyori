@@ -105,8 +105,10 @@ public:
 template <typename Fn, typename... Args>
 class callable_task : public task_general {
 public:
-  callable_task(Fn fn, Args... args) : fn_(fn), arg_(args...) {}
-  void execute() { std::apply(fn_, arg_); }
+  template <typename Fn_, typename... Args_>
+  callable_task(Fn_&& fn, Args_&&... args)
+    : fn_(std::forward<Fn_>(fn)), arg_(std::forward<Args_>(args)...) {}
+  void execute() { std::apply(std::forward<Fn>(fn_), std::forward<std::tuple<Args...>>(arg_)); }
 private:
   Fn                  fn_;
   std::tuple<Args...> arg_;
@@ -134,13 +136,13 @@ inline common::topology::rank_t get_random_rank(common::topology::rank_t a,
   return rank;
 }
 
-template <typename T, typename Fn, typename... Args>
-static T invoke_fn(Fn&& fn, Args&&... args) {
+template <typename T, typename Fn, typename ArgsTuple>
+static T invoke_fn(Fn&& fn, ArgsTuple&& args_tuple) {
   T retval;
   if constexpr (!std::is_same_v<T, no_retval_t>) {
-    retval = std::forward<Fn>(fn)(std::forward<Args>(args)...);
+    retval = std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
   } else {
-    std::forward<Fn>(fn)(std::forward<Args>(args)...);
+    std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
   }
   return retval;
 }

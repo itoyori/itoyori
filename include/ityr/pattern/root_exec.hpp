@@ -60,7 +60,10 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
     ori::release();
     common::mpi_barrier(common::topology::mpicomm());
     ori::acquire();
+
   } else {
+    static_assert(std::is_trivially_copyable_v<retval_t>);
+
     auto ret = ito::root_exec(ito::with_callback,
                               []() { ori::poll(); },
                               std::forward<Fn>(fn), std::forward<Args>(args)...);
@@ -103,7 +106,7 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
  */
 
 template <typename Fn, typename... Args>
-inline auto coll_exec(Fn&& fn, Args&&... args) {
+inline auto coll_exec(const Fn& fn, const Args&... args) {
   ITYR_CHECK(ito::is_root());
 
   ori::release();
@@ -117,6 +120,7 @@ inline auto coll_exec(Fn&& fn, Args&&... args) {
     });
 
     ori::acquire();
+
   } else {
     auto&& ret = ito::coll_exec([=]() {
       ori::acquire();

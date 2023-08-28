@@ -15,79 +15,9 @@ namespace ityr {
 namespace internal {
 
 template <typename AccumulateOp, typename CombineOp, typename Reducer,
-          typename ReleaseHandler, typename ForwardIterator, typename... ForwardIterators,
-          typename = std::enable_if_t<!Reducer::direct_accumulation>>
-inline void
-parallel_reduce_generic(const execution::parallel_policy&       policy,
-                        AccumulateOp                            accumulate_op,
-                        CombineOp                               combine_op,
-                        Reducer                                 reducer,
-                        typename Reducer::accumulator_view_type acc_view,
-                        ReleaseHandler                          rh,
-                        ForwardIterator                         first,
-                        ForwardIterator                         last,
-                        ForwardIterators...                     firsts) {
-  ori::poll();
-
-  // for immediately executing cross-worker tasks in ADWS
-  ito::poll([] { return ori::release_lazy(); },
-            [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
-
-  auto d = std::distance(first, last);
-  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
-    for_each_aux(
-        execution::internal::to_sequenced_policy(policy),
-        [&](auto&&... refs) {
-          accumulate_op(acc_view, std::forward<decltype(refs)>(refs)...);
-        },
-        first, last, firsts...);
-    return;
-  }
-
-  auto mid = std::next(first, d / 2);
-
-  auto tgdata = ito::task_group_begin();
-
-  ito::thread<void> th(
-      ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
-      ito::with_workhint, 1, 1,
-      [=] {
-        parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                acc_view, rh, first, mid, firsts...);
-      });
-
-  if (th.serialized()) {
-    th.join();
-
-    parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
-                            acc_view, rh, mid, last, std::next(firsts, d / 2)...);
-
-    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
-
-  } else {
-    auto acc_r = reducer.identity();
-    auto acc_view_r = reducer.view(acc_r);
-    rh = ori::release_lazy();
-
-    parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
-                            acc_view_r, rh, mid, last, std::next(firsts, d / 2)...);
-
-    ori::release();
-
-    th.join();
-
-    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
-
-    ori::acquire();
-
-    combine_op(acc_view, acc_view_r, first, mid, last, firsts...);
-  }
-}
-
-template <typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ReleaseHandler, typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-parallel_reduce_generic(execution::parallel_policy         policy,
+parallel_reduce_generic(const execution::parallel_policy&  policy,
                         AccumulateOp                       accumulate_op,
                         CombineOp                          combine_op,
                         Reducer                            reducer,
@@ -104,8 +34,8 @@ parallel_reduce_generic(execution::parallel_policy         policy,
   ito::poll([] { return ori::release_lazy(); },
             [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
 
-  auto d = std::distance(first, last);
-  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
+  std::size_t d = std::distance(first, last);
+  if (d <= policy.cutoff_count) {
     for_each_aux(
         execution::internal::to_sequenced_policy(policy),
         [&](auto&&... refs) {
@@ -122,16 +52,18 @@ parallel_reduce_generic(execution::parallel_policy         policy,
   ito::thread<acc_t> th(
       ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
       ito::with_workhint, 1, 1,
-      [=] {
+      [=, acc = std::move(acc)] {
         return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                       acc, rh, first, mid, firsts...);
+                                       std::move(acc), rh, first, mid, firsts...);
       });
 
   if (th.serialized()) {
-    acc = parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                  th.join(), rh, mid, last, std::next(firsts, d / 2)...);
+    acc_t acc_r = parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
+                                          th.join(), rh, mid, last, std::next(firsts, d / 2)...);
 
     ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
+
+    return acc_r;
 
   } else {
     acc_t new_acc = reducer.identity();
@@ -142,28 +74,28 @@ parallel_reduce_generic(execution::parallel_policy         policy,
 
     ori::release();
 
-    acc = th.join();
+    acc_t acc_l = th.join();
 
     ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
 
     ori::acquire();
 
-    combine_op(acc, std::move(acc_r), first, mid, last, firsts...);
+    combine_op(acc_l, std::move(acc_r), first, mid, last, firsts...);
+    return acc_l;
   }
-
-  return acc;
 }
 
-template <typename AccumulateOp, typename CombineOp, typename Reducer, typename AccView,
+template <typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ForwardIterator, typename... ForwardIterators>
-inline auto reduce_generic(const execution::sequenced_policy& policy,
-                           AccumulateOp                       accumulate_op,
-                           CombineOp                          combine_op [[maybe_unused]],
-                           Reducer                            reducer [[maybe_unused]],
-                           AccView                            acc,
-                           ForwardIterator                    first,
-                           ForwardIterator                    last,
-                           ForwardIterators...                firsts) {
+inline typename Reducer::accumulator_type
+reduce_generic(const execution::sequenced_policy& policy,
+               AccumulateOp                       accumulate_op,
+               CombineOp                          combine_op [[maybe_unused]],
+               Reducer                            reducer [[maybe_unused]],
+               typename Reducer::accumulator_type acc,
+               ForwardIterator                    first,
+               ForwardIterator                    last,
+               ForwardIterators...                firsts) {
   execution::internal::assert_policy(policy);
   for_each_aux(
       execution::internal::to_sequenced_policy(policy),
@@ -171,21 +103,20 @@ inline auto reduce_generic(const execution::sequenced_policy& policy,
         accumulate_op(acc, std::forward<decltype(refs)>(refs)...);
       },
       first, last, firsts...);
-  if constexpr (Reducer::direct_accumulation) {
-    return acc;
-  }
+  return acc;
 }
 
-template <typename AccumulateOp, typename CombineOp, typename Reducer, typename AccView,
+template <typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ForwardIterator, typename... ForwardIterators>
-inline auto reduce_generic(const execution::parallel_policy& policy,
-                           AccumulateOp                      accumulate_op,
-                           CombineOp                         combine_op,
-                           Reducer                           reducer,
-                           AccView                           acc,
-                           ForwardIterator                   first,
-                           ForwardIterator                   last,
-                           ForwardIterators...               firsts) {
+inline typename Reducer::accumulator_type
+reduce_generic(const execution::parallel_policy&  policy,
+               AccumulateOp                       accumulate_op,
+               CombineOp                          combine_op,
+               Reducer                            reducer,
+               typename Reducer::accumulator_type acc,
+               ForwardIterator                    first,
+               ForwardIterator                    last,
+               ForwardIterators...                firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer, acc,
@@ -253,15 +184,8 @@ transform_reduce(const ExecutionPolicy& policy,
       reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
-    if constexpr (Reducer::direct_accumulation) {
-      return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                      reducer.identity(), first, last);
-    } else {
-      auto acc = reducer.identity();
-      internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                               reducer.view(acc), first, last);
-      return acc;
-    }
+    return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
+                                    reducer.identity(), first, last);
   }
 }
 
@@ -329,15 +253,8 @@ transform_reduce(const ExecutionPolicy& policy,
       reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
-    if constexpr (Reducer::direct_accumulation) {
-      return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                      reducer.identity(), first1, last1, first2);
-    } else {
-      auto acc = reducer.identity();
-      internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                               reducer.view(acc), first1, last1, first2);
-      return acc;
-    }
+    return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
+                                    reducer.identity(), first1, last1, first2);
   }
 }
 
@@ -522,7 +439,7 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
   } else {
     auto accumulate_op = [=](auto&& acc, const auto& r1, auto&& d) {
       reducer.foldl(acc, unary_transform_op(r1));
-      d = reducer.clone(acc);
+      d = acc;
     };
 
     // TODO: more efficient scan implementation
@@ -551,7 +468,7 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
     };
 
     internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                             reducer.view(init), first1, last1, first_d);
+                             init, first1, last1, first_d);
 
     return std::next(first_d, std::distance(first1, last1));
   }
