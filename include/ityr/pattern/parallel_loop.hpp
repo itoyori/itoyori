@@ -7,6 +7,7 @@
 #include "ityr/pattern/count_iterator.hpp"
 #include "ityr/pattern/global_iterator.hpp"
 #include "ityr/pattern/serial_loop.hpp"
+#include "ityr/pattern/parallel_invoke.hpp"
 
 namespace ityr {
 
@@ -906,6 +907,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {
  * // v = {5, 4, 3, 2, 1}
  * ```
  *
+ * @see [std::reverse -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/reverse)
  * @see `ityr::reverse_copy()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
@@ -946,6 +948,7 @@ inline void reverse(const ExecutionPolicy& policy,
  * ityr::copy(policy, make_reverse_iterator(last1), make_reverse_iterator(first1), first_d);
  * ```
  *
+ * @see [std::reverse_copy -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/reverse_copy)
  * @see `ityr::reverse()`
  * @see `ityr::copy()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
@@ -996,6 +999,88 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
 
   ori::free_coll(p1);
   ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
+/**
+ * @brief Rotate a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Input begin iterator.
+ * @param middle Input iterator that should be placed at the beginning of the range.
+ * @param last   Input end iterator.
+ *
+ * @return The iterator for the original first element (`first + (last - middle)`).
+ *
+ * This function performs the left rotation for the given range.
+ * The elements in the range are swapped so that the range `[first, middle)` is placed before
+ * the range `[middle, last)`, preserving the original order in each range.
+ *
+ * If given iterators are global pointers, they are automatically checked out in the read-write mode
+ * in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+ * ityr::rotate(ityr::execution::par, v.begin(), v.begin() + 2, v.end());
+ * // v = {3, 4, 5, 1, 2}
+ * ```
+ *
+ * @see [std::rotate -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/rotate)
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename BidirectionalIterator>
+inline BidirectionalIterator rotate(const ExecutionPolicy& policy,
+                                    BidirectionalIterator  first,
+                                    BidirectionalIterator  middle,
+                                    BidirectionalIterator  last) {
+  // TODO: implement a version with ForwardIterator
+  if (first == middle) return last;
+  if (middle == last) return first;
+
+  parallel_invoke(
+      [=] { reverse(policy, first, middle); },
+      [=] { reverse(policy, middle, last); });
+  reverse(policy, first, last);
+
+  return std::next(first, std::distance(middle, last));
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] rotate") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::write),
+        make_global_iterator(p + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](long& v, long i) { v = i; });
+
+    long shift = n / 3;
+    rotate(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+           p, p + shift, p + n);
+
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::read),
+        make_global_iterator(p + n, checkout_mode::read),
+        count_iterator<long>(0),
+        [=](long v, long i) {
+          ITYR_CHECK(v == (i + shift) % n);
+        });
+  });
+
+  ori::free_coll(p);
 
   ori::fini();
   ito::fini();
