@@ -886,4 +886,58 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {
   ito::fini();
 }
 
+template <typename ExecutionPolicy, typename BidirectionalIterator>
+inline void reverse(const ExecutionPolicy& policy,
+                    BidirectionalIterator  first,
+                    BidirectionalIterator  last) {
+  if constexpr (ori::is_global_ptr_v<BidirectionalIterator>) {
+    return reverse(
+        policy,
+        internal::convert_to_global_iterator(first, checkout_mode::read_write),
+        internal::convert_to_global_iterator(last , checkout_mode::read_write));
+
+  } else {
+    auto op = [=](auto&& r1, auto&& r2) {
+      using std::swap;
+      swap(r1, r2);
+    };
+
+    using std::make_reverse_iterator;
+    auto d = std::distance(first, last);
+    internal::loop_generic(policy, op, first, std::next(first, d / 2), make_reverse_iterator(last));
+  }
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::write),
+        make_global_iterator(p + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](long& v, long i) { v = i; });
+
+    reverse(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+            p, p + n);
+
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::read),
+        make_global_iterator(p + n, checkout_mode::read),
+        count_iterator<long>(0),
+        [=](long v, long i) { ITYR_CHECK(v == n - i - 1); });
+  });
+
+  ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
+}
+
 }
