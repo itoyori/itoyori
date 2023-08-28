@@ -1023,7 +1023,8 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] equal") {
  * ```
  *
  * @see [std::is_sorted -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/is_sorted)
- * @see `ityr::transform_reduce()`
+ * @see `ityr::sort()`
+ * @see `ityr::stable_sort()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
@@ -1057,7 +1058,8 @@ inline bool is_sorted(const ExecutionPolicy& policy,
  * ```
  *
  * @see [std::is_sorted -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/is_sorted)
- * @see `ityr::transform_reduce()`
+ * @see `ityr::sort()`
+ * @see `ityr::stable_sort()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */

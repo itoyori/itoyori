@@ -118,11 +118,10 @@ inline void inplace_merge_aux(const execution::parallel_policy& policy,
   // TODO: implement a version with BidirectionalIterator
   std::size_t d = std::distance(first, last);
 
-  if (d <= 1) {
-    return;
+  if (d <= 1 || first == middle || middle == last) return;
 
-  } else if (d <= policy.cutoff_count) {
-    auto [css, its] = checkout_global_iterators(d, first);
+  if (d <= policy.cutoff_count) {
+    auto&& [css, its] = checkout_global_iterators(d, first);
     auto first_ = std::get<0>(its);
     std::inplace_merge(first_,
                        std::next(first_, std::distance(first, middle)),
@@ -130,7 +129,71 @@ inline void inplace_merge_aux(const execution::parallel_policy& policy,
                        comp);
 
   } else {
+    auto comp_mids = [&]{
+      auto&& [css, its] = checkout_global_iterators(2, std::prev(middle));
+      auto mids = std::get<0>(its);
+      return !comp(*std::next(mids), *mids);
+    };
+    if (comp_mids()) {
+      //     middle
+      // ... a || b ...   where   !(a > b) <=> a <= b
+      return;
+    }
+
+    auto comp_ends = [&]{
+      auto&& [css, its] = checkout_global_iterators(1, std::prev(last), first);
+      auto [l, f] = its;
+      return comp(*l, *f);
+    };
+    if (comp_ends()) {
+      //     middle
+      // a ... || ... b   where   b < a
+      // (If b == a, we shall not rotate them for stability)
+      rotate(policy, first, middle, last);
+      return;
+    }
+
     auto [s1, s2] = find_split_points_for_merge(first, middle, middle, last, comp);
+
+    // do not split between the elements with an equal value (for stable merge)
+    // TODO: more efficient impl for cases where the number of equal values is small
+    using value_type = typename std::iterator_traits<RandomAccessIterator>::value_type;
+    if (first < s1) {
+      //        s1 -------> s1     middle
+      // ... x x | x x x x x | a ... || ...
+      auto&& [css, its] = checkout_global_iterators(1, std::prev(s1));
+      auto s1_ = std::get<0>(its);
+      s1 = std::partition_point(s1, middle, [&](const value_type& r) { return !comp(*s1_, r); });
+    }
+    if (s2 < last) {
+      //   middle     s2 <------- s2
+      // ... || ... b | x x x x x | x x ...
+      auto&& [css, its] = checkout_global_iterators(1, s2);
+      auto s2_ = std::get<0>(its);
+      s2 = std::partition_point(middle, s2, [&](const value_type& r) { return comp(r, *s2_); });
+    }
+    // Make sure that elements with an equal value are never swapped across the middle iterator
+    if (first < s1 && s2 < last) {
+      auto&& [css, its] = checkout_global_iterators(2, std::prev(s1), std::prev(s2));
+      auto [s1_, s2_] = its;
+
+      auto s1l = s1_;
+      auto s1r = std::next(s1_);
+      auto s2l = s2_;
+      auto s2r = std::next(s2_);
+
+      if (!comp(*s1l, *s2r)) {
+        //      s1     middle     s2
+        // ... x | a ... || ... b | x ...
+        // (do nothing)
+
+      } else if (!comp(*s2l, *s1r)) {
+        //      s1     middle     s2
+        // ... a | x ... || ... x | b ...
+        // we shall not swap these two `x`s for stability, so we move `s2` to left
+        s2 = std::partition_point(middle, std::prev(s2), [&](const value_type& r) { return comp(r, *s2l); });
+      }
+    }
 
     auto m = rotate(policy, s1, middle, s2);
 
@@ -146,9 +209,9 @@ inline void inplace_merge_aux(const execution::parallel_policy& policy,
  * @brief Merge two sorted ranges into one sorted range in place.
  *
  * @param policy Execution policy (`ityr::execution`).
- * @param first  Input begin iterator.
- * @param middle Input middle iterator that splits the two sorted ranges.
- * @param last   Input end iterator.
+ * @param first  Begin iterator.
+ * @param middle Middle iterator that splits the two sorted ranges.
+ * @param last   End iterator.
  * @param comp   Binary comparison operator.
  *
  * This function merges two sorted ranges (`[first, middle)` and `[middle, last)`) into one sorted
@@ -168,6 +231,8 @@ inline void inplace_merge_aux(const execution::parallel_policy& policy,
  * ```
  *
  * @see [std::inplace_merge -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/inplace_merge)
+ * @see `ityr::sort()`
+ * @see `ityr::stable_sort()`
  * @see `ityr::is_sorted()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
@@ -179,7 +244,7 @@ inline void inplace_merge(const ExecutionPolicy& policy,
                           RandomAccessIterator   last,
                           Compare                comp) {
   if constexpr (ori::is_global_ptr_v<RandomAccessIterator>) {
-    return inplace_merge(
+    inplace_merge(
         policy,
         internal::convert_to_global_iterator(first , checkout_mode::read_write),
         internal::convert_to_global_iterator(middle, checkout_mode::read_write),
@@ -195,9 +260,9 @@ inline void inplace_merge(const ExecutionPolicy& policy,
  * @brief Merge two sorted ranges into one sorted range in place.
  *
  * @param policy Execution policy (`ityr::execution`).
- * @param first  Input begin iterator.
- * @param middle Input middle iterator that splits the two sorted ranges.
- * @param last   Input end iterator.
+ * @param first  Begin iterator.
+ * @param middle Middle iterator that splits the two sorted ranges.
+ * @param last   End iterator.
  *
  * Equivalent to `ityr::inplace_merge(policy, first, middle, last, std::less<>{});`
  *
@@ -209,6 +274,8 @@ inline void inplace_merge(const ExecutionPolicy& policy,
  * ```
  *
  * @see [std::inplace_merge -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/inplace_merge)
+ * @see `ityr::sort()`
+ * @see `ityr::stable_sort()`
  * @see `ityr::is_sorted()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
@@ -225,37 +292,85 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
   ito::init();
   ori::init();
 
-  long n = 100000;
-  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+  ITYR_SUBCASE("integer") {
+    long n = 100000;
+    ori::global_ptr<long> p = ori::malloc_coll<long>(n);
 
-  ito::root_exec([=] {
-    long m = n / 3;
+    ito::root_exec([=] {
+      long m = n / 3;
 
-    transform(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        count_iterator<long>(0), count_iterator<long>(m), p,
-        [=](long i) { return i; });
+      transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(m), p,
+          [=](long i) { return i; });
 
-    transform(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        count_iterator<long>(0), count_iterator<long>(n - m), p + m,
-        [=](long i) { return i; });
+      transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n - m), p + m,
+          [=](long i) { return i; });
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                         p, p + m) == true);
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                         p + m, p + n) == true);
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                         p, p + n) == false);
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p, p + m) == true);
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p + m, p + n) == true);
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p, p + n) == false);
 
-    inplace_merge(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                  p, p + m, p + n);
+      inplace_merge(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                    p, p + m, p + n);
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                         p, p + n) == true);
-  });
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p, p + n) == true);
+    });
 
-  ori::free_coll(p);
+    ori::free_coll(p);
+  }
+
+  ITYR_SUBCASE("pair (stability test)") {
+    long n = 100000;
+    long nb = 1000;
+    ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
+
+    ito::root_exec([=] {
+      long m = n / 2;
+
+      transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(m), p,
+          [=](long i) { return std::make_pair(i / nb, i); });
+
+      transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n - m), p + m,
+          [=](long i) { return std::make_pair(i / nb, i + m); });
+
+      auto comp_first = [](const auto& a, const auto& b) { return a.first < b.first ; };
+      auto comp_second = [](const auto& a, const auto& b) { return a.second < b.second; };
+
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p, p + n, comp_second) == true);
+
+      inplace_merge(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                    p, p + m, p + n, comp_first);
+
+      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                           p, p + n, comp_first) == true);
+
+      for (long key = 0; key < m / nb; key++) {
+        bool sorted = is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                                p + key * nb * 2,
+                                p + (key + 1) * nb * 2,
+                                [=](const auto& a, const auto& b) {
+                                  ITYR_CHECK(a.first == key);
+                                  ITYR_CHECK(b.first == key);
+                                  return a.second < b.second;
+                                });
+        ITYR_CHECK(sorted);
+      }
+    });
+
+    ori::free_coll(p);
+  }
 
   ori::fini();
   ito::fini();

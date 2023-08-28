@@ -13,6 +13,7 @@
 #include "ityr/pattern/parallel_loop.hpp"
 #include "ityr/pattern/parallel_reduce.hpp"
 #include "ityr/pattern/parallel_merge.hpp"
+#include "ityr/pattern/parallel_sort.hpp"
 #include "ityr/pattern/reducer_extra.hpp"
 #include "ityr/container/global_span.hpp"
 #include "ityr/container/global_vector.hpp"
