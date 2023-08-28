@@ -214,7 +214,7 @@ transform_reduce(const ExecutionPolicy& policy,
  * ```
  * ityr::global_vector<int> v1 = {1, 2, 3, 4, 5};
  * bool r = ityr::transform_reduce(ityr::execution::par, v1.begin(), v1.end() - 1, v1.begin() + 1,
- *                                 ityr::reducer::logical_and<>{}, [](int x, int y) { return x <= y; });
+ *                                 ityr::reducer::logical_and{}, [](int x, int y) { return x <= y; });
  * // r = true (v1 is sorted)
  * ```
  *
@@ -363,7 +363,7 @@ reduce(const ExecutionPolicy& policy,
   return reduce(policy, first, last, reducer::plus<T>{});
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] reduce and transform_reduce") {
   ito::init();
   ori::init();
 
@@ -430,7 +430,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
   ito::fini();
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr") {
   ito::init();
   ori::init();
 
@@ -781,7 +781,7 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
   return inclusive_scan(policy, first1, last1, first_d, reducer::plus<T>{});
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] inclusive scan") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] inclusive scan") {
   ito::init();
   ori::init();
 
@@ -957,7 +957,7 @@ inline bool equal(const ExecutionPolicy& policy,
   return equal(policy, first1, last1, first2, last2, std::equal_to<>{});
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] equal") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] equal") {
   ito::init();
   ori::init();
 
@@ -993,6 +993,114 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] equal") {
 
   ori::free_coll(p1);
   ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
+/**
+ * @brief Check if a range is sorted.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Input begin iterator.
+ * @param last   Input end iterator.
+ * @param comp   Binary comparison operator.
+ *
+ * @return Returns true if `comp(*(first + i + 1), *(first + i))` is false for all `i`.
+ *
+ * This function checks if the given range is sorted with respect to the comparison operator `comp`.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {5, 4, 3, 2, 1};
+ * bool r = ityr::is_sorted(ityr::execution::par, v.begin(), v.end(), std::greater<>{});
+ * // r = true (v is sorted in descending order)
+ * ```
+ *
+ * @see [std::is_sorted -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/is_sorted)
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator, typename Compare>
+inline bool is_sorted(const ExecutionPolicy& policy,
+                      ForwardIterator        first,
+                      ForwardIterator        last,
+                      Compare                comp) {
+  // Check if comp(a(i+1), a(i)) returns false for all i
+  return std::distance(first, last) <= 1 ||
+         transform_reduce(policy, std::next(first), last, first,
+                          reducer::logical_or{}, comp) == false;
+}
+
+/**
+ * @brief Check if a range is sorted.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Input begin iterator.
+ * @param last   Input end iterator.
+ *
+ * @return Returns true if `*(first + i + 1) < *(first + i)` is false for all `i`.
+ *
+ * Equivalent to `is_sorted(policy, first, last, std::less<>{})`.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {1, 2, 3, 4, 5};
+ * bool r = ityr::is_sorted(ityr::execution::par, v.begin(), v.end());
+ * // r = true (v is sorted in ascending order)
+ * ```
+ *
+ * @see [std::is_sorted -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/is_sorted)
+ * @see `ityr::transform_reduce()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator>
+inline bool is_sorted(const ExecutionPolicy& policy,
+                      ForwardIterator        first,
+                      ForwardIterator        last) {
+  return is_sorted(policy, first, last, std::less<>{});
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] is_sorted") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::write),
+        make_global_iterator(p + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](long& v, long i) { v = i / 3; });
+
+    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                         p, p + n) == true);
+
+    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                         p, p + n, std::greater<>{}) == false);
+
+    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                         make_reverse_iterator(p + n, checkout_mode::read),
+                         make_reverse_iterator(p    , checkout_mode::read),
+                         std::greater<>{}) == true);
+
+    p[n / 4].put(0);
+
+    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                         p, p + n) == false);
+  });
+
+  ori::free_coll(p);
 
   ori::fini();
   ito::fini();
