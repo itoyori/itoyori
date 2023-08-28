@@ -85,6 +85,7 @@ inline auto checkout_global_iterators_aux(std::size_t) {
 
 template <typename ForwardIterator, typename... ForwardIterators>
 inline auto checkout_global_iterators_aux(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
+  ITYR_CHECK(n > 0);
   if constexpr (is_global_iterator_v<ForwardIterator>) {
     auto&& [cs, it_] = it.checkout_nb(n);
     auto&& [css, its] = checkout_global_iterators_aux(n, rest...);
