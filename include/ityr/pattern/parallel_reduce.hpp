@@ -363,6 +363,136 @@ reduce(const ExecutionPolicy& policy,
   return reduce(policy, first, last, reducer::plus<T>{});
 }
 
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
+  ito::init();
+  ori::init();
+
+  ITYR_SUBCASE("default cutoff") {
+    long n = 10000;
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::par,
+          count_iterator<long>(0),
+          count_iterator<long>(n));
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ITYR_SUBCASE("custom cutoff") {
+    long n = 100000;
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::parallel_policy{.cutoff_count = 100},
+          count_iterator<long>(0),
+          count_iterator<long>(n));
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ITYR_SUBCASE("transform unary") {
+    long n = 100000;
+    long r = ito::root_exec([=] {
+      return transform_reduce(
+          execution::parallel_policy{.cutoff_count = 100},
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          reducer::plus<long>{},
+          [](long x) { return x * x; });
+    });
+    ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
+  }
+
+  ITYR_SUBCASE("transform binary") {
+    long n = 100000;
+    long r = ito::root_exec([=] {
+      return transform_reduce(
+          execution::parallel_policy{.cutoff_count = 100},
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          count_iterator<long>(0),
+          reducer::plus<long>{},
+          [](long x, long y) { return x * y; });
+    });
+    ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
+  }
+
+  ITYR_SUBCASE("zero elements") {
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::parallel_policy{.cutoff_count = 100},
+          count_iterator<long>(0),
+          count_iterator<long>(0));
+    });
+    ITYR_CHECK(r == 0);
+  }
+
+  ori::fini();
+  ito::fini();
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    long count = 0;
+    for_each(
+        execution::sequenced_policy{.checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::write),
+        make_global_iterator(p + n, checkout_mode::write),
+        [&](long& v) { v = count++; });
+  });
+
+  ITYR_SUBCASE("default cutoff") {
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::par,
+          p, p + n);
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ITYR_SUBCASE("custom cutoff and checkout count") {
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 50},
+          p, p + n);
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ITYR_SUBCASE("without auto checkout") {
+    long r = ito::root_exec([=] {
+      return transform_reduce(
+          execution::par,
+          make_global_iterator(p    , checkout_mode::no_access),
+          make_global_iterator(p + n, checkout_mode::no_access),
+          reducer::plus<long>{},
+          [](ori::global_ref<long> gref) {
+            return gref.get();
+          });
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ITYR_SUBCASE("serial") {
+    long r = ito::root_exec([=] {
+      return reduce(
+          execution::sequenced_policy{.checkout_count = 100},
+          p, p + n);
+    });
+    ITYR_CHECK(r == n * (n - 1) / 2);
+  }
+
+  ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
+}
+
 /**
  * @brief Calculate a prefix sum (inclusive scan) while transforming each element.
  *
@@ -651,6 +781,53 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
   return inclusive_scan(policy, first1, last1, first_d, reducer::plus<T>{});
 }
 
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] inclusive scan") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p1, p1 + n, 1);
+
+    inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2);
+
+    ITYR_CHECK(p2[0].get() == 1);
+    ITYR_CHECK(p2[n - 1].get() == n);
+
+    auto sum = reduce(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p2, p2 + n);
+
+    ITYR_CHECK(sum == n * (n + 1) / 2);
+
+    inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2, reducer::multiplies<long>{}, 10);
+
+    ITYR_CHECK(p2[0].get() == 10);
+    ITYR_CHECK(p2[n - 1].get() == 10);
+
+    transform_inclusive_scan(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        p1, p1 + n, p2, reducer::plus<long>{}, [](long x) { return x + 1; }, 10);
+
+    ITYR_CHECK(p2[0].get() == 12);
+    ITYR_CHECK(p2[n - 1].get() == 10 + n * 2);
+  });
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
 /**
  * @brief Check if two ranges have equal values.
  *
@@ -780,137 +957,7 @@ inline bool equal(const ExecutionPolicy& policy,
   return equal(policy, first1, last1, first2, last2, std::equal_to<>{});
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reduce and transform_reduce") {
-  ito::init();
-  ori::init();
-
-  ITYR_SUBCASE("default cutoff") {
-    long n = 10000;
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::par,
-          count_iterator<long>(0),
-          count_iterator<long>(n));
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ITYR_SUBCASE("custom cutoff") {
-    long n = 100000;
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::parallel_policy{.cutoff_count = 100},
-          count_iterator<long>(0),
-          count_iterator<long>(n));
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ITYR_SUBCASE("transform unary") {
-    long n = 100000;
-    long r = ito::root_exec([=] {
-      return transform_reduce(
-          execution::parallel_policy{.cutoff_count = 100},
-          count_iterator<long>(0),
-          count_iterator<long>(n),
-          reducer::plus<long>{},
-          [](long x) { return x * x; });
-    });
-    ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
-  }
-
-  ITYR_SUBCASE("transform binary") {
-    long n = 100000;
-    long r = ito::root_exec([=] {
-      return transform_reduce(
-          execution::parallel_policy{.cutoff_count = 100},
-          count_iterator<long>(0),
-          count_iterator<long>(n),
-          count_iterator<long>(0),
-          reducer::plus<long>{},
-          [](long x, long y) { return x * y; });
-    });
-    ITYR_CHECK(r == n * (n - 1) * (2 * n - 1) / 6);
-  }
-
-  ITYR_SUBCASE("zero elements") {
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::parallel_policy{.cutoff_count = 100},
-          count_iterator<long>(0),
-          count_iterator<long>(0));
-    });
-    ITYR_CHECK(r == 0);
-  }
-
-  ori::fini();
-  ito::fini();
-}
-
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel reduce with global_ptr") {
-  ito::init();
-  ori::init();
-
-  long n = 100000;
-  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
-
-  ito::root_exec([=] {
-    long count = 0;
-    for_each(
-        execution::sequenced_policy{.checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::write),
-        make_global_iterator(p + n, checkout_mode::write),
-        [&](long& v) { v = count++; });
-  });
-
-  ITYR_SUBCASE("default cutoff") {
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::par,
-          p, p + n);
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ITYR_SUBCASE("custom cutoff and checkout count") {
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 50},
-          p, p + n);
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ITYR_SUBCASE("without auto checkout") {
-    long r = ito::root_exec([=] {
-      return transform_reduce(
-          execution::par,
-          make_global_iterator(p    , checkout_mode::no_access),
-          make_global_iterator(p + n, checkout_mode::no_access),
-          reducer::plus<long>{},
-          [](ori::global_ref<long> gref) {
-            return gref.get();
-          });
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ITYR_SUBCASE("serial") {
-    long r = ito::root_exec([=] {
-      return reduce(
-          execution::sequenced_policy{.checkout_count = 100},
-          p, p + n);
-    });
-    ITYR_CHECK(r == n * (n - 1) / 2);
-  }
-
-  ori::free_coll(p);
-
-  ori::fini();
-  ito::fini();
-}
-
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] inclusive scan") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] equal") {
   ito::init();
   ori::init();
 
@@ -919,35 +966,29 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] inclusive scan") {
   ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
 
   ito::root_exec([=] {
-    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p1, p1 + n, 1);
-
-    inclusive_scan(
+    for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        p1, p1 + n, p2);
+        make_global_iterator(p1    , checkout_mode::write),
+        make_global_iterator(p1 + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](long& v, long i) { v = i * 2; });
 
-    ITYR_CHECK(p2[0].get() == 1);
-    ITYR_CHECK(p2[n - 1].get() == n);
+    copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p1, p1 + n, p2);
 
-    auto sum = reduce(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        p2, p2 + n);
+    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                     p1, p1 + n, p2) == true);
 
-    ITYR_CHECK(sum == n * (n + 1) / 2);
+    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                     p1, p1 + n, p2, p2 + n) == true);
 
-    inclusive_scan(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        p1, p1 + n, p2, reducer::multiplies<long>{}, 10);
+    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                     p1, p1 + n, p2, p2 + n - 1) == false);
 
-    ITYR_CHECK(p2[0].get() == 10);
-    ITYR_CHECK(p2[n - 1].get() == 10);
+    p2[n / 2].put(0);
 
-    transform_inclusive_scan(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        p1, p1 + n, p2, reducer::plus<long>{}, [](long x) { return x + 1; }, 10);
-
-    ITYR_CHECK(p2[0].get() == 12);
-    ITYR_CHECK(p2[n - 1].get() == 10 + n * 2);
+    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+                     p1, p1 + n, p2) == false);
   });
 
   ori::free_coll(p1);

@@ -26,8 +26,8 @@ inline void parallel_loop_generic(const execution::parallel_policy& policy,
   ito::poll([] { return ori::release_lazy(); },
             [&](ori::release_handler rh_) { ori::acquire(rh); ori::acquire(rh_); });
 
-  auto d = std::distance(first, last);
-  if (static_cast<std::size_t>(d) <= policy.cutoff_count) {
+  std::size_t d = std::distance(first, last);
+  if (d <= policy.cutoff_count) {
     for_each_aux(
         execution::internal::to_sequenced_policy(policy),
         [&](auto&&... refs) {
@@ -591,6 +591,65 @@ inline ForwardIteratorD transform(const ExecutionPolicy& policy,
   }
 }
 
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] transform") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
+
+  ITYR_SUBCASE("parallel") {
+    ito::root_exec([=] {
+      auto r = transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n), p1,
+          [](long i) { return i * 2; });
+      ITYR_CHECK(r == p1 + n);
+
+      transform(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n), p1, p2,
+          [](long i, long j) { return i * j; });
+
+      for_each(
+          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          make_global_iterator(p2    , checkout_mode::read),
+          make_global_iterator(p2 + n, checkout_mode::read),
+          count_iterator<long>(0),
+          [=](long v, long i) { ITYR_CHECK(v == i * i * 2); });
+    });
+  }
+
+  ITYR_SUBCASE("serial") {
+    ito::root_exec([=] {
+      auto ret = transform(
+          execution::sequenced_policy{.checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n), p1,
+          [](long i) { return i * 2; });
+      ITYR_CHECK(ret == p1 + n);
+
+      transform(
+          execution::sequenced_policy{.checkout_count = 100},
+          count_iterator<long>(0), count_iterator<long>(n), p1, p2,
+          [](long i, long j) { return i * j; });
+
+      for_each(
+          execution::sequenced_policy{.checkout_count = 100},
+          make_global_iterator(p2    , checkout_mode::read),
+          make_global_iterator(p2 + n, checkout_mode::read),
+          count_iterator<long>(0),
+          [=](long v, long i) { ITYR_CHECK(v == i * i * 2); });
+    });
+  }
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
 /**
  * @brief Fill a range with a given value.
  *
@@ -638,6 +697,31 @@ inline void fill(const ExecutionPolicy& policy,
 
     internal::loop_generic(policy, op, first, last);
   }
+}
+
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] fill") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    long val = 33;
+    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p, p + n, val);
+
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p    , checkout_mode::read),
+        make_global_iterator(p + n, checkout_mode::read),
+        [=](long v) { ITYR_CHECK(v == val); });
+  });
+
+  ori::free_coll(p);
+
+  ori::fini();
+  ito::fini();
 }
 
 /**
@@ -705,6 +789,40 @@ inline ForwardIteratorD copy(const ExecutionPolicy& policy,
   }
 }
 
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] copy") {
+  ito::init();
+  ori::init();
+
+  long n = 100000;
+  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
+  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
+
+  ito::root_exec([=] {
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p1    , checkout_mode::write),
+        make_global_iterator(p1 + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](long& v, long i) { v = i * 2; });
+
+    copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p1, p1 + n, p2);
+
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p2    , checkout_mode::read),
+        make_global_iterator(p2 + n, checkout_mode::read),
+        count_iterator<long>(0),
+        [=](long v, long i) { ITYR_CHECK(v == i * 2); });
+  });
+
+  ori::free_coll(p1);
+  ori::free_coll(p2);
+
+  ori::fini();
+  ito::fini();
+}
+
 /**
  * @brief Move a range to another.
  *
@@ -734,85 +852,35 @@ inline ForwardIteratorD move(const ExecutionPolicy& policy,
   return copy(policy, make_move_iterator(first1), make_move_iterator(last1), first_d);
 }
 
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel transform with global_ptr") {
+ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {
   ito::init();
   ori::init();
 
   long n = 100000;
-  ori::global_ptr<long> p1 = ori::malloc_coll<long>(n);
-  ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
-
-  ITYR_SUBCASE("parallel") {
-    ito::root_exec([=] {
-      auto r = transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-          count_iterator<long>(0), count_iterator<long>(n), p1,
-          [](long i) { return i * 2; });
-      ITYR_CHECK(r == p1 + n);
-
-      transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-          count_iterator<long>(0), count_iterator<long>(n), p1, p2,
-          [](long i, long j) { return i * j; });
-
-      for_each(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-          make_global_iterator(p2    , checkout_mode::read),
-          make_global_iterator(p2 + n, checkout_mode::read),
-          count_iterator<long>(0),
-          [=](long v, long i) { ITYR_CHECK(v == i * i * 2); });
-    });
-  }
-
-  ITYR_SUBCASE("serial") {
-    ito::root_exec([=] {
-      auto ret = transform(
-          execution::sequenced_policy{.checkout_count = 100},
-          count_iterator<long>(0), count_iterator<long>(n), p1,
-          [](long i) { return i * 2; });
-      ITYR_CHECK(ret == p1 + n);
-
-      transform(
-          execution::sequenced_policy{.checkout_count = 100},
-          count_iterator<long>(0), count_iterator<long>(n), p1, p2,
-          [](long i, long j) { return i * j; });
-
-      for_each(
-          execution::sequenced_policy{.checkout_count = 100},
-          make_global_iterator(p2    , checkout_mode::read),
-          make_global_iterator(p2 + n, checkout_mode::read),
-          count_iterator<long>(0),
-          [=](long v, long i) { ITYR_CHECK(v == i * i * 2); });
-    });
-  }
-
-  ori::free_coll(p1);
-  ori::free_coll(p2);
-
-  ori::fini();
-  ito::fini();
-}
-
-ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel fill") {
-  ito::init();
-  ori::init();
-
-  long n = 100000;
-  ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+  ori::global_ptr<common::move_only_t> p1 = ori::malloc_coll<common::move_only_t>(n);
+  ori::global_ptr<common::move_only_t> p2 = ori::malloc_coll<common::move_only_t>(n);
 
   ito::root_exec([=] {
-    long val = 33;
-    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p, p + n, val);
+    for_each(
+        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        make_global_iterator(p1    , checkout_mode::write),
+        make_global_iterator(p1 + n, checkout_mode::write),
+        count_iterator<long>(0),
+        [=](common::move_only_t& r, long i) { new (&r) common::move_only_t(i * 2); });
+
+    move(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+         p1, p1 + n, p2);
 
     for_each(
         execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-        make_global_iterator(p    , checkout_mode::read),
-        make_global_iterator(p + n, checkout_mode::read),
-        [=](long v) { ITYR_CHECK(v == val); });
+        make_global_iterator(p2    , checkout_mode::read),
+        make_global_iterator(p2 + n, checkout_mode::read),
+        count_iterator<long>(0),
+        [=](const common::move_only_t& r, long i) { ITYR_CHECK(r.value() == i * 2); });
   });
 
-  ori::free_coll(p);
+  ori::free_coll(p1);
+  ori::free_coll(p2);
 
   ori::fini();
   ito::fini();
