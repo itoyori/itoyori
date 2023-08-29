@@ -15,7 +15,7 @@ public:
 
   template <typename T, typename SchedLoopCallback, typename Fn, typename... Args>
   T root_exec(SchedLoopCallback, Fn&& fn, Args&&... args) {
-    return invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    return invoke_fn<T>(std::forward<Fn>(fn), std::make_tuple(std::forward<Args>(args)...));
   }
 
   template <typename T, typename OnDriftForkCallback, typename OnDriftDieCallback,
@@ -23,12 +23,12 @@ public:
   void fork(thread_handler<T>& th,
             OnDriftForkCallback, OnDriftDieCallback,
             WorkHint, WorkHint, Fn&& fn, Args&&... args) {
-    th = invoke_fn<T>(std::forward<Fn>(fn), std::forward<Args>(args)...);
+    th = invoke_fn<T>(std::forward<Fn>(fn), std::make_tuple(std::forward<Args>(args)...));
   }
 
   template <typename T>
   T join(thread_handler<T>& th) {
-    return th;
+    return std::move(th);
   }
 
   template <typename SchedLoopCallback, typename CondFn>

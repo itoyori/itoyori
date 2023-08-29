@@ -62,6 +62,7 @@ public:
   using mode              = Mode;
   using checkout_iterator = internal::checkout_iterator_t<base_t, Mode>;
 
+  global_iterator() : base_t(nullptr) {}
   global_iterator(ori::global_ptr<T> gptr, Mode) : base_t(gptr) {}
 
   auto checkout_nb(std::size_t count) const {

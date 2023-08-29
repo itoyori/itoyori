@@ -27,11 +27,9 @@ public:
   }
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
-  thread(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+  thread(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
          Fn&& fn, Args&&... args) {
-    fork(with_callback,
-         std::forward<OnDriftForkCallback>(on_drift_fork_cb),
-         std::forward<OnDriftDieCallback>(on_drift_die_cb),
+    fork(with_callback, on_drift_fork_cb, on_drift_die_cb,
          std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
@@ -42,11 +40,9 @@ public:
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback,
             typename WorkHint, typename Fn, typename... Args>
-  thread(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+  thread(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
          with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
-    fork(with_callback,
-         std::forward<OnDriftForkCallback>(on_drift_fork_cb),
-         std::forward<OnDriftDieCallback>(on_drift_die_cb),
+    fork(with_callback, on_drift_fork_cb, on_drift_die_cb,
          with_workhint, w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
@@ -65,13 +61,12 @@ public:
   }
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback, typename Fn, typename... Args>
-  void fork(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+  void fork(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
             Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     w.sched().fork(handler_,
-                   std::forward<OnDriftForkCallback>(on_drift_fork_cb),
-                   std::forward<OnDriftDieCallback>(on_drift_die_cb),
+                   on_drift_fork_cb, on_drift_die_cb,
                    1, 1, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
@@ -85,13 +80,12 @@ public:
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback,
             typename WorkHint, typename Fn, typename... Args>
-  void fork(with_callback_t, OnDriftForkCallback&& on_drift_fork_cb, OnDriftDieCallback&& on_drift_die_cb,
+  void fork(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
             with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     w.sched().fork(handler_,
-                   std::forward<OnDriftForkCallback>(on_drift_fork_cb),
-                   std::forward<OnDriftDieCallback>(on_drift_die_cb),
+                   on_drift_fork_cb, on_drift_die_cb,
                    w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 

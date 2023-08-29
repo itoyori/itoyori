@@ -139,7 +139,8 @@ public:
   }
 
   template <typename InputIterator,
-            typename = std::void_t<typename std::iterator_traits<InputIterator>::iterator_category>>
+            typename = std::enable_if_t<std::is_convertible_v<typename std::iterator_traits<InputIterator>::iterator_category,
+                                                              std::input_iterator_tag>>>
   global_vector(const global_vector_options& opts, InputIterator first, InputIterator last) : opts_(opts) {
     initialize_from_iter(first, last,
                          typename std::iterator_traits<InputIterator>::iterator_category{});
@@ -304,7 +305,8 @@ public:
   }
 
   template <typename InputIterator,
-            typename = std::void_t<typename std::iterator_traits<InputIterator>::iterator_category>>
+            typename = std::enable_if_t<std::is_convertible_v<typename std::iterator_traits<InputIterator>::iterator_category,
+                                                              std::input_iterator_tag>>>
   iterator insert(const_iterator position, InputIterator first, InputIterator last) {
     return insert_iter(position - cbegin(), first, last,
                        typename std::iterator_traits<InputIterator>::iterator_category{});

@@ -97,7 +97,8 @@ inline T* checkout_with_getput(global_ptr<T> ptr, std::size_t count) {
   if (!SkipFetch) {
     core::instance::get().get(ptr.raw_ptr(), ret, size);
   }
-  *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(ret) + size) = ptr.raw_ptr();
+  *reinterpret_cast<void**>(reinterpret_cast<std::byte*>(ret) + size) =
+      const_cast<std::remove_const_t<T>*>(ptr.raw_ptr());
   return ret;
 }
 

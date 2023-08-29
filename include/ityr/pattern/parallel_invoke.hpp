@@ -69,23 +69,44 @@ public:
   }
 
   template <typename Fn, typename... Args>
-  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args) {
-    using retval_t = std::invoke_result_t<Fn, Args...>;
+  inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args) {
+    // universal reference is not available for concrete types (std::tuple in this case)
+    return parallel_invoke_with_args(std::forward<Fn>(fn), args);
+  }
 
-    if constexpr (std::is_void_v<retval_t>) {
-      std::apply(std::forward<Fn>(fn),
-                 std::forward<std::tuple<Args...>>(args));
-      return std::make_tuple(std::monostate{});
-    } else {
-      auto ret = std::apply(std::forward<Fn>(fn),
-                            std::forward<std::tuple<Args...>>(args));
-      return std::make_tuple(ret);
-    }
+  template <typename Fn, typename... Args>
+  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args) {
+    return parallel_invoke_with_args(std::forward<Fn>(fn), std::move(args));
+  }
+
+  template <typename Fn, typename... Args, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args, Rest&&... rest) {
+    return parallel_invoke_with_args(std::forward<Fn>(fn), args, std::forward<Rest>(rest)...);
   }
 
   template <typename Fn, typename... Args, typename... Rest>
   inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, Rest&&... rest) {
-    using retval_t = std::invoke_result_t<Fn, Args...>;
+    return parallel_invoke_with_args(std::forward<Fn>(fn), std::move(args), std::forward<Rest>(rest)...);
+  }
+
+private:
+  template <typename Fn, typename ArgsTuple>
+  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple) {
+    using retval_t = std::invoke_result_t<decltype(std::apply<Fn, ArgsTuple>), Fn, ArgsTuple>;
+
+    if constexpr (std::is_void_v<retval_t>) {
+      std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+      return std::make_tuple(std::monostate{});
+
+    } else {
+      auto&& ret = std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+      return std::make_tuple(std::forward<decltype(ret)>(ret));
+    }
+  }
+
+  template <typename Fn, typename ArgsTuple, typename... Rest>
+  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple, Rest&&... rest) {
+    using retval_t = std::invoke_result_t<decltype(std::apply<Fn, ArgsTuple>), Fn, ArgsTuple>;
 
     constexpr int n_rest_tasks = count_num_tasks<Rest...>::value;
     static_assert(n_rest_tasks > 0);
@@ -97,16 +118,17 @@ public:
     ito::poll([&]() { all_serialized_ = false; return ori::release_lazy(); },
               [&](ori::release_handler rh) { ori::acquire(rh); ori::acquire(rh_); });
 
-    ito::thread<retval_t> th(ito::with_callback,
-                             [rh = rh_]() { ori::acquire(rh); },
-                             []() { ori::release(); },
-                             ito::with_workhint, 1, n_rest_tasks,
-                             std::apply<const Fn&, const std::tuple<Args...>&>,
-                             std::forward<Fn>(fn),
-                             std::forward<std::tuple<Args...>>(args));
+    ito::thread<retval_t> th(
+        ito::with_callback, [rh = rh_] { ori::acquire(rh); }, [] { ori::release(); },
+        ito::with_workhint, 1, n_rest_tasks,
+        [fn         = std::forward<Fn>(fn),
+         args_tuple = std::forward<ArgsTuple>(args_tuple)]() mutable {
+          return std::apply(std::forward<decltype(fn)>(fn),
+                            std::forward<decltype(args_tuple)>(args_tuple));
+        });
     all_serialized_ &= th.serialized();
 
-    auto ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
+    auto&& ret_rest = parallel_invoke_aux(std::forward<Rest>(rest)...);
 
     if constexpr (std::is_void_v<retval_t>) {
       if (!th.serialized()) {
@@ -114,18 +136,20 @@ public:
       }
 
       th.join();
-      return std::tuple_cat(std::make_tuple(std::monostate{}), ret_rest);
+      return std::tuple_cat(std::make_tuple(std::monostate{}),
+                            std::move(ret_rest));
+
     } else {
       if (!th.serialized()) {
         ori::release();
       }
 
-      auto ret = th.join();
-      return std::tuple_cat(std::make_tuple(ret), ret_rest);
+      auto&& ret = th.join();
+      return std::tuple_cat(std::make_tuple(std::forward<decltype(ret)>(ret)),
+                            std::move(ret_rest));
     }
   }
 
-private:
   ReleaseHandler rh_;
   bool           all_serialized_ = true;
 };
@@ -166,7 +190,7 @@ inline auto parallel_invoke(Args&&... args) {
   auto tgdata = ito::task_group_begin();
 
   internal::parallel_invoke_state s(rh);
-  auto ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
+  auto&& ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
 
   // No lazy release here because the suspended thread (cross-worker tasks in ADWS) is
   // always resumed by another process.
@@ -178,7 +202,7 @@ inline auto parallel_invoke(Args&&... args) {
   if (!s.all_serialized()) {
     ori::acquire();
   }
-  return ret;
+  return std::move(ret);
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_invoke] parallel invoke") {
