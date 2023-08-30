@@ -103,7 +103,7 @@ inline T* checkout_with_getput(global_ptr<T> ptr, std::size_t count) {
 }
 
 template <typename T>
-inline const T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) {
+inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) {
   if constexpr (force_getput) {
     return checkout_with_getput<false>(ptr, count);
   }
@@ -158,12 +158,12 @@ inline void checkin_with_getput(T* raw_ptr, std::size_t count) {
 }
 
 template <typename T>
-inline void checkin(const T* raw_ptr, std::size_t count, mode::read_t) {
+inline void checkin(T* raw_ptr, std::size_t count, mode::read_t) {
   if constexpr (force_getput) {
     checkin_with_getput<false>(raw_ptr, count);
     return;
   }
-  core::instance::get().checkin(const_cast<T*>(raw_ptr), count * sizeof(T), mode::read);
+  core::instance::get().checkin(const_cast<std::remove_const_t<T>*>(raw_ptr), count * sizeof(T), mode::read);
 }
 
 template <typename T>

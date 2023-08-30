@@ -65,12 +65,18 @@ inline constexpr no_access_t no_access;
 template <typename T, typename Mode>
 class checkout_span {
 public:
-  using element_type = T;
-  using value_type   = std::remove_cv_t<T>;
-  using size_type    = std::size_t;
-  using pointer      = std::conditional_t<std::is_same_v<Mode, checkout_mode::read_t>, const T*, T*>;
-  using iterator     = pointer;
-  using reference    = std::conditional_t<std::is_same_v<Mode, checkout_mode::read_t>, const T&, T&>;
+  using element_type           = T;
+  using value_type             = std::remove_cv_t<element_type>;
+  using size_type              = std::size_t;
+  using pointer                = element_type*;
+  using const_pointer          = std::add_const_t<element_type>*;
+  using difference_type        = typename std::iterator_traits<pointer>::difference_type;
+  using reference              = typename std::iterator_traits<pointer>::reference;
+  using const_reference        = typename std::iterator_traits<const_pointer>::reference;
+  using iterator               = pointer;
+  using const_iterator         = const_pointer;
+  using reverse_iterator       = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
   checkout_span() {}
 
@@ -102,6 +108,15 @@ public:
 
   constexpr iterator begin() const noexcept { return ptr_; }
   constexpr iterator end() const noexcept { return ptr_ + n_; }
+
+  constexpr const_iterator cbegin() const noexcept { return ptr_; }
+  constexpr const_iterator cend() const noexcept { return ptr_ + n_; }
+
+  constexpr reverse_iterator rbegin() const noexcept { return std::make_reverse_iterator(end()); }
+  constexpr reverse_iterator rend() const noexcept { return std::make_reverse_iterator(begin()); }
+
+  constexpr const_reverse_iterator crbegin() const noexcept { return std::make_reverse_iterator(cend()); }
+  constexpr const_reverse_iterator crend() const noexcept { return std::make_reverse_iterator(begin()); }
 
   constexpr reference operator[](size_type i) const { assert(i <= n_); return ptr_[i]; }
 
