@@ -54,8 +54,8 @@ ityr::root_exec([=] { // A copy of the entire global vector is created
 });
 ```
 
-The above program will copy the whole data stored in the global vector across `ityr::root_exec()`.
-To prevent this unnecessary copy, the user can instead use `ityr::global_span`, which does not hold ownership for the memory region.
+The above program will clone the whole data managed in the global vector across the `ityr::root_exec()` call.
+To prevent unnecessary copy, the user can instead use `ityr::global_span`, which does not hold ownership for the memory region.
 
 Good example:
 ```cpp
@@ -70,6 +70,9 @@ ityr::root_exec([=] {
       [=](int x) { /* ... */ });
 });
 ```
+
+Or, create a global vector inside `ityr::root_exec()`, but this is allowed only in the root thread.
+Nevertheless, users should pay attention to vector copying across lambda functions (e.g., in `ityr::parallel_invoke()`).
 
 Another pitfall exists in using lambda expressions inside a class/struct.
 To demonstrate this problem, suppose that an additional parameter `cutoff` is added to the Fibonacci example, so that sufficiently small leaf computations run sequentially.
@@ -97,7 +100,7 @@ struct fib {
 };
 ```
 
-Until C++20, `this` is implicitly captured by reference, even if the default capture `=` is specified.
+Until C++20, `this` is implicitly captured *by reference*, even if the default copy capture `=` is specified.
 This means that `*this` object in the parent is referred by children, which is not allowed in Itoyori.
 To prevent that, `*this` objects must be explicitly copy-captured (e.g., `[=, *this]`) when making fork/join calls inside a class/struct.
 
@@ -216,7 +219,7 @@ ityr::root_exec([=] {
   ityr::transform_reduce(
       ityr::execution::par,
       gv.begin(), gv.end(),
-      0, std::plus<int>{},
+      ityr::reducer::plus<int>{},
       [=](int x) {
         /* ... */
         ityr::parallel_invoke(/* ... */});
@@ -237,8 +240,8 @@ ityr::root_exec([=] {
       ityr::execution::par,
       ityr::make_global_iterator(gv.begin(), ityr::checkout_mode::no_access),
       ityr::make_global_iterator(gv.end()  , ityr::checkout_mode::no_access),
-      0, std::plus<int>{},
-      [=](auto&& x_ref) {
+      ityr::reducer::plus<int>{},
+      [=](auto&& x_ref) { // type: ityr::ori::global_ref<int>
         /* ... */
         ityr::parallel_invoke(/* ... */);
         return x_ref.get() + /* ... */;

@@ -49,7 +49,7 @@ mpicxx -I/path/to/ityr/include/dir -std=c++17 -fno-stack-protector sample.cpp
 
 Notes:
 - Itoyori is a C++17 header-only library
-- `-fno-stack-protector` option is necessary for dynamic thread migration preserving virtual addresses
+- `-fno-stack-protector` option is necessary for allowing dynamic thread migration which preserves virtual addresses of call stacks across different processes
 
 Example output with 4 MPI processes:
 ```console
@@ -68,13 +68,14 @@ MPI Process 3/4: end
 The output indicates that the SPMD region is executed by all processes, while the root thread is executed once.
 
 Notes:
-- The output order across MPI processes is not guaranteed
+- The standard output order across MPI processes is not guaranteed
 - "Threads" refers to user-level threads implemented in Itoyori
     - Hereafter, "threads" denote "user-level threads," unless explicitly stated as "kernel-level threads"
-- Itoyori APIs are not thread-safe, in terms of kernel-level threads in each MPI process
-    - Itoyori assumes that each MPI process is mapped to a single core (so called "flat MPI")
-    - This means that the user should not manually parallelize the code with Pthreads or OpenMP
-- Threads (including the root thread) can be migrated to other MPI processes during execution (e.g., at fork/join calls)
+- Itoyori APIs are not thread-safe, in terms of kernel-level threads within each MPI process
+    - Itoyori assumes that an MPI process corresponds to a single core (so called the "flat MPI" model)
+    - In general, Itoyori users should not manually spawn kernel-level threads via Pthreads or OpenMP
+- Threads (including the root thread) can be migrated to other MPI processes during execution
+    - Currently, thread migration occurs only at fork and join calls (no preemption)
 
 ## Recursive Fork/Join Parallelism
 
@@ -125,16 +126,17 @@ int main() {
 ```
 
 Notes:
-- `ityr::parallel_invoke()` forks parallel tasks as child threads and joins them at a time
-    - It returns a tuple that consists of the return values of each parallel task
-    - The notation `parallel_invoke` is also used in shared-memory fork/join libraries such as oneTBB (formarly Intel TBB) and Microsoft PPL
-- `ityr::root_exec()` can also return a value, which is shared by all processes
+- `ityr::parallel_invoke()` forks the given function objects (labmda in this case) as child threads and joins them at a time
+    - It returns a tuple that consists of the return values of each function object
+    - The notation `parallel_invoke` is also used in common shared-memory fork/join libraries such as oneTBB (formarly Intel TBB) and Microsoft PPL
+- `ityr::root_exec()` can also return a value, which is shared by all processes when switching back to the SPMD mode
 - `ityr::is_master()` is equivalent to `ityr::my_rank() == 0`
 
-Lambda expressions for `ityr::parallel_invoke()` should capture values by copy.
-This is because threads cannot have any raw pointer or reference to other threads, including their parents (see [Pitfalls](./02_pitfalls.md) for details).
+One important difference from the shared-memory task-parallel model is that objects cannot not be passed to child threads by reference (or raw pointers).
+In the above example, lambda expressions for `ityr::parallel_invoke()` should capture values by copy (see [Pitfalls](./02_pitfalls.md) for details).
+In Itoyori, no pointer or reference to local variables in any other thread's stack is allowed.
 
-Alternatively, arguments can be passed as tuples without lambdas:
+Arguments can also be passed to child threads as tuples without using lambdas:
 ```cpp
 auto [x, y] =
   ityr::parallel_invoke(
@@ -173,10 +175,12 @@ $$
 ## Global Memory Access
 
 Unlike the above Fibonacci example, practical real-world applications would need global memory.
-Itoyori supports global address space through **checkout/checkin APIs**.
-In Itoyori, global addresses are represented as raw virtual addresses, which can be directly accessed with CPU load/store instructions, but access to the virtual memory region must be granted through explicit checkout/checkin calls.
+Itoyori offers a global address space, which can be accessed through **checkout/checkin APIs**.
+In Itoyori, global addresses are represented as merely raw virtual addresses, which can be directly accessed with CPU load/store instructions, but access to the virtual memory region must be granted through explicit checkout/checkin calls.
 
-To make checkout/checkin calls:
+In some literatures, low-level checkout and checkin APIs are explicitly called for explanation, but in the high-level API of Itoyori, we can use *checkout spans* (a sort of "smart spans") to make sure that checked-out regions are always checked in when destroyed.
+
+Usage of checkout spans:
 ```cpp
 ityr::ori::global_ptr<int> gp = /* ... */;
 {
@@ -188,26 +192,25 @@ ityr::ori::global_ptr<int> gp = /* ... */;
   /* ... */
   cs[9] = 9;
 
-  // checkin when `cs` is destroyed
+  // checkin when the checkout span `cs` is destroyed
 }
 ```
 
 Notes:
-- Although a global pointer can be expressed as just a raw pointer (`int*`), it is recommended to use a wrapper class `ityr::ori::global_ptr<int>` to prevent dereferencing without checkout
+- Although a global pointer can be expressed as just a raw pointer (`int*`), it is recommended to use a wrapper class `ityr::ori::global_ptr<int>` to prevent dereferencing it without checking out
 - The global pointer type `ityr::ori::global_ptr` is prefixed with `ityr::ori`, which is the namespace of the low-level global address space layer
     - This low-level layer is not intended to be directly used by the user unless absolutely necessary
     - Instead, it is recommended to use higher-level primitives such as `ityr::global_span` for safety
 - The user must specify a checkout mode (`ityr::checkout_mode`) for `ityr::make_checkout()`
     - The mode is either `read`, `read_write`, or `write`, as explained later
-- `cs` is of type `ityr::checkout_span`, which automatically performs a checkin operation when destroyed
 
 About the checkout mode:
 - If `read` or `read_write`, the checked-out region has valid data after the checkout call
     - If `write`, the region may have indeterminate values by skipping fetching data from remote nodes, which can be useful for write-only access (e.g., initialization)
 - If `read_write` or `write`, the entire checked-out region is treated as modified
-    - Internally, the cache for this region is considered *dirty*
+    - Internally, the cache for this region is considered *dirty* and written back to their home later
 
-In the following, we explain how to use checkout/checkin APIs through an example of parallel mergesort, in which the input array is divided into two subarrays and sorted recursively (divide-and-conquer).
+In the following, we explain how to write programs with global memory through an example of parallel mergesort, in which the input array is divided into two subarrays and sorted recursively (divide-and-conquer).
 
 Parallel mergesort example:
 ```cpp
@@ -232,10 +235,10 @@ void msort(ityr::global_span<int> a) {
 }
 ```
 
-The parallel mergesort example is written in a completely data-race-free manner.
-In fact, Itoyori does not allow any data race; i.e., the same region can be concurrently checked out by multiple processes with the `ityr::checkout_mode::read` mode only.
+The parallel mergesort example is written in a data-race-free manner.
+In fact, Itoyori does not allow any data race; i.e., the same region can be concurrently checked out by multiple processes in the `ityr::checkout_mode::read` mode only.
 
-As Itoyori performs software caching for global memory accesses, the user can expect both temporal and spatial locality is exploited by the system.
+As Itoyori provides a software cache for global memory accesses, the user can expect both temporal and spatial locality is exploited by the system.
 This means that, even if the same or close memory regions are checked out multiple times, the cache prevents redundant and fine-grained communication.
 
 Full mergesort program:
@@ -263,7 +266,7 @@ int main() {
   {
     int n = 16384;
     ityr::global_vector<int> a_vec({.collective = true}, n);
-    ityr::global_span<int> a(a_vec.begin(), a_vec.end());
+    ityr::global_span<int> a(a_vec);
 
     if (ityr::is_master()) {
       // initialize the array with random numbers
@@ -292,14 +295,18 @@ int main() {
 Notes:
 - `ityr::global_vector` is used to allocate global memory
     - The first (optional) argument is `ityr::global_vector_options`
-    - `.collective = true` means the global memory should be collectively allocated by all processes (this must be performed outside `ityr::root_exec()`)
+    - `.collective = true` means the global memory should be collectively allocated by all processes
+        - This must be performed in the root thread or outside `ityr::root_exec()` (the SPMD region)
     - If `.collective = false`, the global memory is allocated in local memory of each process (noncollective)
-- `ityr::global_span` is used for task-parallel execution, instead of `ityr::global_vector`, in order to avoid unnecessary vector copy
+        - This can be performed in any thread
+- `ityr::global_span` is often used to pass a view of `ityr::global_vector` to other threads, so as not to unnecessarily copy the contents of vectors
     - See [Pitfalls](./02_pitfalls.md)
 - `ityr::checkout_mode::write` is specified for array initialization in order to skip fetching unnecessary data
+    - This should be used only for trivially copyable objects
 - `ityr::checkout_mode::read` is specified for checking the result, in which the array is never modified
-- It is allowed to access the global variable `cutoff` without checkout, but it is on the user's responsibility to guarantee that global variables have the same values across all processes
-    - Global variables are assumed to have the same virtual addresses across all processes
+- The user can freely access global variables like `cutoff` without checking them out, but it is on the user's responsibility to guarantee that global variables have the same values across all processes
+    - The term "global variable" here is not about Itoyori's global address space but is a global variable in the C/C++ term
+    - Global variables are assumed to have the same virtual addresses across all processes (thanks to the command `setarch $(uname -m) --addr-no-randomize` that disables address randomization)
 
 Also note that the above example does not work with an array larger than each process's local cache.
 The following runtime error suggests that checkout requests are too large.
@@ -308,15 +315,15 @@ The following runtime error suggests that checkout requests are too large.
 cache is exhausted (too much checked-out memory)
 ```
 
-To avoid this, checkout must be performed in a sufficiently coarse-grained manner.
-For example, the merge operation should be parallelized to decompose checkout/checkin operations into smaller ones, and also to increase parallelism.
+To avoid this, checkout requests must be decomposed into sufficiently small chunks, so that each chunk fits into the cache.
+Divide-and-conquer parallelization is often a good fit for this problem, as it effectively decomposes checkout/checkin operations into smaller ones and also increases parallelism.
 See Itoyori's [Cilksort example](https://github.com/itoyori/itoyori/blob/master/examples/cilksort.cpp) for a parallelized merge implementation.
-For more regular patterns, high-level parallel loops can be used as explained in the next section.
+For more regular parallel patterns, higher-order parallel patterns or parallel loops can be used as explained in the next section.
 
 ## Parallel Loops and Global Iterators
 
 When computing on an array that is much larger than each process's local cache, checkout calls have to be made in sufficiently small granularity.
-This results in the following complicated code to express a simple *for* loop:
+If manually written, the code to express a simple *for* loop would look like the following:
 ```cpp
 ityr::global_vector<int> v(/* ... */);
 /* ... */
@@ -332,7 +339,7 @@ for (std::size_t i = 0; i < v.size(); i += block_size) {
 }
 ```
 
-It makes each checkout call with a size no larger than `block_size` to prevent too large checkout requests.
+This code repeatedly makes checkout calls with a size no larger than `block_size` to prevent too large checkout requests.
 
 By using a higher-order function `ityr::for_each()` with *global iterators*, the same goal can be achieved:
 ```cpp
@@ -348,16 +355,19 @@ ityr::for_each(
     });
 ```
 
-`ityr::for_each` receives a user-defined function (lambda) that operates on each element, resulting in more concise and structured code.
+`ityr::for_each()` receives an execution policy, an iterator range, and a user-defined function (lambda) that operates on each element.
+Global iterators passed to `ityr::for_each()` are automatically checked out internally, and raw references to corresponding elements are passed to the user function.
+This allows for more concise and structured code.
 
 Notes:
-- Itoyori's iterator-based functions such as `ityr::for_each()` resemble C++ STL algorithms
+- Itoyori's iterator-based functions such as `ityr::for_each()` resemble the standard C++ algorithms (like `std::for_each()`)
+- If global iterators (created with `ityr::make_global_iterator()`) are passed as arguments, they are automatically checked out in the specified granularity
+    - Iterators that can be passed to these functions are not limited to global iterators
+        - For instance, `ityr::count_iterator` can be used in combination to get an index of each iterator element (i.e., loop counter)
+    - Global pointers can also be passed as iterators, but they are not automatically checked out; instead global references (of type `ityr::ori::global_ref`) are passed to user functions
 - The first argument `ityr::execution::sequenced_policy` specifies the sequential execution policy
-    - `checkout_count` parameter denotes the number of elements that are internally checked out at the same time
+    - The `checkout_count` parameter denotes the number of elements that are internally checked out at one time
     - By default, the checkout count is 1 (`ityr::execution::seq`)
-- If global iterators made with `ityr::make_global_iterator()` are passed, they are automatically checked out in the specified granularity
-    - Global pointers can be treated as iterators, but they are not automatically checked out; instead `ityr::ori::global_ref` is passed to user functions
-    - If the checkout mode is `read`, a const reference is passed to the user function; otherwise, a nonconst reference is passed
 
 This can be easily translated into a parallel *for* loop:
 ```cpp
@@ -376,29 +386,28 @@ ityr::for_each(
 
 Notes:
 - With a parallel execution policy, `ityr::for_each()` recursively divides the index space into two parts and runs them in parallel
-- The execution policy `ityr::execution::parallel_policy` accepts `cutoff_count` option, which specifies the cutoff count for the leaf tasks
-    - Usually, the same value should be specified to both `cutoff_count` and `checkout_count`
+- The execution policy `ityr::execution::parallel_policy` accepts the `cutoff_count` option, which specifies the cutoff count for the leaf tasks
+    - In most cases, the same values will be specified to both `cutoff_count` and `checkout_count`
     - By default, the cutoff count is also 1 (`ityr::execution::par`)
 
 In addition, `ityr::for_each()` can accept multiple iterators:
 ```cpp
-ityr::global_vector<int> v(/* ... */);
-/* ... */
-std::size_t block_size = /* ... */;
+int n = /* ... */;
+ityr::global_vector<int> v(n);
+
 ityr::for_each(
-    ityr::execution::parallel_policy{.cutoff_count   = block_size,
-                                     .checkout_count = block_size},
+    ityr::execution::parallel_policy{/* ... */},
     ityr::count_iterator<int>(0),
-    ityr::count_iterator<int>(v.size()),
+    ityr::count_iterator<int>(n),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::write),
     [=](int i, int& x) {
       x = i;
     });
+// v = {0, 1, 2, ..., n - 1}
 ```
 
 `ityr::count_iterator` is a special iterator that counts up its value when incremented.
 Using it with `ityr::for_each()` corresponds to parallelizing a loop that looks like `for (int i = 0; i < n; i++)`.
-Thus, the elements of `v` in the above code will be 0, 1, 2, ... , n.
 
 AXPY is an example that can be concisely written with `ityr::for_each()`.
 AXPY computes a scalar-vector product and adds the result to another vector:
@@ -432,8 +441,10 @@ double sum(ityr::global_span<double> xs) {
 }
 ```
 
-Note that `ityr::make_global_iterator()` is not needed here because the checkout mode is automatically inferred to `ityr::checkout_mode::read`.
-The user can also provide a user-defined function (lambda) to process each element before summation with `ityr::transform_reduce()`.
+Note that global iterators created by `ityr::make_global_iterator()` are not needed for `ityr::reduce()` because the checkout mode is automatically inferred to `ityr::checkout_mode::read` here.
+In Itoyori, for specific patterns where input/output is clear (e.g., `ityr::reduce()`, `ityr::transform()`), global pointers are automatically converted to global iterators with appropriate checkout modes, unlike more generic patterns like `ityr::for_each`.
+
+When performing reduction, the user can also provide a user-defined function (lambda) to process each element before summation with `ityr::transform_reduce()`.
 
 For example, to calculate L2 norm:
 ```cpp
@@ -441,7 +452,7 @@ double norm(ityr::global_span<double> xs) {
   double s2 =
     ityr::transform_reduce(ityr::execution::par,
                            xs.begin(), xs.end(),
-                           double(0), std::plus<double>{},
+                           ityr::reducer::plus<double>{},
                            [](double x) { return x * x; });
   return std::sqrt(s2);
 }
@@ -450,7 +461,9 @@ double norm(ityr::global_span<double> xs) {
 In the above code, `x * x` is applied to each element before summed up.
 
 `ityr::transform_reduce()` supports a general reduction operation more than just summation.
-The user can also change the identity value and the combine operator, as long as the operator is *associative* (*commutativity* is not required in Itoyori).
+Users can define their own *reducers*, by providing *associative* reduction operator (*commutativity* is not required in Itoyori) and an identity element (to constitute a *monoid*).
+
+TODO: write a document for reducers
 
 Full code example to calculate AXPY and show the result's L2 norm:
 ```cpp
@@ -471,33 +484,35 @@ double norm(ityr::global_span<double> xs) {
   double s2 =
     ityr::transform_reduce(ityr::execution::par,
                            xs.begin(), xs.end(),
-                           double(0), std::plus<double>{},
+                           ityr::reducer::plus<double>{},
                            [](double x) { return x * x; });
   return std::sqrt(s2);
 }
 
 int main() {
   ityr::init();
-  {
+  ityr::root_exec([=] {
     double a = 0.1;
     std::size_t n = 10000;
 
     ityr::global_vector<double> x_vec({.collective = true}, n, 1.0);
     ityr::global_vector<double> y_vec({.collective = true}, n, 1.0);
 
-    ityr::global_span<double> x(x_vec.begin(), x_vec.end());
-    ityr::global_span<double> y(y_vec.begin(), y_vec.end());
+    ityr::global_span<double> x(x_vec);
+    ityr::global_span<double> y(y_vec);
 
-    double result =
-      ityr::root_exec([=] {
-        axpy(a, x, y);
-        return norm(y);
-      });
+    // x = {1.0, 1.0, ..., 1.0}
+    // y = {1.0, 1.0, ..., 1.0}
 
-    if (ityr::is_master()) {
-      std::cout << result << std::endl;
-    }
-  }
+    axpy(a, x, y);
+
+    // x = {1.0, 1.0, ..., 1.0}
+    // y = {1.1, 1.1, ..., 1.1}
+
+    std::cout << norm(y) << std::endl;
+
+    // output = 110 (= sqrt(1.1 * 1.1 * 10000))
+  });
   ityr::fini();
 }
 ```
