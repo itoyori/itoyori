@@ -29,7 +29,7 @@ struct histogram {
 
   void foldl(accumulator_type& acc_l, const accumulator_type& acc_r) const {
     transform(
-        execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+        execution::parallel_policy(128),
         acc_l.begin(), acc_l.end(), acc_r.begin(), acc_l.begin(),
         [](const Counter& c1, const Counter& c2) { return c1 + c2; });
   }
@@ -78,7 +78,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
       global_vector<double> v({.collective = true}, n_samples);
 
       transform(
-          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          execution::parallel_policy(128),
           count_iterator<int>(0), count_iterator<int>(n_samples), v.begin(),
           [=](int i) {
             double x = (static_cast<double>(i) + 0.5) / n_bins;
@@ -86,7 +86,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
           });
 
       auto bins = reduce(
-          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          execution::parallel_policy(128),
           v.begin(), v.end(), histogram<double>(n_bins, 0.0, 1.0));
       ITYR_CHECK(bins.size() == n_bins);
 
@@ -108,7 +108,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
       int n = 10000;
 
       global_vector<int> ret = transform_reduce(
-          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          execution::parallel_policy(128),
           count_iterator<int>(0),
           count_iterator<int>(n),
           reducer::concat_vec<int>{},
@@ -117,7 +117,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
 
       global_vector<int> ans(n);
       copy(
-          execution::parallel_policy{.cutoff_count = 128, .checkout_count = 128},
+          execution::parallel_policy(128),
           count_iterator<int>(0),
           count_iterator<int>(n),
           ans.begin());

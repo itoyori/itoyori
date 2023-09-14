@@ -5,6 +5,7 @@
 #include "ityr/ori/ori.hpp"
 #include "ityr/pattern/root_exec.hpp"
 #include "ityr/pattern/global_iterator.hpp"
+#include "ityr/container/workhint_view.hpp"
 
 namespace ityr {
 
@@ -22,6 +23,11 @@ struct sequenced_policy {
    * @brief The maximum number of elements to check out at the same time if automatic checkout is enabled.
    */
   std::size_t checkout_count = 1;
+
+  constexpr sequenced_policy() noexcept {}
+
+  constexpr sequenced_policy(std::size_t checkout_count) noexcept
+    : checkout_count(checkout_count) {}
 };
 
 /**
@@ -31,7 +37,25 @@ struct sequenced_policy {
  * @see `ityr::execution::parallel_policy`
  * @see `ityr::for_each()`
  */
+template <typename WorkHint = common::wallclock::wallclock_t>
 struct parallel_policy {
+  constexpr parallel_policy() noexcept {}
+
+  constexpr parallel_policy(std::size_t cutoff_count) noexcept
+    : cutoff_count(cutoff_count), checkout_count(cutoff_count) {}
+
+  constexpr parallel_policy(std::size_t cutoff_count, std::size_t checkout_count) noexcept
+    : cutoff_count(cutoff_count), checkout_count(checkout_count) {}
+
+  parallel_policy(workhint_range_view<WorkHint> workhint) noexcept
+    : workhint(workhint) {}
+
+  parallel_policy(std::size_t cutoff_count, workhint_range_view<WorkHint> workhint) noexcept
+    : cutoff_count(cutoff_count), checkout_count(cutoff_count), workhint(workhint) {}
+
+  parallel_policy(std::size_t cutoff_count, std::size_t checkout_count, workhint_range_view<WorkHint> workhint) noexcept
+    : cutoff_count(cutoff_count), checkout_count(checkout_count), workhint(workhint) {}
+
   /**
    * @brief The maximum number of elements to check out at the same time if automatic checkout is enabled.
    */
@@ -41,6 +65,11 @@ struct parallel_policy {
    * @brief The number of elements for leaf tasks to stop parallel recursion.
    */
   std::size_t checkout_count = 1;
+
+  /**
+   * @brief Work hints for ADWS.
+   */
+  workhint_range_view<WorkHint> workhint;
 };
 
 /**
@@ -57,19 +86,21 @@ inline constexpr parallel_policy par;
 
 namespace internal {
 
-inline sequenced_policy to_sequenced_policy(const sequenced_policy& opts) {
+inline constexpr sequenced_policy to_sequenced_policy(const sequenced_policy& opts) noexcept {
   return opts;
 }
 
-inline sequenced_policy to_sequenced_policy(const parallel_policy& opts) {
-  return {.checkout_count = opts.checkout_count};
+template <typename WorkHint>
+inline constexpr sequenced_policy to_sequenced_policy(const parallel_policy<WorkHint>& opts) noexcept {
+  return sequenced_policy(opts.checkout_count);
 }
 
 inline void assert_policy(const sequenced_policy& opts) {
   ITYR_CHECK(0 < opts.checkout_count);
 }
 
-inline void assert_policy(const parallel_policy& opts) {
+template <typename WorkHint>
+inline void assert_policy(const parallel_policy<WorkHint>& opts) {
   ITYR_CHECK(0 < opts.checkout_count);
   ITYR_CHECK(opts.checkout_count <= opts.cutoff_count);
 }
@@ -200,7 +231,7 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
 
   root_exec([=] {
     internal::for_each_aux(
-        execution::sequenced_policy{.checkout_count = 128},
+        execution::sequenced_policy(128),
         [&](common::move_only_t& mo, long i) {
           mo = common::move_only_t{i};
         },
@@ -210,11 +241,11 @@ ITYR_TEST_CASE("[ityr::pattern::serial_loop] move_backward") {
 
     long offset = 1000;
     move_backward(
-        execution::sequenced_policy{.checkout_count = 128},
+        execution::sequenced_policy(128),
         p, p + n - offset, p + n);
 
     internal::for_each_aux(
-        execution::sequenced_policy{.checkout_count = 128},
+        execution::sequenced_policy(128),
         [&](const common::move_only_t& mo, long i) {
           if (i < offset) {
             ITYR_CHECK(mo.value() == -1);

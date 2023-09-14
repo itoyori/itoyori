@@ -164,7 +164,7 @@ void fill_array(ityr::global_span<T> s) {
   std::mt19937 engine(seed++);
 
   ityr::for_each(
-      ityr::execution::sequenced_policy{.checkout_count = cutoff_count},
+      ityr::execution::sequenced_policy(cutoff_count),
       ityr::make_global_iterator(s.begin(), ityr::checkout_mode::write),
       ityr::make_global_iterator(s.end()  , ityr::checkout_mode::write),
       [&](T& v) { v = get_random_elem<T>(engine); });
@@ -177,8 +177,7 @@ bool check_sorted(ityr::global_span<T> s) {
   }
   // check s[i] <= s[i+1] for all i
   return ityr::transform_reduce(
-      ityr::execution::parallel_policy{.cutoff_count   = cutoff_count,
-                                       .checkout_count = cutoff_count},
+      ityr::execution::parallel_policy(cutoff_count),
       s.begin(), s.end() - 1, s.begin() + 1,
       ityr::reducer::logical_and{}, std::less_equal<>{});
 }

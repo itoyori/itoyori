@@ -347,7 +347,7 @@ ityr::global_vector<int> v(/* ... */);
 /* ... */
 std::size_t block_size = /* ... */;
 ityr::for_each(
-    ityr::execution::sequenced_policy{.checkout_count = block_size},
+    ityr::execution::sequenced_policy(block_size),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
@@ -366,7 +366,7 @@ Notes:
         - For instance, `ityr::count_iterator` can be used in combination to get an index of each iterator element (i.e., loop counter)
     - Global pointers can also be passed as iterators, but they are not automatically checked out; instead global references (of type `ityr::ori::global_ref`) are passed to user functions
 - The first argument `ityr::execution::sequenced_policy` specifies the sequential execution policy
-    - The `checkout_count` parameter denotes the number of elements that are internally checked out at one time
+    - The parameter for this policy (`checkout_count`) specifies the number of elements that are internally checked out at one time
     - By default, the checkout count is 1 (`ityr::execution::seq`)
 
 This can be easily translated into a parallel *for* loop:
@@ -375,8 +375,7 @@ ityr::global_vector<int> v(/* ... */);
 /* ... */
 std::size_t block_size = /* ... */;
 ityr::for_each(
-    ityr::execution::parallel_policy{.cutoff_count   = block_size,
-                                     .checkout_count = block_size},
+    ityr::execution::parallel_policy(block_size),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::read_write),
     ityr::make_global_iterator(v.end()  , ityr::checkout_mode::read_write),
     [=](int& x) {
@@ -386,8 +385,9 @@ ityr::for_each(
 
 Notes:
 - With a parallel execution policy, `ityr::for_each()` recursively divides the index space into two parts and runs them in parallel
-- The execution policy `ityr::execution::parallel_policy` accepts the `cutoff_count` option, which specifies the cutoff count for the leaf tasks
+- The execution policy `ityr::execution::parallel_policy` can additionally accept the `cutoff_count` option, which specifies the cutoff count for the leaf tasks
     - In most cases, the same values will be specified to both `cutoff_count` and `checkout_count`
+        - The above example is a shorthand for specifying the same value (`block_size`) to both counts
     - By default, the cutoff count is also 1 (`ityr::execution::par`)
 
 In addition, `ityr::for_each()` can accept multiple iterators:
@@ -396,7 +396,7 @@ int n = /* ... */;
 ityr::global_vector<int> v(n);
 
 ityr::for_each(
-    ityr::execution::parallel_policy{/* ... */},
+    ityr::execution::parallel_policy(/* ... */),
     ityr::count_iterator<int>(0),
     ityr::count_iterator<int>(n),
     ityr::make_global_iterator(v.begin(), ityr::checkout_mode::write),

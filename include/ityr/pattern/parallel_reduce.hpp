@@ -14,18 +14,18 @@ namespace ityr {
 
 namespace internal {
 
-template <typename AccumulateOp, typename CombineOp, typename Reducer,
+template <typename WorkHint, typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ReleaseHandler, typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-parallel_reduce_generic(const execution::parallel_policy&  policy,
-                        AccumulateOp                       accumulate_op,
-                        CombineOp                          combine_op,
-                        Reducer                            reducer,
-                        typename Reducer::accumulator_type acc,
-                        ReleaseHandler                     rh,
-                        ForwardIterator                    first,
-                        ForwardIterator                    last,
-                        ForwardIterators...                firsts) {
+parallel_reduce_generic(const execution::parallel_policy<WorkHint>& policy,
+                        AccumulateOp                                accumulate_op,
+                        CombineOp                                   combine_op,
+                        Reducer                                     reducer,
+                        typename Reducer::accumulator_type          acc,
+                        ReleaseHandler                              rh,
+                        ForwardIterator                             first,
+                        ForwardIterator                             last,
+                        ForwardIterators...                         firsts) {
   using acc_t = typename Reducer::accumulator_type;
 
   ori::poll();
@@ -106,17 +106,17 @@ reduce_generic(const execution::sequenced_policy& policy,
   return acc;
 }
 
-template <typename AccumulateOp, typename CombineOp, typename Reducer,
+template <typename WorkHint, typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-reduce_generic(const execution::parallel_policy&  policy,
-               AccumulateOp                       accumulate_op,
-               CombineOp                          combine_op,
-               Reducer                            reducer,
-               typename Reducer::accumulator_type acc,
-               ForwardIterator                    first,
-               ForwardIterator                    last,
-               ForwardIterators...                firsts) {
+reduce_generic(const execution::parallel_policy<WorkHint>& policy,
+               AccumulateOp                                accumulate_op,
+               CombineOp                                   combine_op,
+               Reducer                                     reducer,
+               typename Reducer::accumulator_type          acc,
+               ForwardIterator                             first,
+               ForwardIterator                             last,
+               ForwardIterators...                         firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer, acc,
@@ -382,7 +382,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] reduce and transform_reduce") {
     long n = 100000;
     long r = ito::root_exec([=] {
       return reduce(
-          execution::parallel_policy{.cutoff_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0),
           count_iterator<long>(n));
     });
@@ -393,7 +393,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] reduce and transform_reduce") {
     long n = 100000;
     long r = ito::root_exec([=] {
       return transform_reduce(
-          execution::parallel_policy{.cutoff_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0),
           count_iterator<long>(n),
           reducer::plus<long>{},
@@ -406,7 +406,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] reduce and transform_reduce") {
     long n = 100000;
     long r = ito::root_exec([=] {
       return transform_reduce(
-          execution::parallel_policy{.cutoff_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0),
           count_iterator<long>(n),
           count_iterator<long>(0),
@@ -419,7 +419,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] reduce and transform_reduce") {
   ITYR_SUBCASE("zero elements") {
     long r = ito::root_exec([=] {
       return reduce(
-          execution::parallel_policy{.cutoff_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0),
           count_iterator<long>(0));
     });
@@ -440,7 +440,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr
   ito::root_exec([=] {
     long count = 0;
     for_each(
-        execution::sequenced_policy{.checkout_count = 100},
+        execution::sequenced_policy(100),
         make_global_iterator(p    , checkout_mode::write),
         make_global_iterator(p + n, checkout_mode::write),
         [&](long& v) { v = count++; });
@@ -458,7 +458,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr
   ITYR_SUBCASE("custom cutoff and checkout count") {
     long r = ito::root_exec([=] {
       return reduce(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 50},
+          execution::parallel_policy(100),
           p, p + n);
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
@@ -481,7 +481,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr
   ITYR_SUBCASE("serial") {
     long r = ito::root_exec([=] {
       return reduce(
-          execution::sequenced_policy{.checkout_count = 100},
+          execution::sequenced_policy(100),
           p, p + n);
     });
     ITYR_CHECK(r == n * (n - 1) / 2);
@@ -790,31 +790,31 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] inclusive scan") {
   ori::global_ptr<long> p2 = ori::malloc_coll<long>(n);
 
   ito::root_exec([=] {
-    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    fill(execution::parallel_policy(100),
          p1, p1 + n, 1);
 
     inclusive_scan(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         p1, p1 + n, p2);
 
     ITYR_CHECK(p2[0].get() == 1);
     ITYR_CHECK(p2[n - 1].get() == n);
 
     auto sum = reduce(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         p2, p2 + n);
 
     ITYR_CHECK(sum == n * (n + 1) / 2);
 
     inclusive_scan(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         p1, p1 + n, p2, reducer::multiplies<long>{}, 10);
 
     ITYR_CHECK(p2[0].get() == 10);
     ITYR_CHECK(p2[n - 1].get() == 10);
 
     transform_inclusive_scan(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         p1, p1 + n, p2, reducer::plus<long>{}, [](long x) { return x + 1; }, 10);
 
     ITYR_CHECK(p2[0].get() == 12);
@@ -967,28 +967,26 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] equal") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i * 2; });
 
-    copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p1, p1 + n, p2);
+    copy(execution::parallel_policy(100), p1, p1 + n, p2);
 
-    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(equal(execution::parallel_policy(100),
                      p1, p1 + n, p2) == true);
 
-    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(equal(execution::parallel_policy(100),
                      p1, p1 + n, p2, p2 + n) == true);
 
-    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(equal(execution::parallel_policy(100),
                      p1, p1 + n, p2, p2 + n - 1) == false);
 
     p2[n / 2].put(0);
 
-    ITYR_CHECK(equal(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                     p1, p1 + n, p2) == false);
+    ITYR_CHECK(equal(execution::parallel_policy(100), p1, p1 + n, p2) == false);
   });
 
   ori::free_coll(p1);
@@ -1079,26 +1077,26 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] is_sorted") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p    , checkout_mode::write),
         make_global_iterator(p + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i / 3; });
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          p, p + n) == true);
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          p, p + n, std::greater<>{}) == false);
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          make_reverse_iterator(p + n, checkout_mode::read),
                          make_reverse_iterator(p    , checkout_mode::read),
                          std::greater<>{}) == true);
 
     p[n / 4].put(0);
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          p, p + n) == false);
   });
 

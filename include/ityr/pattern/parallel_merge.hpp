@@ -109,12 +109,12 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] find_split_points_for_merge") {
   ori::fini();
 }
 
-template <typename RandomAccessIterator, typename Compare>
-inline void inplace_merge_aux(const execution::parallel_policy& policy,
-                              RandomAccessIterator              first,
-                              RandomAccessIterator              middle,
-                              RandomAccessIterator              last,
-                              Compare                           comp) {
+template <typename WorkHint, typename RandomAccessIterator, typename Compare>
+inline void inplace_merge_aux(const execution::parallel_policy<WorkHint>& policy,
+                              RandomAccessIterator                        first,
+                              RandomAccessIterator                        middle,
+                              RandomAccessIterator                        last,
+                              Compare                                     comp) {
   // TODO: implement a version with BidirectionalIterator
   std::size_t d = std::distance(first, last);
 
@@ -300,27 +300,22 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
       long m = n / 3;
 
       transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(m), p,
           [=](long i) { return i; });
 
       transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n - m), p + m,
           [=](long i) { return i; });
 
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                           p, p + m) == true);
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                           p + m, p + n) == true);
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                           p, p + n) == false);
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100), p    , p + m) == true);
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100), p + m, p + n) == true);
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100), p    , p + n) == false);
 
-      inplace_merge(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                    p, p + m, p + n);
+      inplace_merge(execution::parallel_policy(100), p, p + m, p + n);
 
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                           p, p + n) == true);
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100), p, p + n) == true);
     });
 
     ori::free_coll(p);
@@ -335,29 +330,29 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
       long m = n / 2;
 
       transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(m), p,
           [=](long i) { return std::make_pair(i / nb, i); });
 
       transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n - m), p + m,
           [=](long i) { return std::make_pair(i / nb, i + m); });
 
       auto comp_first = [](const auto& a, const auto& b) { return a.first < b.first ; };
       auto comp_second = [](const auto& a, const auto& b) { return a.second < b.second; };
 
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                            p, p + n, comp_second) == true);
 
-      inplace_merge(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+      inplace_merge(execution::parallel_policy(100),
                     p, p + m, p + n, comp_first);
 
-      ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                            p, p + n, comp_first) == true);
 
       for (long key = 0; key < m / nb; key++) {
-        bool sorted = is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        bool sorted = is_sorted(execution::parallel_policy(100),
                                 p + key * nb * 2,
                                 p + (key + 1) * nb * 2,
                                 [=](const auto& a, const auto& b) {

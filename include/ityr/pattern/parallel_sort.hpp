@@ -9,11 +9,11 @@ namespace ityr {
 
 namespace internal {
 
-template <typename RandomAccessIterator, typename Compare>
-inline void merge_sort(const execution::parallel_policy& policy,
-                       RandomAccessIterator              first,
-                       RandomAccessIterator              last,
-                       Compare                           comp) {
+template <typename WorkHint, typename RandomAccessIterator, typename Compare>
+inline void merge_sort(const execution::parallel_policy<WorkHint>& policy,
+                       RandomAccessIterator                        first,
+                       RandomAccessIterator                        last,
+                       Compare                                     comp) {
   std::size_t d = std::distance(first, last);
 
   if (d <= 1) return;
@@ -117,19 +117,19 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_sort] stable_sort") {
 
   ito::root_exec([=] {
     transform(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         count_iterator<long>(0), count_iterator<long>(n), p,
         [=](long i) { return std::make_pair(i % n_keys, (3 * i + 5) % 13); });
 
-    stable_sort(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    stable_sort(execution::parallel_policy(100),
                 p, p + n, [](const auto& a, const auto& b) { return a.second < b.second; });
 
-    stable_sort(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    stable_sort(execution::parallel_policy(100),
                 p, p + n, [](const auto& a, const auto& b) { return a.first < b.first; });
 
     long n_values_per_key = n / n_keys;
     for (long key = 0; key < n_keys; key++) {
-      bool sorted = is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+      bool sorted = is_sorted(execution::parallel_policy(100),
                               p + key * n_values_per_key,
                               p + (key + 1) * n_values_per_key,
                               [=](const auto& a, const auto& b) {
@@ -222,17 +222,16 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_sort] sort") {
 
   ito::root_exec([=] {
     transform(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         count_iterator<long>(0), count_iterator<long>(n), p,
         [=](long i) { return (3 * i + 5) % 13; });
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          p, p + n) == false);
 
-    sort(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p, p + n);
+    sort(execution::parallel_policy(100), p, p + n);
 
-    ITYR_CHECK(is_sorted(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+    ITYR_CHECK(is_sorted(execution::parallel_policy(100),
                          p, p + n) == true);
   });
 

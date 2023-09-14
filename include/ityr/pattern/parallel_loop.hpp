@@ -13,14 +13,14 @@ namespace ityr {
 
 namespace internal {
 
-template <typename Op, typename ReleaseHandler,
+template <typename WorkHint, typename Op, typename ReleaseHandler,
           typename ForwardIterator, typename... ForwardIterators>
-inline void parallel_loop_generic(const execution::parallel_policy& policy,
-                                  Op                                op,
-                                  ReleaseHandler                    rh,
-                                  ForwardIterator                   first,
-                                  ForwardIterator                   last,
-                                  ForwardIterators...               firsts) {
+inline void parallel_loop_generic(const execution::parallel_policy<WorkHint>& policy,
+                                  Op                                          op,
+                                  ReleaseHandler                              rh,
+                                  ForwardIterator                             first,
+                                  ForwardIterator                             last,
+                                  ForwardIterators...                         firsts) {
   ori::poll();
 
   // for immediately executing cross-worker tasks in ADWS
@@ -82,12 +82,12 @@ inline void loop_generic(const execution::sequenced_policy& policy,
       first, last, firsts...);
 }
 
-template <typename Op, typename ForwardIterator, typename... ForwardIterators>
-inline void loop_generic(const execution::parallel_policy& policy,
-                         Op                                op,
-                         ForwardIterator                   first,
-                         ForwardIterator                   last,
-                         ForwardIterators...               firsts) {
+template <typename WorkHint, typename Op, typename ForwardIterator, typename... ForwardIterators>
+inline void loop_generic(const execution::parallel_policy<WorkHint>& policy,
+                         Op                                          op,
+                         ForwardIterator                             first,
+                         ForwardIterator                             last,
+                         ForwardIterators...                         firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   parallel_loop_generic(policy, op, rh, first, last, firsts...);
@@ -402,7 +402,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] parallel for_each") {
   ito::root_exec([=] {
     int count = 0;
     for_each(
-        execution::sequenced_policy{.checkout_count = 100},
+        execution::sequenced_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         [&](int& v) { v = count++; });
@@ -603,18 +603,18 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] transform") {
   ITYR_SUBCASE("parallel") {
     ito::root_exec([=] {
       auto r = transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n), p1,
           [](long i) { return i * 2; });
       ITYR_CHECK(r == p1 + n);
 
       transform(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n), p1, p2,
           [](long i, long j) { return i * j; });
 
       for_each(
-          execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+          execution::parallel_policy(100),
           make_global_iterator(p2    , checkout_mode::read),
           make_global_iterator(p2 + n, checkout_mode::read),
           count_iterator<long>(0),
@@ -625,18 +625,18 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] transform") {
   ITYR_SUBCASE("serial") {
     ito::root_exec([=] {
       auto ret = transform(
-          execution::sequenced_policy{.checkout_count = 100},
+          execution::sequenced_policy(100),
           count_iterator<long>(0), count_iterator<long>(n), p1,
           [](long i) { return i * 2; });
       ITYR_CHECK(ret == p1 + n);
 
       transform(
-          execution::sequenced_policy{.checkout_count = 100},
+          execution::sequenced_policy(100),
           count_iterator<long>(0), count_iterator<long>(n), p1, p2,
           [](long i, long j) { return i * j; });
 
       for_each(
-          execution::sequenced_policy{.checkout_count = 100},
+          execution::sequenced_policy(100),
           make_global_iterator(p2    , checkout_mode::read),
           make_global_iterator(p2 + n, checkout_mode::read),
           count_iterator<long>(0),
@@ -709,11 +709,10 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] fill") {
 
   ito::root_exec([=] {
     long val = 33;
-    fill(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p, p + n, val);
+    fill(execution::parallel_policy(100), p, p + n, val);
 
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p    , checkout_mode::read),
         make_global_iterator(p + n, checkout_mode::read),
         [=](long v) { ITYR_CHECK(v == val); });
@@ -800,17 +799,16 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] copy") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i * 2; });
 
-    copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p1, p1 + n, p2);
+    copy(execution::parallel_policy(100), p1, p1 + n, p2);
 
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p2    , checkout_mode::read),
         make_global_iterator(p2 + n, checkout_mode::read),
         count_iterator<long>(0),
@@ -862,17 +860,16 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](common::move_only_t& r, long i) { new (&r) common::move_only_t(i * 2); });
 
-    move(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-         p1, p1 + n, p2);
+    move(execution::parallel_policy(100), p1, p1 + n, p2);
 
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p2    , checkout_mode::read),
         make_global_iterator(p2 + n, checkout_mode::read),
         count_iterator<long>(0),
@@ -973,20 +970,18 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] reverse") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i; });
 
-    reverse(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-            p1, p1 + n);
+    reverse(execution::parallel_policy(100), p1, p1 + n);
 
-    reverse_copy(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-                 p1, p1 + n, p2);
+    reverse_copy(execution::parallel_policy(100), p1, p1 + n, p2);
 
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::read),
         make_global_iterator(p1 + n, checkout_mode::read),
         make_global_iterator(p2    , checkout_mode::read),
@@ -1111,22 +1106,21 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_loop] rotate") {
 
   ito::root_exec([=] {
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::write),
         make_global_iterator(p1 + n, checkout_mode::write),
         count_iterator<long>(0),
         [=](long& v, long i) { v = i; });
 
     long shift = n / 3;
-    rotate(execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
-           p1, p1 + shift, p1 + n);
+    rotate(execution::parallel_policy(100), p1, p1 + shift, p1 + n);
 
     rotate_copy(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         p1, p1 + (n - shift), p1 + n, p2);
 
     for_each(
-        execution::parallel_policy{.cutoff_count = 100, .checkout_count = 100},
+        execution::parallel_policy(100),
         make_global_iterator(p1    , checkout_mode::read),
         make_global_iterator(p1 + n, checkout_mode::read),
         make_global_iterator(p2    , checkout_mode::read),

@@ -423,14 +423,13 @@ private:
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
         for_each(
-            execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
-                                       .checkout_count = opts.cutoff_count},
+            execution::parallel_policy(opts.cutoff_count),
             make_construct_iterator(b),
             make_construct_iterator(e),
             [=](T* p) { new (p) T(args...); });
       } else {
         for_each(
-            execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+            execution::sequenced_policy(opts.cutoff_count),
             make_construct_iterator(b),
             make_construct_iterator(e),
             [&](T* p) { new (p) T(args...); });
@@ -443,15 +442,14 @@ private:
     root_exec_if_coll([=, opts = opts_]() {
       if (opts.parallel_construct) {
         for_each(
-            execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
-                                       .checkout_count = opts.cutoff_count},
+            execution::parallel_policy(opts.cutoff_count),
             first,
             last,
             make_construct_iterator(b),
             [](auto&& src, T* p) { new (p) T(std::forward<decltype(src)>(src)); });
       } else {
         for_each(
-            execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+            execution::sequenced_policy(opts.cutoff_count),
             first,
             last,
             make_construct_iterator(b),
@@ -465,14 +463,13 @@ private:
       root_exec_if_coll([=, opts = opts_]() {
         if (opts.parallel_destruct) {
           for_each(
-              execution::parallel_policy{.cutoff_count   = opts.cutoff_count,
-                                         .checkout_count = opts.cutoff_count},
+              execution::parallel_policy(opts.cutoff_count),
               make_destruct_iterator(b),
               make_destruct_iterator(e),
               [](T* p) { std::destroy_at(p); });
         } else {
           for_each(
-              execution::sequenced_policy{.checkout_count = opts.cutoff_count},
+              execution::sequenced_policy(opts.cutoff_count),
               make_destruct_iterator(b),
               make_destruct_iterator(e),
               [](T* p) { std::destroy_at(p); });
@@ -546,7 +543,7 @@ private:
     construct_elems(end(), end() + n);
 
     move_backward(
-        execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+        execution::sequenced_policy(opts_.cutoff_count),
         begin() + i, end(), end() + n);
   }
 
@@ -576,7 +573,7 @@ private:
     make_space_for_insertion(i, n);
 
     root_exec_if_coll([&] {
-      fill(execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+      fill(execution::sequenced_policy(opts_.cutoff_count),
            begin() + i, begin() + i + n, value);
     });
 
@@ -603,7 +600,7 @@ private:
     make_space_for_insertion(i, n);
 
     root_exec_if_coll([&] {
-      copy(execution::sequenced_policy{.checkout_count = opts_.cutoff_count},
+      copy(execution::sequenced_policy(opts_.cutoff_count),
            first, last, begin() + i);
     });
 
@@ -625,8 +622,7 @@ inline void swap(global_vector<T>& v1, global_vector<T>& v2) noexcept {
 template <typename T>
 bool operator==(const global_vector<T>& x, const global_vector<T>& y) {
   return equal(
-      execution::parallel_policy{.cutoff_count   = x.options().cutoff_count,
-                                 .checkout_count = x.options().cutoff_count},
+      execution::parallel_policy(x.options().cutoff_count),
       x.begin(), x.end(), y.begin(), y.end());
 }
 
@@ -656,7 +652,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     ITYR_CHECK(gv1.capacity() >= std::size_t(n));
     root_exec([&] {
       long count = reduce(
-          execution::parallel_policy{.cutoff_count = 128},
+          execution::parallel_policy(128),
           gv1.begin(), gv1.end());
       ITYR_CHECK(count == n * (n - 1) / 2);
     });
@@ -665,21 +661,18 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       global_vector<long> gv2 = gv1;
       root_exec([&] {
         for_each(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             make_global_iterator(gv2.begin(), checkout_mode::read_write),
             make_global_iterator(gv2.end()  , checkout_mode::read_write),
             [](long& i) { i *= 2; });
 
         long count1 = reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv1.begin(), gv1.end());
         ITYR_CHECK(count1 == n * (n - 1) / 2);
 
         long count2 = reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv2.begin(), gv2.end());
         ITYR_CHECK(count2 == n * (n - 1));
 
@@ -687,8 +680,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
         global_vector<long> gv3 = gv1;
 
         for_each(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             make_global_iterator(gv1.begin(), checkout_mode::read),
             make_global_iterator(gv1.end()  , checkout_mode::read),
             make_global_iterator(gv3.begin(), checkout_mode::read),
@@ -702,8 +694,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       ITYR_CHECK(gv1.capacity() == 0);
       root_exec([&] {
         long count = reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv2.begin(), gv2.end());
         ITYR_CHECK(count == n * (n - 1) / 2);
       });
@@ -713,16 +704,14 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       gv1.resize(n * 10, 3);
       root_exec([&] {
         long count = reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv1.begin(), gv1.end());
         ITYR_CHECK(count == n * (n - 1) / 2 + (n * 9) * 3);
       });
       gv1.resize(n * 5);
       root_exec([&] {
         long count = reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv1.begin(), gv1.end());
         ITYR_CHECK(count == n * (n - 1) / 2 + (n * 4) * 3);
       });
@@ -745,8 +734,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
       gv2.resize(next_size);
       root_exec([&] {
         long count = transform_reduce(
-            execution::parallel_policy{.cutoff_count   = 128,
-                                       .checkout_count = 128},
+            execution::parallel_policy(128),
             gv2.begin(),
             gv2.end(),
             reducer::plus<long>{},
@@ -786,8 +774,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
               auto gv_begin = cs[0].begin();
               auto gv_end   = cs[0].end();
               cs.checkin();
-              return reduce(execution::parallel_policy{.cutoff_count   = 128,
-                                                       .checkout_count = 128},
+              return reduce(execution::parallel_policy(128),
                             gv_begin, gv_end);
             });
 
@@ -809,7 +796,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             }
             gv.resize(2 * n);
             for_each(
-                execution::sequenced_policy{.checkout_count = 128},
+                execution::sequenced_policy(128),
                 count_iterator<long>(n),
                 count_iterator<long>(2 * n),
                 make_global_iterator(gv.begin() + n, checkout_mode::write),
