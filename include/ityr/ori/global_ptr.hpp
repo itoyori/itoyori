@@ -27,62 +27,61 @@ public:
   using reference         = global_ref<T>;
   using iterator_category = std::random_access_iterator_tag;
 
-  global_ptr() {}
-  explicit global_ptr(T* ptr) : raw_ptr_(ptr) {}
+  constexpr global_ptr() noexcept {}
 
-  global_ptr(const this_t&) = default;
-  this_t& operator=(const this_t&) = default;
+  constexpr explicit global_ptr(T* ptr) noexcept : raw_ptr_(ptr) {}
 
-  global_ptr(std::nullptr_t) {}
-  this_t& operator=(std::nullptr_t) { raw_ptr_ = nullptr; return *this; }
+  constexpr global_ptr(const this_t&) noexcept = default;
+  constexpr this_t& operator=(const this_t&) noexcept = default;
 
-  T* raw_ptr() const noexcept { return raw_ptr_; }
+  constexpr global_ptr(std::nullptr_t) noexcept {}
+  constexpr this_t& operator=(std::nullptr_t) noexcept { raw_ptr_ = nullptr; return *this; }
 
-  explicit operator bool() const noexcept { return raw_ptr_ != nullptr; }
-  bool operator!() const noexcept { return raw_ptr_ == nullptr; }
+  constexpr pointer raw_ptr() const noexcept { return raw_ptr_; }
 
-  reference operator*() const noexcept {
-    return reference(*this);
-  }
+  constexpr explicit operator bool() const noexcept { return raw_ptr_ != nullptr; }
+  constexpr bool operator!() const noexcept { return raw_ptr_ == nullptr; }
 
-  reference operator[](difference_type diff) const noexcept {
+  constexpr reference operator*() const { return reference(*this); }
+
+  constexpr reference operator[](difference_type diff) const {
     return reference(this_t(raw_ptr_ + diff));
   }
 
-  this_t& operator+=(difference_type diff) {
+  constexpr this_t& operator+=(difference_type diff) noexcept {
     raw_ptr_ += diff;
     return *this;
   }
 
-  this_t& operator-=(difference_type diff) {
+  constexpr this_t& operator-=(difference_type diff) noexcept {
     raw_ptr_ -= diff;
     return *this;
   }
 
-  this_t& operator++() { return (*this) += 1; }
-  this_t& operator--() { return (*this) -= 1; }
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
 
-  this_t operator++(int) { this_t tmp(*this); ++(*this); return tmp; }
-  this_t operator--(int) { this_t tmp(*this); --(*this); return tmp; }
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
 
-  this_t operator+(difference_type diff) const noexcept {
+  constexpr this_t operator+(difference_type diff) const noexcept {
     return this_t(raw_ptr_ + diff);
   }
 
-  this_t operator-(difference_type diff) const noexcept {
+  constexpr this_t operator-(difference_type diff) const noexcept {
     return this_t(raw_ptr_ - diff);
   }
 
-  difference_type operator-(const this_t& p) const noexcept {
+  constexpr difference_type operator-(const this_t& p) const noexcept {
     return raw_ptr_ - p.raw_ptr();
   }
 
-  void swap(this_t& p) noexcept {
+  constexpr void swap(this_t& p) noexcept {
     std::swap(raw_ptr_, p.raw_ptr_);
   }
 
   // inplicit conversion to const pointers
-  operator global_ptr<const value_type>() const {
+  constexpr operator global_ptr<const value_type>() const noexcept {
     return global_ptr<const value_type>(raw_ptr());
   }
 
@@ -91,77 +90,77 @@ private:
 };
 
 template <typename T>
-inline bool operator==(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator==(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() == p2.raw_ptr();
 }
 
 template <typename T>
-inline bool operator==(const global_ptr<T>& p, std::nullptr_t) noexcept {
+inline constexpr bool operator==(const global_ptr<T>& p, std::nullptr_t) noexcept {
   return !p;
 }
 
 template <typename T>
-inline bool operator==(std::nullptr_t, const global_ptr<T>& p) noexcept {
+inline constexpr bool operator==(std::nullptr_t, const global_ptr<T>& p) noexcept {
   return !p;
 }
 
 template <typename T>
-inline bool operator!=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator!=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() != p2.raw_ptr();
 }
 
 template <typename T>
-inline bool operator!=(const global_ptr<T>& p, std::nullptr_t) noexcept {
+inline constexpr bool operator!=(const global_ptr<T>& p, std::nullptr_t) noexcept {
   return bool(p);
 }
 
 template <typename T>
-inline bool operator!=(std::nullptr_t, const global_ptr<T>& p) noexcept {
+inline constexpr bool operator!=(std::nullptr_t, const global_ptr<T>& p) noexcept {
   return bool(p);
 }
 
 template <typename T>
-inline bool operator<(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator<(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() < p2.raw_ptr();
 }
 
 template <typename T>
-inline bool operator>(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator>(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() > p2.raw_ptr();
 }
 
 template <typename T>
-inline bool operator<=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator<=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() <= p2.raw_ptr();
 }
 
 template <typename T>
-inline bool operator>=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
+inline constexpr bool operator>=(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
   return p1.raw_ptr() >= p2.raw_ptr();
 }
 
 template <typename T>
-inline void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
+inline constexpr void swap(global_ptr<T>& p1, global_ptr<T>& p2) noexcept {
   p1.swap(p2);
 }
 
 template <typename T, typename U>
-global_ptr<T> static_pointer_cast(const global_ptr<U>& p) noexcept {
+inline global_ptr<T> static_pointer_cast(const global_ptr<U>& p) noexcept {
   return global_ptr<T>(static_cast<T*>(p.raw_ptr()));
 }
 
 template <typename T, typename U>
-global_ptr<T> dynamic_pointer_cast(const global_ptr<U>& p) noexcept {
+inline global_ptr<T> dynamic_pointer_cast(const global_ptr<U>& p) noexcept {
   return global_ptr<T>(dynamic_cast<T*>(p.raw_ptr()));
 }
 
 template <typename T, typename U>
-global_ptr<T> const_pointer_cast(const global_ptr<U>& p) noexcept {
+inline global_ptr<T> const_pointer_cast(const global_ptr<U>& p) noexcept {
   return global_ptr<T>(const_cast<T*>(p.raw_ptr()));
 }
 
 template <typename T, typename U>
-global_ptr<T> reinterpret_pointer_cast(const global_ptr<U>& p) noexcept {
+inline global_ptr<T> reinterpret_pointer_cast(const global_ptr<U>& p) noexcept {
   return global_ptr<T>(reinterpret_cast<T*>(p.raw_ptr()));
 }
 
@@ -170,10 +169,13 @@ class global_ref {
   using this_t = global_ref<T>;
 
 public:
-  explicit global_ref(const global_ptr<T>& p) : ptr_(p) {}
-  global_ref(const this_t& r) = default;
+  using value_type = std::remove_cv_t<T>;
+  using pointer    = global_ptr<T>;
 
-  global_ptr<T> operator&() const noexcept { return ptr_; }
+  constexpr explicit global_ref(const global_ptr<T>& p) noexcept : ptr_(p) {}
+  constexpr global_ref(const this_t& r) noexcept = default;
+
+  constexpr pointer operator&() const noexcept { return ptr_; }
 
   operator T() const {
     // TODO: reconsider if this implicit conversion is really what we want
