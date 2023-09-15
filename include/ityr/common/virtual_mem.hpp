@@ -177,6 +177,8 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
   std::size_t alloc_size = round_up_pow2(size, get_page_size());
   topology::rank_t leader_rank = 0;
 
+  std::size_t alloc_size_max = std::max(alloc_size, std::size_t(1) << 40);
+
   // Repeat until the same virtual memory address is allocated
   // TODO: smarter allocation using `pmap` result?
   for (int n_trial = 0; n_trial <= max_trial; n_trial++) {
@@ -189,6 +191,15 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
 
     topology::rank_t failed_rank = -1;
     if (topology::my_rank() != leader_rank) {
+      // unmap overlapping virtual addresses that were previously allocated
+      for (auto&& prev_vm : prev_vms) {
+        if (reinterpret_cast<uint64_t>(prev_vm.addr()) < vm_addr + alloc_size &&
+            vm_addr < reinterpret_cast<uint64_t>(prev_vm.addr()) + prev_vm.size()) {
+          // call destructor
+          prev_vm = virtual_mem();
+        }
+      }
+
       try {
         vm = virtual_mem(reinterpret_cast<void*>(vm_addr), alloc_size, alignment);
       } catch (mmap_noreplace_exception& e) {
@@ -212,7 +223,7 @@ inline virtual_mem reserve_same_vm_coll(std::size_t size,
     }
 
     leader_rank = failed_rank_max;
-    alloc_size *= 2;
+    alloc_size = std::min(alloc_size_max, 2 * alloc_size);;
   }
 
   die("Reservation of virtual memory address failed (size=%ld, max_trial=%d)", size, max_trial);

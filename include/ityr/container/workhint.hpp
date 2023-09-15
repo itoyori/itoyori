@@ -37,6 +37,7 @@ public:
     r.bin_tree_ = nullptr;
   }
   workhint_range& operator=(workhint_range&& r) {
+    this->~workhint_range();
     n_leaves_ = r.n_leaves_;
     bin_tree_ = r.bin_tree_;
     r.bin_tree_ = nullptr;
