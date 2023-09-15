@@ -9,11 +9,11 @@ namespace ityr {
 
 namespace internal {
 
-template <typename WorkHint, typename RandomAccessIterator, typename Compare>
-inline void merge_sort(const execution::parallel_policy<WorkHint>& policy,
-                       RandomAccessIterator                        first,
-                       RandomAccessIterator                        last,
-                       Compare                                     comp) {
+template <typename W, typename RandomAccessIterator, typename Compare>
+inline void merge_sort(const execution::parallel_policy<W>& policy,
+                       RandomAccessIterator                 first,
+                       RandomAccessIterator                 last,
+                       Compare                              comp) {
   std::size_t d = std::distance(first, last);
 
   if (d <= 1) return;

@@ -14,18 +14,18 @@ namespace ityr {
 
 namespace internal {
 
-template <typename WorkHint, typename AccumulateOp, typename CombineOp, typename Reducer,
+template <typename W, typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ReleaseHandler, typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-parallel_reduce_generic(const execution::parallel_policy<WorkHint>& policy,
-                        AccumulateOp                                accumulate_op,
-                        CombineOp                                   combine_op,
-                        Reducer                                     reducer,
-                        typename Reducer::accumulator_type          acc,
-                        ReleaseHandler                              rh,
-                        ForwardIterator                             first,
-                        ForwardIterator                             last,
-                        ForwardIterators...                         firsts) {
+parallel_reduce_generic(const execution::parallel_policy<W>& policy,
+                        AccumulateOp                         accumulate_op,
+                        CombineOp                            combine_op,
+                        Reducer                              reducer,
+                        typename Reducer::accumulator_type   acc,
+                        ReleaseHandler                       rh,
+                        ForwardIterator                      first,
+                        ForwardIterator                      last,
+                        ForwardIterators...                  firsts) {
   using acc_t = typename Reducer::accumulator_type;
 
   ori::poll();
@@ -49,16 +49,18 @@ parallel_reduce_generic(const execution::parallel_policy<WorkHint>& policy,
 
   auto tgdata = ito::task_group_begin();
 
+  auto&& [p1, p2] = execution::internal::get_child_policies(policy);
+
   ito::thread<acc_t> th(
       ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
-      ito::with_workhint, 1, 1,
-      [=, acc = std::move(acc)] {
-        return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
+      execution::internal::get_workhint(policy),
+      [=, p1 = p1, acc = std::move(acc)] {
+        return parallel_reduce_generic(p1, accumulate_op, combine_op, reducer,
                                        std::move(acc), rh, first, mid, firsts...);
       });
 
   if (th.serialized()) {
-    acc_t acc_r = parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
+    acc_t acc_r = parallel_reduce_generic(p2, accumulate_op, combine_op, reducer,
                                           th.join(), rh, mid, last, std::next(firsts, d / 2)...);
 
     ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
@@ -69,7 +71,7 @@ parallel_reduce_generic(const execution::parallel_policy<WorkHint>& policy,
     acc_t new_acc = reducer.identity();
     rh = ori::release_lazy();
 
-    acc_t acc_r = parallel_reduce_generic(policy, accumulate_op, combine_op, reducer,
+    acc_t acc_r = parallel_reduce_generic(p2, accumulate_op, combine_op, reducer,
                                           std::move(new_acc), rh, mid, last, std::next(firsts, d / 2)...);
 
     ori::release();
@@ -106,17 +108,17 @@ reduce_generic(const execution::sequenced_policy& policy,
   return acc;
 }
 
-template <typename WorkHint, typename AccumulateOp, typename CombineOp, typename Reducer,
+template <typename W, typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-reduce_generic(const execution::parallel_policy<WorkHint>& policy,
-               AccumulateOp                                accumulate_op,
-               CombineOp                                   combine_op,
-               Reducer                                     reducer,
-               typename Reducer::accumulator_type          acc,
-               ForwardIterator                             first,
-               ForwardIterator                             last,
-               ForwardIterators...                         firsts) {
+reduce_generic(const execution::parallel_policy<W>& policy,
+               AccumulateOp                         accumulate_op,
+               CombineOp                            combine_op,
+               Reducer                              reducer,
+               typename Reducer::accumulator_type   acc,
+               ForwardIterator                      first,
+               ForwardIterator                      last,
+               ForwardIterators...                  firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer, acc,

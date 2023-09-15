@@ -10,8 +10,14 @@ namespace ityr::ito {
 struct with_callback_t {};
 inline constexpr with_callback_t with_callback;
 
-struct with_workhint_t {};
-inline constexpr with_workhint_t with_workhint;
+template <typename W>
+struct workhint {
+  constexpr explicit workhint(W w1, W w2)
+    : work_new(w1), work_rest(w2) {}
+
+  W work_new;
+  W work_rest;
+};
 
 template <typename T>
 class thread {
@@ -33,17 +39,17 @@ public:
          std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
-  template <typename WorkHint, typename Fn, typename... Args>
-  thread(with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
-    fork(with_workhint, w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
+  template <typename W, typename Fn, typename... Args>
+  thread(workhint<W> wh, Fn&& fn, Args&&... args) {
+    fork(wh, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback,
-            typename WorkHint, typename Fn, typename... Args>
+            typename W, typename Fn, typename... Args>
   thread(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
-         with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
+         workhint<W> wh, Fn&& fn, Args&&... args) {
     fork(with_callback, on_drift_fork_cb, on_drift_die_cb,
-         with_workhint, w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
+         wh, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   thread(const thread&) = delete;
@@ -70,23 +76,23 @@ public:
                    1, 1, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
-  template <typename WorkHint, typename Fn, typename... Args>
-  void fork(with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
+  template <typename W, typename Fn, typename... Args>
+  void fork(workhint<W> wh, Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     w.sched().fork(handler_, nullptr, nullptr,
-                   w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
+                   wh.work_new, wh.work_rest, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   template <typename OnDriftForkCallback, typename OnDriftDieCallback,
-            typename WorkHint, typename Fn, typename... Args>
+            typename W, typename Fn, typename... Args>
   void fork(with_callback_t, OnDriftForkCallback on_drift_fork_cb, OnDriftDieCallback on_drift_die_cb,
-            with_workhint_t, WorkHint w1, WorkHint w2, Fn&& fn, Args&&... args) {
+            workhint<W> wh, Fn&& fn, Args&&... args) {
     auto& w = worker::instance::get();
     ITYR_CHECK(!w.is_spmd());
     w.sched().fork(handler_,
                    on_drift_fork_cb, on_drift_die_cb,
-                   w1, w2, std::forward<Fn>(fn), std::forward<Args>(args)...);
+                   wh.work_new, wh.work_rest, std::forward<Fn>(fn), std::forward<Args>(args)...);
   }
 
   T join() {

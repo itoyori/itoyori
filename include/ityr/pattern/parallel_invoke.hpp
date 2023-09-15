@@ -120,7 +120,7 @@ private:
 
     ito::thread<retval_t> th(
         ito::with_callback, [rh = rh_] { ori::acquire(rh); }, [] { ori::release(); },
-        ito::with_workhint, 1, n_rest_tasks,
+        ito::workhint(1, n_rest_tasks),
         [fn         = std::forward<Fn>(fn),
          args_tuple = std::forward<ArgsTuple>(args_tuple)]() mutable {
           return std::apply(std::forward<decltype(fn)>(fn),

@@ -109,12 +109,12 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] find_split_points_for_merge") {
   ori::fini();
 }
 
-template <typename WorkHint, typename RandomAccessIterator, typename Compare>
-inline void inplace_merge_aux(const execution::parallel_policy<WorkHint>& policy,
-                              RandomAccessIterator                        first,
-                              RandomAccessIterator                        middle,
-                              RandomAccessIterator                        last,
-                              Compare                                     comp) {
+template <typename W, typename RandomAccessIterator, typename Compare>
+inline void inplace_merge_aux(const execution::parallel_policy<W>& policy,
+                              RandomAccessIterator                 first,
+                              RandomAccessIterator                 middle,
+                              RandomAccessIterator                 last,
+                              Compare                              comp) {
   // TODO: implement a version with BidirectionalIterator
   std::size_t d = std::distance(first, last);
 

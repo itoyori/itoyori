@@ -13,14 +13,14 @@ namespace ityr {
 
 namespace internal {
 
-template <typename WorkHint, typename Op, typename ReleaseHandler,
+template <typename W, typename Op, typename ReleaseHandler,
           typename ForwardIterator, typename... ForwardIterators>
-inline void parallel_loop_generic(const execution::parallel_policy<WorkHint>& policy,
-                                  Op                                          op,
-                                  ReleaseHandler                              rh,
-                                  ForwardIterator                             first,
-                                  ForwardIterator                             last,
-                                  ForwardIterators...                         firsts) {
+inline void parallel_loop_generic(const execution::parallel_policy<W>& policy,
+                                  Op                                   op,
+                                  ReleaseHandler                       rh,
+                                  ForwardIterator                      first,
+                                  ForwardIterator                      last,
+                                  ForwardIterators...                  firsts) {
   ori::poll();
 
   // for immediately executing cross-worker tasks in ADWS
@@ -42,16 +42,16 @@ inline void parallel_loop_generic(const execution::parallel_policy<WorkHint>& po
 
   auto tgdata = ito::task_group_begin();
 
+  auto&& [p1, p2] = execution::internal::get_child_policies(policy);
+
   ito::thread<void> th(
       ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
-      ito::with_workhint, 1, 1,
-      [=] {
-        parallel_loop_generic(policy, op, rh,
-                              first, mid, firsts...);
+      execution::internal::get_workhint(policy),
+      [=, p1 = p1] {
+        parallel_loop_generic(p1, op, rh, first, mid, firsts...);
       });
 
-  parallel_loop_generic(policy, op, rh,
-                        mid, last, std::next(firsts, d / 2)...);
+  parallel_loop_generic(p2, op, rh, mid, last, std::next(firsts, d / 2)...);
 
   if (!th.serialized()) {
     ori::release();
@@ -82,12 +82,12 @@ inline void loop_generic(const execution::sequenced_policy& policy,
       first, last, firsts...);
 }
 
-template <typename WorkHint, typename Op, typename ForwardIterator, typename... ForwardIterators>
-inline void loop_generic(const execution::parallel_policy<WorkHint>& policy,
-                         Op                                          op,
-                         ForwardIterator                             first,
-                         ForwardIterator                             last,
-                         ForwardIterators...                         firsts) {
+template <typename W, typename Op, typename ForwardIterator, typename... ForwardIterators>
+inline void loop_generic(const execution::parallel_policy<W>& policy,
+                         Op                                   op,
+                         ForwardIterator                      first,
+                         ForwardIterator                      last,
+                         ForwardIterators...                  firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
   parallel_loop_generic(policy, op, rh, first, last, firsts...);
