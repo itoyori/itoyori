@@ -10,7 +10,7 @@ namespace ityr {
 
 template <typename W>
 class workhint_range {
-  static_assert(std::is_trivial_v<W>);
+  static_assert(std::is_arithmetic_v<W>);
 
 public:
   using value_type = W;
@@ -189,7 +189,7 @@ ITYR_TEST_CASE("[ityr::workhint] workhint range test") {
   ito::init();
   ori::init();
 
-  int n = 100000;
+  long n = 100000;
   ori::global_ptr<long> p = ori::malloc_coll<long>(n);
 
   root_exec([=] {
@@ -205,12 +205,45 @@ ITYR_TEST_CASE("[ityr::workhint] workhint range test") {
         p, p + n,
         [](long x) { return x; });
 
-    for_each(
+    auto check_workhint = [&](auto& wh) {
+      auto [w1, w2] = wh.view().get_workhint();
+      ITYR_CHECK(w1 == n / 2 * (n / 2 - 1) / 2);
+      ITYR_CHECK(w2 == n / 2 * (n / 2 * 3 - 1) / 2);
+
+      auto [c1, c2] = wh.view().get_children();
+
+      auto [w11, w12] = c1.get_workhint();
+      ITYR_CHECK(w11 == n / 4 * (n / 4 - 1) / 2);
+      ITYR_CHECK(w12 == n / 4 * (n / 4 * 3 - 1) / 2);
+
+      auto [w21, w22] = c2.get_workhint();
+      ITYR_CHECK(w21 == n / 4 * (n / 4 * 5 - 1) / 2);
+      ITYR_CHECK(w22 == n / 4 * (n / 4 * 7 - 1) / 2);
+    };
+
+    check_workhint(workhint);
+
+    auto workhint2 = create_workhint_range(
+        execution::parallel_policy(100),
+        p, p + n,
+        [](long x) { return x; },
+        common::next_pow2(n / 100));
+
+    check_workhint(workhint2);
+
+    transform(
         execution::parallel_policy(100, workhint),
+        make_global_iterator(p    , checkout_mode::read),
+        make_global_iterator(p + n, checkout_mode::read),
+        make_global_iterator(p    , checkout_mode::write),
+        [](long x) { return x * 2; });
+
+    for_each(
+        execution::parallel_policy(100, workhint2),
         count_iterator<long>(0),
         count_iterator<long>(n),
         make_global_iterator(p, checkout_mode::read),
-        [](long i, long x) { ITYR_CHECK(i == x); });
+        [](long i, long x) { ITYR_CHECK(i * 2 == x); });
   });
 
   ori::free_coll(p);
