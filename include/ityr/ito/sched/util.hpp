@@ -137,14 +137,13 @@ inline common::topology::rank_t get_random_rank(common::topology::rank_t a,
 }
 
 template <typename T, typename Fn, typename ArgsTuple>
-static T invoke_fn(Fn&& fn, ArgsTuple&& args_tuple) {
-  T retval;
+inline decltype(auto) invoke_fn(Fn&& fn, ArgsTuple&& args_tuple) {
   if constexpr (!std::is_same_v<T, no_retval_t>) {
-    retval = std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+    return std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
   } else {
     std::apply(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+    return no_retval_t{};
   }
-  return retval;
 }
 
 template <typename Entry>

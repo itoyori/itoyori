@@ -21,7 +21,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
                         AccumulateOp                         accumulate_op,
                         CombineOp                            combine_op,
                         Reducer                              reducer,
-                        typename Reducer::accumulator_type   acc,
+                        typename Reducer::accumulator_type&& acc,
                         ReleaseHandler                       rh,
                         ForwardIterator                      first,
                         ForwardIterator                      last,
@@ -42,7 +42,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
           accumulate_op(acc, std::forward<decltype(refs)>(refs)...);
         },
         first, last, firsts...);
-    return acc;
+    return std::move(acc);
   }
 
   auto mid = std::next(first, d / 2);
@@ -54,7 +54,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
   ito::thread<acc_t> th(
       ito::with_callback, [=] { ori::acquire(rh); }, [] { ori::release(); },
       execution::internal::get_workhint(policy),
-      [=, p1 = p1, acc = std::move(acc)] {
+      [=, p1 = p1, acc = std::move(acc)]() mutable {
         return parallel_reduce_generic(p1, accumulate_op, combine_op, reducer,
                                        std::move(acc), rh, first, mid, firsts...);
       });
@@ -90,14 +90,14 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
 template <typename AccumulateOp, typename CombineOp, typename Reducer,
           typename ForwardIterator, typename... ForwardIterators>
 inline typename Reducer::accumulator_type
-reduce_generic(const execution::sequenced_policy& policy,
-               AccumulateOp                       accumulate_op,
-               CombineOp                          combine_op [[maybe_unused]],
-               Reducer                            reducer [[maybe_unused]],
-               typename Reducer::accumulator_type acc,
-               ForwardIterator                    first,
-               ForwardIterator                    last,
-               ForwardIterators...                firsts) {
+reduce_generic(const execution::sequenced_policy&   policy,
+               AccumulateOp                         accumulate_op,
+               CombineOp                            combine_op [[maybe_unused]],
+               Reducer                              reducer [[maybe_unused]],
+               typename Reducer::accumulator_type&& acc,
+               ForwardIterator                      first,
+               ForwardIterator                      last,
+               ForwardIterators...                  firsts) {
   execution::internal::assert_policy(policy);
   for_each_aux(
       execution::internal::to_sequenced_policy(policy),
@@ -105,7 +105,7 @@ reduce_generic(const execution::sequenced_policy& policy,
         accumulate_op(acc, std::forward<decltype(refs)>(refs)...);
       },
       first, last, firsts...);
-  return acc;
+  return std::move(acc);
 }
 
 template <typename W, typename AccumulateOp, typename CombineOp, typename Reducer,
@@ -115,13 +115,13 @@ reduce_generic(const execution::parallel_policy<W>& policy,
                AccumulateOp                         accumulate_op,
                CombineOp                            combine_op,
                Reducer                              reducer,
-               typename Reducer::accumulator_type   acc,
+               typename Reducer::accumulator_type&& acc,
                ForwardIterator                      first,
                ForwardIterator                      last,
                ForwardIterators...                  firsts) {
   execution::internal::assert_policy(policy);
   auto rh = ori::release_lazy();
-  return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer, acc,
+  return parallel_reduce_generic(policy, accumulate_op, combine_op, reducer, std::move(acc),
                                  rh, first, last, firsts...);
 }
 
@@ -341,7 +341,7 @@ reduce(const ExecutionPolicy& policy,
        ForwardIterator        last,
        Reducer                reducer) {
   return transform_reduce(policy, first, last, reducer,
-                          [](auto&& r) { return std::forward<decltype(r)>(r); });
+      [](auto&& r) -> decltype(auto) { return std::forward<decltype(r)>(r); });
 }
 
 /**
@@ -489,6 +489,27 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr
     ITYR_CHECK(r == n * (n - 1) / 2);
   }
 
+  ITYR_SUBCASE("move only") {
+    ori::global_ptr<common::move_only_t> p_mo = ori::malloc_coll<common::move_only_t>(n);
+
+    ito::root_exec([=] {
+      for_each(
+          execution::parallel_policy(100),
+          count_iterator<long>(0),
+          count_iterator<long>(n),
+          make_global_iterator(p_mo, checkout_mode::write),
+          [&](long i, common::move_only_t& v) { v = common::move_only_t(i); });
+
+      common::move_only_t r = reduce(
+          execution::par,
+          p_mo, p_mo + n);
+
+      ITYR_CHECK(r.value() == n * (n - 1) / 2);
+    });
+
+    ori::free_coll(p_mo);
+  }
+
   ori::free_coll(p);
 
   ori::fini();
@@ -549,13 +570,13 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_reduce] parallel reduce with global_ptr
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename Reducer, typename UnaryTransformOp>
 inline ForwardIteratorD
-transform_inclusive_scan(const ExecutionPolicy&                    policy,
-                         ForwardIterator1                          first1,
-                         ForwardIterator1                          last1,
-                         ForwardIteratorD                          first_d,
-                         Reducer                                   reducer,
-                         UnaryTransformOp                          unary_transform_op,
-                         const typename Reducer::accumulator_type& init) {
+transform_inclusive_scan(const ExecutionPolicy&               policy,
+                         ForwardIterator1                     first1,
+                         ForwardIterator1                     last1,
+                         ForwardIteratorD                     first_d,
+                         Reducer                              reducer,
+                         UnaryTransformOp                     unary_transform_op,
+                         typename Reducer::accumulator_type&& init) {
   if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
                 ori::is_global_ptr_v<ForwardIteratorD>) {
     using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
@@ -566,7 +587,7 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
         internal::convert_to_global_iterator(first_d, internal::dest_checkout_mode_t<value_type_d>{}),
         reducer,
         unary_transform_op,
-        init);
+        std::move(init));
 
   } else {
     auto accumulate_op = [=](auto&& acc, const auto& r1, auto&& d) {
@@ -600,7 +621,7 @@ transform_inclusive_scan(const ExecutionPolicy&                    policy,
     };
 
     internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                             init, first1, last1, first_d);
+                             std::move(init), first1, last1, first_d);
 
     return std::next(first_d, std::distance(first1, last1));
   }
@@ -699,14 +720,14 @@ inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
 template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIteratorD,
           typename Reducer>
 inline ForwardIteratorD
-inclusive_scan(const ExecutionPolicy&                    policy,
-               ForwardIterator1                          first1,
-               ForwardIterator1                          last1,
-               ForwardIteratorD                          first_d,
-               Reducer                                   reducer,
-               const typename Reducer::accumulator_type& init) {
+inclusive_scan(const ExecutionPolicy&               policy,
+               ForwardIterator1                     first1,
+               ForwardIterator1                     last1,
+               ForwardIteratorD                     first_d,
+               Reducer                              reducer,
+               typename Reducer::accumulator_type&& init) {
   return transform_inclusive_scan(policy, first1, last1, first_d, reducer,
-                                  [](auto&& r) { return std::forward<decltype(r)>(r); }, init);
+      [](auto&& r) -> decltype(auto) { return std::forward<decltype(r)>(r); }, std::move(init));
 }
 
 /**

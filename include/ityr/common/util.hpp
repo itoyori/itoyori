@@ -224,7 +224,7 @@ public:
   singleton_initializer(singleton_initializer&&) = delete;
   singleton_initializer& operator=(singleton_initializer&&) = delete;
 
-  bool should_finalize () const { return should_finalize_; }
+  bool should_finalize() const { return should_finalize_; }
 
 private:
   bool should_finalize_ = false;
@@ -251,7 +251,11 @@ public:
   }
 
 private:
-  long value_ = -1;
+  long value_ = 0;
 };
+
+inline move_only_t operator+(const move_only_t& mo1, const move_only_t& mo2) {
+  return move_only_t(mo1.value() + mo2.value());
+}
 
 }

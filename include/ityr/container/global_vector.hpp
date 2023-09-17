@@ -740,7 +740,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
             reducer::plus<long>{},
             [](const common::move_only_t& mo) { return mo.value(); });
 
-        ITYR_CHECK(count == n * (n - 1) / 2 - (next_size - n));
+        ITYR_CHECK(count == n * (n - 1) / 2);
       });
     }
   }

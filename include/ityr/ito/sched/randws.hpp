@@ -298,7 +298,7 @@ public:
   }
 
   template <typename T>
-  static bool is_serialized(thread_handler<T> th) {
+  static bool is_serialized(const thread_handler<T>& th) {
     return th.serialized;
   }
 

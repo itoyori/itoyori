@@ -47,7 +47,7 @@ public:
   }
 
   template <typename T>
-  static bool is_serialized(thread_handler<T>) {
+  static bool is_serialized(const thread_handler<T>&) {
     return true;
   }
 
