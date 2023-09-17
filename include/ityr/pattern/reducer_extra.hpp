@@ -50,7 +50,7 @@ private:
 };
 
 template <typename T>
-struct concat_vec {
+struct vec_concat {
   using value_type       = global_vector<T>;
   using accumulator_type = global_vector<T>;
 
@@ -66,6 +66,59 @@ struct concat_vec {
     return global_vector<T>();
   }
 };
+
+template <typename T, typename BinaryOp>
+struct vec_element_wise {
+  using value_type       = global_vector<T>;
+  using accumulator_type = global_vector<T>;
+
+  void foldl(accumulator_type& acc_l, value_type&& acc_r) const {
+    if (acc_l.empty()) {
+      acc_l = std::move(acc_r);
+    } else {
+      ITYR_CHECK(acc_l.size() == acc_r.size());
+      for_each(
+          execution::sequenced_policy(acc_l.size()),
+          make_global_iterator(acc_l.begin(), checkout_mode::read_write),
+          make_global_iterator(acc_l.end()  , checkout_mode::read_write),
+          make_global_iterator(acc_r.begin(), checkout_mode::read),
+          [&](auto&& x, const auto& y) { x = bop_(x, y); });
+    }
+  }
+
+  void foldr(accumulator_type&& acc_l, accumulator_type& acc_r) const {
+    if (acc_r.empty()) {
+      acc_r = std::move(acc_l);
+    } else {
+      ITYR_CHECK(acc_l.size() == acc_r.size());
+      for_each(
+          execution::sequenced_policy(acc_l.size()),
+          make_global_iterator(acc_l.begin(), checkout_mode::read),
+          make_global_iterator(acc_l.end()  , checkout_mode::read),
+          make_global_iterator(acc_r.begin(), checkout_mode::read_write),
+          [&](const auto& x, auto&& y) { y = bop_(x, y); });
+    }
+  }
+
+  accumulator_type identity() const {
+    return global_vector<T>();
+  }
+
+private:
+  static constexpr auto bop_ = BinaryOp();
+};
+
+template <typename T>
+using vec_plus = vec_element_wise<T, std::plus<>>;
+
+template <typename T>
+using vec_multiplies = vec_element_wise<T, std::multiplies<>>;
+
+template <typename T>
+using vec_min = vec_element_wise<T, min_functor<>>;
+
+template <typename T>
+using vec_max = vec_element_wise<T, max_functor<>>;
 
 ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
   ito::init();
@@ -103,7 +156,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
     });
   }
 
-  ITYR_SUBCASE("concat_vec") {
+  ITYR_SUBCASE("vec_concat") {
     root_exec([=] {
       int n = 10000;
 
@@ -111,7 +164,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
           execution::parallel_policy(128),
           count_iterator<int>(0),
           count_iterator<int>(n),
-          reducer::concat_vec<int>{},
+          reducer::vec_concat<int>{},
           [](int i) { return global_vector<int>(1, i); });
       ITYR_CHECK(ret.size() == n);
 
@@ -123,6 +176,27 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
           ans.begin());
 
       ITYR_CHECK(ret == ans);
+    });
+  }
+
+  ITYR_SUBCASE("vec_element_wise") {
+    root_exec([=] {
+      int n = 10000;
+      int vec_size = 100;
+
+      global_vector<int> ret = transform_reduce(
+          execution::parallel_policy(128),
+          count_iterator<int>(0),
+          count_iterator<int>(n),
+          reducer::vec_plus<int>{},
+          [=](int i) { return global_vector<int>(vec_size, i); });
+      ITYR_CHECK(ret.size() == vec_size);
+
+      for_each(
+          execution::par,
+          make_global_iterator(ret.begin(), checkout_mode::read),
+          make_global_iterator(ret.end()  , checkout_mode::read),
+          [=](int x) { ITYR_CHECK(x == n * (n - 1) / 2); });
     });
   }
 
