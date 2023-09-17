@@ -53,6 +53,16 @@ struct prof_event_acquire_wait : public common::profiler::event {
   std::string str() const override { return "cache_acquire_wait"; }
 };
 
+struct prof_event_cache_mmap : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "cache_mmap"; }
+};
+
+struct prof_event_home_mmap : public common::profiler::event {
+  using event::event;
+  std::string str() const override { return "home_mmap"; }
+};
+
 class prof_events {
 public:
   prof_events() {}
@@ -67,6 +77,8 @@ private:
   common::profiler::event_initializer<prof_event_acquire>       ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_release_lazy>  ITYR_ANON_VAR;
   common::profiler::event_initializer<prof_event_acquire_wait>  ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_cache_mmap>    ITYR_ANON_VAR;
+  common::profiler::event_initializer<prof_event_home_mmap>     ITYR_ANON_VAR;
 };
 
 }

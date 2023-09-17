@@ -10,6 +10,7 @@
 #include "ityr/common/physical_mem.hpp"
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
+#include "ityr/ori/prof_events.hpp"
 #include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
@@ -199,11 +200,14 @@ private:
   }
 
   void update_mapping(mmap_entry& me) {
+    ITYR_PROFILER_RECORD(prof_event_home_mmap);
+
     if (me.mapped_addr) {
       common::verbose<3>("Unmap home segment [%p, %p) (size=%ld)",
                          me.mapped_addr, me.mapped_addr + me.mapped_size, me.mapped_size);
       common::mmap_no_physical_mem(me.mapped_addr, me.mapped_size, true);
     }
+
     ITYR_CHECK(me.pm);
     ITYR_CHECK(me.addr);
     common::verbose<3>("Map home segment [%p, %p) (size=%ld)",

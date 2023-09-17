@@ -410,12 +410,15 @@ private:
   }
 
   void update_mapping(cache_block& cb) {
+    ITYR_PROFILER_RECORD(prof_event_cache_mmap);
+
     // save the number of mmap entries by unmapping previous virtual memory
     if (cb.mapped_addr) {
       common::verbose<3>("Unmap cache block %d from [%p, %p) (size=%ld)",
                          cb.entry_idx, cb.mapped_addr, cb.mapped_addr + BlockSize, BlockSize);
       common::mmap_no_physical_mem(cb.mapped_addr, BlockSize, true);
     }
+
     ITYR_CHECK(cb.addr);
     common::verbose<3>("Map cache block %d to [%p, %p) (size=%ld)",
                        cb.entry_idx, cb.addr, cb.addr + BlockSize, BlockSize);
