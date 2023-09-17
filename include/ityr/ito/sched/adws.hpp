@@ -282,18 +282,21 @@ public:
     thread_retval<T> retval_ser; // return the result by value if the thread is serialized
   };
 
+  struct task_group_data {
+    task_group_data* parent = nullptr;
+    dist_range       drange;
+    bool             owns_dtree_node;
+    dag_profiler     dag_prof_before;
+    dag_profiler     dag_prof_acc;
+  };
+
   struct thread_local_storage {
+    task_group_data*    tgdata = nullptr;
     dist_range          drange;         // distribution range of this thread
     dist_tree::node_ref dtree_node_ref; // distribution tree node of the cross-worker task group that this thread belongs to
     flipper             tg_version;
     bool                undistributed;
     dag_profiler        dag_prof;
-  };
-
-  struct task_group_data {
-    dist_range   drange;
-    bool         owns_dtree_node;
-    dag_profiler dag_prof; // to record the dag prof data of this thread prior to this task group
   };
 
   scheduler_adws()
@@ -319,11 +322,7 @@ public:
 
         dist_range root_drange {common::topology::n_ranks()};
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange         = root_drange,
-                                    .dtree_node_ref = {},
-                                    .tg_version     = {},
-                                    .undistributed  = true,
-                                    .dag_prof       = {}};
+               thread_local_storage{nullptr, root_drange, {}, {}, true, {}};
 
         tls_->dag_prof.start();
         tls_->dag_prof.increment_thread_count();
@@ -359,18 +358,21 @@ public:
     return retval.value;
   }
 
-  task_group_data task_group_begin() {
+  void task_group_begin(task_group_data* tgdata) {
     tls_->dag_prof.stop();
 
-    task_group_data tgdata {.drange          = tls_->drange,
-                            .owns_dtree_node = false,
-                            .dag_prof        = tls_->dag_prof};
+    tgdata->parent          = tls_->tgdata;
+    tgdata->drange          = tls_->drange;
+    tgdata->owns_dtree_node = false;
+    tgdata->dag_prof_before = tls_->dag_prof;
+
+    tls_->tgdata = tgdata;
 
     if (tls_->drange.is_cross_worker()) {
       if (tls_->dtree_node_ref.depth + 1 < max_depth_) {
         tls_->dtree_node_ref = dtree_.append(tls_->dtree_node_ref, tls_->drange, tls_->tg_version);
         dtree_local_bottom_ref_ = tls_->dtree_node_ref;
-        tgdata.owns_dtree_node = true;
+        tgdata->owns_dtree_node = true;
       }
 
       tls_->undistributed = true;
@@ -382,19 +384,21 @@ public:
     tls_->dag_prof.clear();
     tls_->dag_prof.start();
     tls_->dag_prof.increment_strand_count();
-
-    return tgdata;
   }
 
   template <typename PreSuspendCallback, typename PostSuspendCallback>
-  void task_group_end(task_group_data&      tgdata,
-                      PreSuspendCallback&&  pre_suspend_cb,
+  void task_group_end(PreSuspendCallback&&  pre_suspend_cb,
                       PostSuspendCallback&& post_suspend_cb) {
-    // Just in case no threads are spawned in this task group
     on_task_die();
 
+    task_group_data* tgdata = tls_->tgdata;
+    ITYR_CHECK(tgdata);
+
+    tls_->dag_prof = tgdata->dag_prof_before;
+    tls_->dag_prof.merge_serial(tgdata->dag_prof_acc);
+
     // restore the original distribution range of this thread at the beginning of the task group
-    tls_->drange = tgdata.drange;
+    tls_->drange = tgdata->drange;
 
     if (tls_->drange.is_cross_worker()) {
       common::verbose("End a cross-worker task group of distribution range [%f, %f) at depth %d",
@@ -423,7 +427,7 @@ public:
                 prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
 
-      if (tgdata.owns_dtree_node) {
+      if (tgdata->owns_dtree_node) {
         // Set the completed current task group as non-dominant to reduce steal requests
         dtree_.set_dominant(tls_->dtree_node_ref, false);
 
@@ -439,7 +443,9 @@ public:
       tls_->undistributed = false;
     }
 
-    tls_->dag_prof.merge_serial(tgdata.dag_prof);
+    tls_->tgdata = tls_->tgdata->parent;
+    std::destroy_at(tgdata);
+
     tls_->dag_prof.start();
     tls_->dag_prof.increment_strand_count();
   }
@@ -622,10 +628,6 @@ public:
   T join(thread_handler<T>& th) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_join>();
 
-    // Note that this point is also considered the end of the last task of a task group
-    // (the last task of a task group may not be spawned as a thread)
-    on_task_die();
-
     thread_retval<T> retval;
     if (th.serialized) {
       common::verbose<3>("Skip join for serialized thread (fast path)");
@@ -634,6 +636,10 @@ public:
       retval = std::move(th.retval_ser);
 
     } else {
+      // Note that this point is also considered the end of the last task of a task group
+      // (the last task of a task group may not be spawned as a thread)
+      on_task_die();
+
       ITYR_CHECK(th.state != nullptr);
       thread_state<T>* ts = th.state;
 
@@ -682,7 +688,8 @@ public:
       th.state = nullptr;
     }
 
-    tls_->dag_prof.merge_parallel(retval.dag_prof);
+    ITYR_CHECK(tls_->tgdata);
+    tls_->tgdata->dag_prof_acc.merge_parallel(retval.dag_prof);
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
     return std::move(retval.value);
@@ -826,6 +833,9 @@ private:
   void on_task_die() {
     if (!tls_->dag_prof.is_stopped()) {
       tls_->dag_prof.stop();
+      if (tls_->tgdata) {
+        tls_->tgdata->dag_prof_acc.merge_parallel(tls_->dag_prof);
+      }
     }
 
     // TODO: handle corner cases where cross-worker tasks finish without distributing

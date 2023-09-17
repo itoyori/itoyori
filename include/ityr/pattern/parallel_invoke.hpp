@@ -187,16 +187,15 @@ template <typename... Args>
 inline auto parallel_invoke(Args&&... args) {
   auto rh = ori::release_lazy();
 
-  auto tgdata = ito::task_group_begin();
+  ito::task_group_data tgdata;
+  ito::task_group_begin(&tgdata);
 
   internal::parallel_invoke_state s(rh);
   auto&& ret = s.parallel_invoke_aux(std::forward<Args>(args)...);
 
   // No lazy release here because the suspended thread (cross-worker tasks in ADWS) is
   // always resumed by another process.
-  ito::task_group_end(tgdata,
-                      []() { ori::release(); },
-                      []() { ori::acquire(); });
+  ito::task_group_end([] { ori::release(); }, [] { ori::acquire(); });
 
   // TODO: avoid duplicated acquire calls
   if (!s.all_serialized()) {

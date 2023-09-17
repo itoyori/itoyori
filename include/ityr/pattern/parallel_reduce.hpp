@@ -47,7 +47,8 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
 
   auto mid = std::next(first, d / 2);
 
-  auto tgdata = ito::task_group_begin();
+  ito::task_group_data tgdata;
+  ito::task_group_begin(&tgdata);
 
   auto&& [p1, p2] = execution::internal::get_child_policies(policy);
 
@@ -63,7 +64,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
     acc_t acc_r = parallel_reduce_generic(p2, accumulate_op, combine_op, reducer,
                                           th.join(), rh, mid, last, std::next(firsts, d / 2)...);
 
-    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
+    ito::task_group_end([] { ori::release(); }, [] { ori::acquire(); });
 
     return acc_r;
 
@@ -78,7 +79,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
 
     acc_t acc_l = th.join();
 
-    ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
+    ito::task_group_end([] { ori::release(); }, [] { ori::acquire(); });
 
     ori::acquire();
 

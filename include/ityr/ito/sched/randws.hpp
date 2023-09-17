@@ -45,12 +45,15 @@ public:
     thread_retval<T> retval_ser; // return the result by value if the thread is serialized
   };
 
-  struct thread_local_storage {
-    dag_profiler dag_prof;
+  struct task_group_data {
+    task_group_data* parent = nullptr;
+    dag_profiler     dag_prof_before;
+    dag_profiler     dag_prof_acc;
   };
 
-  struct task_group_data {
-    dag_profiler dag_prof;
+  struct thread_local_storage {
+    task_group_data* tgdata = nullptr;
+    dag_profiler     dag_prof;
   };
 
   scheduler_randws()
@@ -178,8 +181,6 @@ public:
   T join(thread_handler<T>& th) {
     common::profiler::switch_phase<prof_phase_thread, prof_phase_sched_join>();
 
-    on_task_die();
-
     thread_retval<T> retval;
     if (th.serialized) {
       common::verbose<2>("Skip join for serialized thread (fast path)");
@@ -188,6 +189,8 @@ public:
       retval = std::move(th.retval_ser);
 
     } else {
+      on_task_die();
+
       ITYR_CHECK(th.state != nullptr);
       thread_state<T>* ts = th.state;
 
@@ -234,7 +237,9 @@ public:
       th.state = nullptr;
     }
 
-    tls_->dag_prof.merge_parallel(retval.dag_prof);
+    if (tls_->tgdata) {
+      tls_->tgdata->dag_prof_acc.merge_parallel(retval.dag_prof);
+    }
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_thread>();
     return std::move(retval.value);
@@ -302,23 +307,31 @@ public:
     return th.serialized;
   }
 
-  task_group_data task_group_begin() {
+  void task_group_begin(task_group_data* tgdata) {
     tls_->dag_prof.stop();
 
-    task_group_data tgdata {tls_->dag_prof};
+    tgdata->parent          = tls_->tgdata;
+    tgdata->dag_prof_before = tls_->dag_prof;
+
+    tls_->tgdata = tgdata;
 
     tls_->dag_prof.clear();
     tls_->dag_prof.start();
     tls_->dag_prof.increment_strand_count();
-
-    return tgdata;
   }
 
   template <typename PreSuspendCallback, typename PostSuspendCallback>
-  void task_group_end(task_group_data& tgdata, PreSuspendCallback&&, PostSuspendCallback&&) {
+  void task_group_end(PreSuspendCallback&&, PostSuspendCallback&&) {
     on_task_die();
 
-    tls_->dag_prof.merge_serial(tgdata.dag_prof);
+    task_group_data* tgdata = tls_->tgdata;
+    ITYR_CHECK(tgdata);
+
+    tls_->dag_prof = tgdata->dag_prof_before;
+    tls_->dag_prof.merge_serial(tgdata->dag_prof_acc);
+
+    tls_->tgdata = tls_->tgdata->parent;
+
     tls_->dag_prof.start();
     tls_->dag_prof.increment_strand_count();
   }
@@ -342,6 +355,9 @@ private:
   void on_task_die() {
     if (!tls_->dag_prof.is_stopped()) {
       tls_->dag_prof.stop();
+      if (tls_->tgdata) {
+        tls_->tgdata->dag_prof_acc.merge_parallel(tls_->dag_prof);
+      }
     }
   }
 

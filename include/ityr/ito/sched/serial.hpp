@@ -52,9 +52,9 @@ public:
   }
 
   struct task_group_data {};
-  task_group_data task_group_begin() { return {}; }
+  void task_group_begin(task_group_data*) {}
   template <typename PreSuspendCallback, typename PostSuspendCallback>
-  void task_group_end(task_group_data&, PreSuspendCallback&&, PostSuspendCallback&&) {}
+  void task_group_end(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
   void dag_prof_begin() {}
   void dag_prof_end() {}

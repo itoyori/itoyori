@@ -110,7 +110,8 @@ inline W create_workhint_range_aux(workhint_range_view<W> target_wh,
   std::size_t d = std::distance(first, last);
   auto mid = std::next(first, d / 2);
 
-  auto tgdata = ito::task_group_begin();
+  ito::task_group_data tgdata;
+  ito::task_group_begin(&tgdata);
 
   workhint_range_view<W> c1, c2;
   if (target_wh.has_children()) {
@@ -136,7 +137,7 @@ inline W create_workhint_range_aux(workhint_range_view<W> target_wh,
 
   W w1 = th.join();
 
-  ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
+  ito::task_group_end([] { ori::release(); }, [] { ori::acquire(); });
 
   if (!th.serialized()) {
     ori::acquire();

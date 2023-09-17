@@ -83,18 +83,18 @@ inline void poll(PreSuspendCallback&&  pre_suspend_cb,
                  std::forward<PostSuspendCallback>(post_suspend_cb));
 }
 
-inline scheduler::task_group_data task_group_begin() {
+using task_group_data = scheduler::task_group_data;
+
+inline void task_group_begin(task_group_data* tgdata) {
   auto& w = worker::instance::get();
-  return w.sched().task_group_begin();
+  w.sched().task_group_begin(tgdata);
 }
 
 template <typename PreSuspendCallback, typename PostSuspendCallback>
-inline void task_group_end(scheduler::task_group_data& tgdata,
-                           PreSuspendCallback&&        pre_suspend_cb,
+inline void task_group_end(PreSuspendCallback&&        pre_suspend_cb,
                            PostSuspendCallback&&       post_suspend_cb) {
   auto& w = worker::instance::get();
-  w.sched().task_group_end(tgdata,
-                           std::forward<PreSuspendCallback>(pre_suspend_cb),
+  w.sched().task_group_end(std::forward<PreSuspendCallback>(pre_suspend_cb),
                            std::forward<PostSuspendCallback>(post_suspend_cb));
 }
 

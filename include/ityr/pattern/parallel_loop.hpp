@@ -40,7 +40,8 @@ inline void parallel_loop_generic(const execution::parallel_policy<W>& policy,
 
   auto mid = std::next(first, d / 2);
 
-  auto tgdata = ito::task_group_begin();
+  ito::task_group_data tgdata;
+  ito::task_group_begin(&tgdata);
 
   auto&& [p1, p2] = execution::internal::get_child_policies(policy);
 
@@ -59,7 +60,7 @@ inline void parallel_loop_generic(const execution::parallel_policy<W>& policy,
 
   th.join();
 
-  ito::task_group_end(tgdata, [] { ori::release(); }, [] { ori::acquire(); });
+  ito::task_group_end([] { ori::release(); }, [] { ori::acquire(); });
 
   // TODO: needed?
   if (!th.serialized()) {
