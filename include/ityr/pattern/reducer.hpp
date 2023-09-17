@@ -18,15 +18,15 @@ struct monoid {
   using value_type       = T;
   using accumulator_type = T;
 
-  void foldl(T& l, const T& r) const {
+  void operator()(T& l, const T& r) const {
     l = bop_(l, r);
   }
 
-  void foldr(const T& l, T& r) const {
+  void operator()(const T& l, T& r) const {
     r = bop_(l, r);
   }
 
-  T identity() const {
+  T operator()() const {
     return IdentityProvider();
   }
 
@@ -108,27 +108,77 @@ struct minmax {
   using value_type       = T;
   using accumulator_type = std::pair<T, T>;
 
-  void foldl(accumulator_type& acc, const value_type& x) const {
+  void operator()(accumulator_type& acc, const value_type& x) const {
     acc.first = std::min(acc.first, x);
     acc.second = std::max(acc.second, x);
   }
 
-  void foldl(accumulator_type& acc_l, const accumulator_type& acc_r) const {
+  void operator()(accumulator_type& acc_l, const accumulator_type& acc_r) const {
     acc_l.first = std::min(acc_l.first, acc_r.first);
     acc_l.second = std::max(acc_l.second, acc_r.second);
   }
 
-  void foldr(const accumulator_type& acc_l, accumulator_type& acc_r) const {
-    // commucative
-    foldl(acc_r, acc_l);
+  void operator()(const accumulator_type& acc_l, accumulator_type& acc_r) const {
+    (*this)(acc_r, acc_l); // commutative
   }
 
-  accumulator_type identity() const {
+  accumulator_type operator()() const {
     return std::make_pair(std::numeric_limits<T>::max(), std::numeric_limits<T>::lowest());
   }
 };
 
 using logical_and = monoid<bool, std::logical_and<>, std::true_type>;
 using logical_or  = monoid<bool, std::logical_or<> , std::false_type>;
+
+template <typename Acc, typename... Fns>
+struct reducer_generic : Fns... {
+  using accumulator_type = Acc;
+  reducer_generic(Fns&&... fns)
+    : Fns(std::forward<Fns>(fns))... {}
+  using Fns::operator()...;
+};
+
+namespace internal {
+
+template <typename T, typename = void>
+struct type_or_void {
+  using type = void;
+};
+
+template <typename T>
+struct type_or_void<T, std::void_t<typename T::type>> {
+  using type = typename T::type;
+};
+
+// If T::type is defined, return T::type. Otherwise, return void.
+template <typename T>
+using type_or_void_t = typename type_or_void<T>::type;
+
+template <typename...>
+struct identity_retval {
+  using type = void;
+};
+
+template <typename Fn, typename... Rest>
+struct identity_retval<Fn, Rest...> {
+  // `type_or_void` indirection is needed because std::invoke_result<Fn> cannot be evaluated
+  // if is_invocable_v<Fn> == false
+  using type = std::conditional_t<std::is_invocable_v<Fn>,
+                                  type_or_void_t<std::invoke_result<Fn>>,
+                                  typename identity_retval<Rest...>::type>;
+};
+
+template <typename... Fns>
+using identity_retval_t = typename identity_retval<std::remove_reference_t<Fns>...>::type;
+
+}
+
+template <typename... Fns>
+inline decltype(auto) make_reducer(Fns&&... fns) {
+  using acc_t = internal::identity_retval_t<Fns...>;
+  static_assert(!std::is_void_v<acc_t>,
+                "Please define an identity function that returns a nonvoid value.");
+  return reducer_generic<acc_t, Fns...>(std::forward<Fns>(fns)...);
+}
 
 }

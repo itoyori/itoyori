@@ -68,7 +68,7 @@ parallel_reduce_generic(const execution::parallel_policy<W>& policy,
     return acc_r;
 
   } else {
-    acc_t new_acc = reducer.identity();
+    acc_t new_acc = reducer();
     rh = ori::release_lazy();
 
     acc_t acc_r = parallel_reduce_generic(p2, accumulate_op, combine_op, reducer,
@@ -178,16 +178,16 @@ transform_reduce(const ExecutionPolicy& policy,
 
   } else {
     auto accumulate_op = [=](auto&& acc, const auto& r) {
-      reducer.foldl(std::forward<decltype(acc)>(acc), unary_transform_op(r));
+      reducer(std::forward<decltype(acc)>(acc), unary_transform_op(r));
     };
 
     auto combine_op = [=](auto&& acc1, auto&& acc2,
                           ForwardIterator, ForwardIterator, ForwardIterator) {
-      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
+      reducer(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                    reducer.identity(), first, last);
+                                    reducer(), first, last);
   }
 }
 
@@ -247,16 +247,16 @@ transform_reduce(const ExecutionPolicy& policy,
 
   } else {
     auto accumulate_op = [=](auto&& acc, const auto& r1, const auto& r2) {
-      reducer.foldl(std::forward<decltype(acc)>(acc), binary_transform_op(r1, r2));
+      reducer(std::forward<decltype(acc)>(acc), binary_transform_op(r1, r2));
     };
 
     auto combine_op = [=](auto&& acc1, auto&& acc2,
                           ForwardIterator1, ForwardIterator1, ForwardIterator1, ForwardIterator2) {
-      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
+      reducer(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     return internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
-                                    reducer.identity(), first1, last1, first2);
+                                    reducer(), first1, last1, first2);
   }
 }
 
@@ -591,7 +591,7 @@ transform_inclusive_scan(const ExecutionPolicy&               policy,
 
   } else {
     auto accumulate_op = [=](auto&& acc, const auto& r1, auto&& d) {
-      reducer.foldl(acc, unary_transform_op(r1));
+      reducer(acc, unary_transform_op(r1));
       d = acc;
     };
 
@@ -607,17 +607,17 @@ transform_inclusive_scan(const ExecutionPolicy&               policy,
       auto dl = std::distance(first_, last_);
       if constexpr (!is_global_iterator_v<ForwardIteratorD>) {
         for_each(policy, std::next(first_d_, dm), std::next(first_d_, dl),
-                 [=](auto&& acc_r) { reducer.foldr(acc1, acc_r); });
+                 [=](auto&& acc_r) { reducer(acc1, acc_r); });
       } else if constexpr (std::is_same_v<typename ForwardIteratorD::mode, checkout_mode::no_access_t>) {
         for_each(policy, std::next(first_d_, dm), std::next(first_d_, dl),
-                 [=](auto&& acc_r) { reducer.foldr(acc1, acc_r); });
+                 [=](auto&& acc_r) { reducer(acc1, acc_r); });
       } else {
         // &*: convert global_iterator -> global_ref -> global_ptr
         auto fd = make_global_iterator(&*first_d_, checkout_mode::read_write);
         for_each(policy, std::next(fd, dm), std::next(fd, dl),
-                 [=](auto&& acc_r) { reducer.foldr(acc1, acc_r); });
+                 [=](auto&& acc_r) { reducer(acc1, acc_r); });
       }
-      reducer.foldl(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
+      reducer(std::forward<decltype(acc1)>(acc1), std::forward<decltype(acc2)>(acc2));
     };
 
     internal::reduce_generic(policy, accumulate_op, combine_op, reducer,
@@ -639,7 +639,7 @@ transform_inclusive_scan(const ExecutionPolicy&               policy,
  *
  * @return The end iterator of the output range (`first_d + (last1 - first1)`).
  *
- * Equivalent to `ityr::transform_inclusive_reduce(policy, first1, last1, first_d, reducer, unary_transform_op, reducer.identity())`.
+ * Equivalent to `ityr::transform_inclusive_reduce(policy, first1, last1, first_d, reducer, unary_transform_op, reducer())`.
  *
  * Example:
  * ```
@@ -667,7 +667,7 @@ inline ForwardIteratorD transform_inclusive_scan(const ExecutionPolicy& policy,
                                                  Reducer                reducer,
                                                  UnaryTransformOp       unary_transform_op) {
   return transform_inclusive_scan(policy, first1, last1, first_d, reducer,
-                                  unary_transform_op, reducer.identity());
+                                  unary_transform_op, reducer());
 }
 
 /**
@@ -741,7 +741,7 @@ inclusive_scan(const ExecutionPolicy&               policy,
  *
  * @return The end iterator of the output range (`first_d + (last1 - first1)`).
  *
- * Equivalent to `ityr::inclusive_scan(policy, first1, last1, first_d, reducer, reducer.identity())`.
+ * Equivalent to `ityr::inclusive_scan(policy, first1, last1, first_d, reducer, reducer())`.
  *
  * Example:
  * ```
@@ -765,7 +765,7 @@ inline ForwardIteratorD inclusive_scan(const ExecutionPolicy& policy,
                                        ForwardIterator1       last1,
                                        ForwardIteratorD       first_d,
                                        Reducer                reducer) {
-  return inclusive_scan(policy, first1, last1, first_d, reducer, reducer.identity());
+  return inclusive_scan(policy, first1, last1, first_d, reducer, reducer());
 }
 
 /**

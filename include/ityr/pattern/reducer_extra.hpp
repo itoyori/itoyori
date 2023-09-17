@@ -18,7 +18,7 @@ struct histogram {
   histogram(std::size_t n_bins, const value_type& lowest, const value_type& highest)
     : n_bins_(n_bins), lowest_(lowest), highest_(highest) {}
 
-  void foldl(accumulator_type& acc, const value_type& x) const {
+  void operator()(accumulator_type& acc, const value_type& x) const {
     if (lowest_ <= x && x <= highest_) {
       auto delta = (highest_ - lowest_) / n_bins_;
       std::size_t key = (x - lowest_) / delta;
@@ -27,19 +27,19 @@ struct histogram {
     }
   }
 
-  void foldl(accumulator_type& acc_l, const accumulator_type& acc_r) const {
+  void operator()(accumulator_type& acc_l, const accumulator_type& acc_r) const {
     transform(
         execution::parallel_policy(128),
         acc_l.begin(), acc_l.end(), acc_r.begin(), acc_l.begin(),
         [](const Counter& c1, const Counter& c2) { return c1 + c2; });
   }
 
-  void foldr(const accumulator_type& acc_l, accumulator_type& acc_r) const {
+  void operator()(const accumulator_type& acc_l, accumulator_type& acc_r) const {
     // commutative
     foldl(acc_r, acc_l);
   }
 
-  accumulator_type identity() const {
+  accumulator_type operator()() const {
     return global_vector<Counter>(n_bins_, 0);
   }
 
@@ -54,15 +54,15 @@ struct vec_concat {
   using value_type       = global_vector<T>;
   using accumulator_type = global_vector<T>;
 
-  void foldl(accumulator_type& acc_l, accumulator_type&& acc_r) const {
+  void operator()(accumulator_type& acc_l, accumulator_type&& acc_r) const {
     acc_l.insert(acc_l.end(), make_move_iterator(acc_r.begin()), make_move_iterator(acc_r.end()));
   }
 
-  void foldr(accumulator_type&& acc_l, accumulator_type& acc_r) const {
+  void operator()(accumulator_type&& acc_l, accumulator_type& acc_r) const {
     acc_r.insert(acc_r.begin(), make_move_iterator(acc_l.begin()), make_move_iterator(acc_l.end()));
   }
 
-  accumulator_type identity() const {
+  accumulator_type operator()() const {
     return global_vector<T>();
   }
 };
@@ -72,7 +72,7 @@ struct vec_element_wise {
   using value_type       = global_vector<T>;
   using accumulator_type = global_vector<T>;
 
-  void foldl(accumulator_type& acc_l, value_type&& acc_r) const {
+  void operator()(accumulator_type& acc_l, value_type&& acc_r) const {
     if (acc_l.empty()) {
       acc_l = std::move(acc_r);
     } else {
@@ -86,7 +86,7 @@ struct vec_element_wise {
     }
   }
 
-  void foldr(accumulator_type&& acc_l, accumulator_type& acc_r) const {
+  void operator()(accumulator_type&& acc_l, accumulator_type& acc_r) const {
     if (acc_r.empty()) {
       acc_r = std::move(acc_l);
     } else {
@@ -100,7 +100,7 @@ struct vec_element_wise {
     }
   }
 
-  accumulator_type identity() const {
+  accumulator_type operator()() const {
     return global_vector<T>();
   }
 
