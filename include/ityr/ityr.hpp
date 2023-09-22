@@ -12,6 +12,7 @@
 #include "ityr/pattern/parallel_invoke.hpp"
 #include "ityr/pattern/parallel_loop.hpp"
 #include "ityr/pattern/parallel_reduce.hpp"
+#include "ityr/pattern/parallel_filter.hpp"
 #include "ityr/pattern/parallel_merge.hpp"
 #include "ityr/pattern/parallel_sort.hpp"
 #include "ityr/pattern/reducer_extra.hpp"

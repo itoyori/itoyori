@@ -121,8 +121,11 @@ inline void inplace_merge_aux(const execution::parallel_policy<W>& policy,
   if (d <= 1 || first == middle || middle == last) return;
 
   if (d <= policy.cutoff_count) {
+    // TODO: consider policy.checkout_count
+    ITYR_CHECK(policy.cutoff_count == policy.checkout_count);
+
     auto&& [css, its] = checkout_global_iterators(d, first);
-    auto first_ = std::get<0>(its);
+    auto&& first_ = std::get<0>(its);
     std::inplace_merge(first_,
                        std::next(first_, std::distance(first, middle)),
                        std::next(first_, d),
