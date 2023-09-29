@@ -22,7 +22,7 @@ public:
         sched_.root_exec<no_retval_t>(cb, std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
-        sched_.sched_loop(cb, []{ return true; });
+        sched_.sched_loop(cb);
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_spmd>();
       }
 
@@ -36,7 +36,7 @@ public:
         retval = sched_.root_exec<retval_t>(cb, std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
-        sched_.sched_loop(cb, []{ return true; });
+        sched_.sched_loop(cb);
         common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_spmd>();
       }
 

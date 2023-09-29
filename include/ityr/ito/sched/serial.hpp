@@ -31,8 +31,8 @@ public:
     return std::move(th);
   }
 
-  template <typename SchedLoopCallback, typename CondFn>
-  void sched_loop(SchedLoopCallback&&, CondFn) {}
+  template <typename SchedLoopCallback>
+  void sched_loop(SchedLoopCallback) {}
 
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}

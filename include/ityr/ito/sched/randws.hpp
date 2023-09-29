@@ -93,7 +93,7 @@ public:
       });
     });
 
-    sched_loop(cb, [=]() { return ts->resume_flag >= 1; });
+    sched_loop(cb);
 
     common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_join>();
 
@@ -245,11 +245,11 @@ public:
     return std::move(retval.value);
   }
 
-  template <typename SchedLoopCallback, typename CondFn>
-  void sched_loop(SchedLoopCallback cb, CondFn cond_fn) {
+  template <typename SchedLoopCallback>
+  void sched_loop(SchedLoopCallback cb) {
     common::verbose("Enter scheduling loop");
 
-    while (!should_exit_sched_loop(cond_fn)) {
+    while (!should_exit_sched_loop()) {
       steal();
 
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
@@ -270,9 +270,10 @@ public:
     auto begin_rank = common::topology::my_rank();
     std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
 
-    auto coll_task_fn = [&, fn, args...]() {
+    auto coll_task_fn = [=, &retv]() {
       if constexpr (std::is_void_v<retval_t>) {
         fn(args...);
+        (void)retv;
       } else {
         auto&& ret = fn(args...);
         if (common::topology::my_rank() == begin_rank) {
@@ -288,7 +289,7 @@ public:
 
     auto t = new (task_ptr) callable_task_t(coll_task_fn);
 
-    coll_task ct {.task_ptr = task_ptr, .task_size = task_size, .begin_rank = begin_rank};
+    coll_task ct {task_ptr, task_size, begin_rank};
     execute_coll_task(t, ct);
 
     suspended_thread_allocator_.deallocate(t, task_size);
@@ -399,6 +400,8 @@ private:
       put_retval_remote(ts, {std::move(ret), tls_->dag_prof});
     }
     remote_put_value(thread_state_allocator_, 1, &ts->resume_flag);
+
+    exit_request_mailbox_.put(0);
 
     common::profiler::switch_phase<prof_phase_sched_die, prof_phase_sched_loop>();
     resume_sched();
@@ -524,7 +527,7 @@ private:
 
   void execute_coll_task(task_general* t, coll_task ct) {
     // TODO: consider copy semantics for tasks
-    coll_task ct_ {.task_ptr = t, .task_size = ct.task_size, .begin_rank = ct.begin_rank};
+    coll_task ct_ {t, ct.task_size, ct.begin_rank};
 
     // pass coll task to other processes in a binary tree form
     auto n_ranks = common::topology::n_ranks();
@@ -539,7 +542,7 @@ private:
       }
     }
 
-    // Ensure all processes have finished coll task execution before deallocation
+    // Ensure all processes have popped the coll task
     common::mpi_barrier(common::topology::mpicomm());
 
     t->execute();
@@ -565,22 +568,27 @@ private:
     }
   }
 
-  template <typename CondFn>
-  bool should_exit_sched_loop(CondFn cond_fn) {
+  bool should_exit_sched_loop() {
     if (sched_loop_make_mpi_progress_option::value()) {
       common::mpi_make_progress();
     }
 
     execute_coll_task_if_arrived();
 
-    if (sched_loop_exit_req_ == MPI_REQUEST_NULL && cond_fn()) {
-      // If a given condition is met, enters a barrier
-      sched_loop_exit_req_ = common::mpi_ibarrier(common::topology::mpicomm());
+    if (exit_request_mailbox_.pop()) {
+      auto my_rank = common::topology::my_rank();
+      auto n_ranks = common::topology::n_ranks();
+      for (common::topology::rank_t i = common::next_pow2(n_ranks); i > 1; i /= 2) {
+        if (my_rank % i == 0) {
+          auto target_rank = my_rank + i / 2;
+          if (target_rank < n_ranks) {
+            exit_request_mailbox_.put(target_rank);
+          }
+        }
+      }
+      return true;
     }
-    if (sched_loop_exit_req_ != MPI_REQUEST_NULL) {
-      // If the barrier is resolved, the scheduler loop should terminate
-      return common::mpi_test(sched_loop_exit_req_);
-    }
+
     return false;
   }
 
@@ -613,15 +621,15 @@ private:
   };
 
   callstack                  stack_;
+  oneslot_mailbox<void>      exit_request_mailbox_;
   oneslot_mailbox<coll_task> coll_task_mailbox_;
   wsqueue<wsqueue_entry>     wsq_;
   common::remotable_resource thread_state_allocator_;
   common::remotable_resource suspended_thread_allocator_;
-  context_frame*             cf_top_              = nullptr;
-  context_frame*             sched_cf_            = nullptr;
-  MPI_Request                sched_loop_exit_req_ = MPI_REQUEST_NULL;
-  thread_local_storage*      tls_                 = nullptr;
-  bool                       dag_prof_enabled_    = false;
+  context_frame*             cf_top_           = nullptr;
+  context_frame*             sched_cf_         = nullptr;
+  thread_local_storage*      tls_              = nullptr;
+  bool                       dag_prof_enabled_ = false;
   dag_profiler               dag_prof_result_;
 };
 

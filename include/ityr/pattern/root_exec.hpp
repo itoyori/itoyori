@@ -122,16 +122,16 @@ inline auto coll_exec(const Fn& fn, const Args&... args) {
     ori::acquire();
 
   } else {
-    auto&& ret = ito::coll_exec([=]() {
+    auto ret = ito::coll_exec([=]() {
       ori::acquire();
-      auto&& ret = fn(args...);
+      auto ret = fn(args...);
       ori::release();
-      return std::forward<decltype(ret)>(ret);
+      return ret;
     });
 
     ori::acquire();
 
-    return std::forward<decltype(ret)>(ret);
+    return ret;
   }
 }
 

@@ -64,9 +64,9 @@ private:
 
   void mem_free(ori::global_ptr<std::pair<value_type, value_type>> p) {
     if (ito::is_spmd()) {
-      return ori::free_coll<std::pair<value_type, value_type>>(p);
+      ori::free_coll<std::pair<value_type, value_type>>(p);
     } else if (ito::is_root()) {
-      return ito::coll_exec([=] { ori::free_coll(p); });
+      ito::coll_exec([=] { ori::free_coll(p); });
     } else {
       common::die("workhint_range must be destroyed on the root thread or SPMD region.");
     }

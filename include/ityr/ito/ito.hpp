@@ -52,9 +52,9 @@ inline auto root_exec(Fn&& fn, Args&&... args) {
 }
 
 template <typename SchedLoopCallback, typename Fn, typename... Args>
-inline auto root_exec(with_callback_t, SchedLoopCallback&& cb, Fn&& fn, Args&&... args) {
+inline auto root_exec(with_callback_t, SchedLoopCallback cb, Fn&& fn, Args&&... args) {
   auto& w = worker::instance::get();
-  return w.root_exec(std::forward<SchedLoopCallback>(cb), std::forward<Fn>(fn), std::forward<Args>(args)...);
+  return w.root_exec(cb, std::forward<Fn>(fn), std::forward<Args>(args)...);
 }
 
 inline bool is_spmd() {
@@ -91,8 +91,8 @@ inline void task_group_begin(task_group_data* tgdata) {
 }
 
 template <typename PreSuspendCallback, typename PostSuspendCallback>
-inline void task_group_end(PreSuspendCallback&&        pre_suspend_cb,
-                           PostSuspendCallback&&       post_suspend_cb) {
+inline void task_group_end(PreSuspendCallback&&  pre_suspend_cb,
+                           PostSuspendCallback&& post_suspend_cb) {
   auto& w = worker::instance::get();
   w.sched().task_group_end(std::forward<PreSuspendCallback>(pre_suspend_cb),
                            std::forward<PostSuspendCallback>(post_suspend_cb));
