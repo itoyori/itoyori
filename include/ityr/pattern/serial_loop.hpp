@@ -11,6 +11,18 @@ namespace ityr {
 
 namespace internal {
 
+template <typename T, typename = void>
+struct needs_checkout : public std::false_type {};
+
+template <typename T>
+struct needs_checkout<T, std::enable_if_t<is_global_iterator_v<T>>>
+  : public std::conditional_t<std::is_same_v<typename T::mode, checkout_mode::no_access_t>,
+                              std::false_type,
+                              std::true_type> {};
+
+template <typename T>
+inline constexpr bool needs_checkout_v = needs_checkout<T>::value;
+
 inline auto checkout_global_iterators_aux(std::size_t) {
   return std::make_tuple(std::make_tuple(), std::make_tuple());
 }
@@ -18,7 +30,7 @@ inline auto checkout_global_iterators_aux(std::size_t) {
 template <typename ForwardIterator, typename... ForwardIterators>
 inline auto checkout_global_iterators_aux(std::size_t n, ForwardIterator it, ForwardIterators... rest) {
   ITYR_CHECK(n > 0);
-  if constexpr (is_global_iterator_v<ForwardIterator>) {
+  if constexpr (needs_checkout_v<ForwardIterator>) {
     auto&& [cs, it_] = it.checkout_nb(n);
     auto&& [css, its] = checkout_global_iterators_aux(n, rest...);
     return std::make_tuple(std::tuple_cat(std::make_tuple(std::move(cs)), std::move(css)),
@@ -52,8 +64,8 @@ inline void for_each_aux(const execution::sequenced_policy& policy,
                          ForwardIterator                    first,
                          ForwardIterator                    last,
                          ForwardIterators...                firsts) {
-  if constexpr ((is_global_iterator_v<ForwardIterator> || ... ||
-                 is_global_iterator_v<ForwardIterators>)) {
+  if constexpr ((needs_checkout_v<ForwardIterator> || ... ||
+                 needs_checkout_v<ForwardIterators>)) {
     // perform automatic checkout for global iterators
     std::size_t n = std::distance(first, last);
     std::size_t c = policy.checkout_count;
