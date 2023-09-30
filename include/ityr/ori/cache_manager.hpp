@@ -228,6 +228,16 @@ public:
     invalidate_all();
   }
 
+  void set_readonly(void* addr, std::size_t size) {
+    readonly_regions_.add({reinterpret_cast<uintptr_t>(addr),
+                           reinterpret_cast<uintptr_t>(addr) + size});
+  }
+
+  void unset_readonly(void* addr, std::size_t size) {
+    readonly_regions_.remove({reinterpret_cast<uintptr_t>(addr),
+                              reinterpret_cast<uintptr_t>(addr) + size});
+  }
+
   void poll() {
     if constexpr (enable_lazy_release) {
       if (rm_.release_requested()) {
@@ -439,7 +449,7 @@ private:
 
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
 
-    block_region_set fetch_regions = cb.valid_regions.inverse(br_pad);
+    block_region_set fetch_regions = cb.valid_regions.complement(br_pad);
 
     // fetch only nondirty sections
     for (auto [blk_offset_b, blk_offset_e] : fetch_regions) {
@@ -567,9 +577,34 @@ private:
   }
 
   void invalidate_all() {
-    cs_.for_each_entry([&](cache_block& cb) {
-      cb.invalidate();
-    });
+    if (readonly_regions_.empty()) {
+      cs_.for_each_entry([&](cache_block& cb) {
+        cb.invalidate();
+      });
+    } else {
+      cs_.for_each_entry([&](cache_block& cb) {
+        if (cb.valid_regions.empty()) return;
+
+        ITYR_CHECK(cb.addr);
+        uintptr_t blk_addr = reinterpret_cast<uintptr_t>(cb.addr);
+        region<uintptr_t> blk_addr_range = {blk_addr, blk_addr + BlockSize};
+
+        region_set<uintptr_t> blk_readonly_ranges = get_intersection(readonly_regions_, blk_addr_range);
+        if (blk_readonly_ranges.empty()) {
+          // This cache block is not included in the read-only regions
+          cb.invalidate();
+
+        } else if (*blk_readonly_ranges.begin() != blk_addr_range) {
+          // This cache block partly overlaps with the read-only regions
+          block_region_set brs_ro;
+          auto it = brs_ro.before_begin();
+          for (const auto& r : blk_readonly_ranges) {
+            it = brs_ro.add({r.begin - blk_addr, r.end - blk_addr}, it);
+          }
+          cb.valid_regions = get_intersection(cb.valid_regions, brs_ro);
+        }
+      });
+    }
   }
 
   std::size_t                            cache_size_;
@@ -604,7 +639,7 @@ private:
   // A release epoch is an interval between the events when all cache become clean.
   release_manager                        rm_;
 
-
+  region_set<uintptr_t>                  readonly_regions_;
 
   cache_profiler                         cprof_;
 };

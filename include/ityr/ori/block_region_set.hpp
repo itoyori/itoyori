@@ -8,14 +8,14 @@
 
 namespace ityr::ori {
 
-template <typename T = block_size_t>
+template <typename T>
 struct region {
   template <typename T1, typename T2>
   region(T1 b, T2 e) {
     ITYR_CHECK(0 <= b);
-    ITYR_CHECK(static_cast<uint64_t>(b) < static_cast<uint64_t>(std::numeric_limits<block_size_t>::max()));
+    ITYR_CHECK(static_cast<uint64_t>(b) <= static_cast<uint64_t>(std::numeric_limits<T>::max()));
     ITYR_CHECK(0 <= e);
-    ITYR_CHECK(static_cast<uint64_t>(e) < static_cast<uint64_t>(std::numeric_limits<block_size_t>::max()));
+    ITYR_CHECK(static_cast<uint64_t>(e) <= static_cast<uint64_t>(std::numeric_limits<T>::max()));
     begin = static_cast<T>(b);
     end   = static_cast<T>(e);
   }
@@ -61,6 +61,9 @@ inline region<T> get_intersection(const region<T>& r1, const region<T>& r2) {
 template <typename T>
 class region_set {
 public:
+  using iterator       = typename std::forward_list<region<T>>::iterator;
+  using const_iterator = typename std::forward_list<region<T>>::const_iterator;
+
   region_set() {}
   region_set(std::initializer_list<region<T>> regions)
     : regions_(regions) {}
@@ -68,11 +71,13 @@ public:
   auto& get() { return regions_; }
   const auto& get() const { return regions_; }
 
-  auto begin() { return regions_.begin(); }
-  auto end() { return regions_.end(); }
+  iterator before_begin() { return regions_.before_begin(); }
+  iterator begin() { return regions_.begin(); }
+  iterator end() { return regions_.end(); }
 
-  auto begin() const { return regions_.begin(); }
-  auto end() const { return regions_.end(); }
+  const_iterator before_begin() const { return regions_.cbefore_begin(); }
+  const_iterator begin() const { return regions_.cbegin(); }
+  const_iterator end() const { return regions_.cend(); }
 
   bool empty() const {
     return regions_.empty();
@@ -82,8 +87,8 @@ public:
     regions_.clear();
   }
 
-  void add(region<T> r) {
-    auto it = regions_.before_begin();
+  iterator add(const region<T>& r, iterator begin_it) {
+    auto it = begin_it;
 
     // skip until it overlaps r (or r < it)
     while (std::next(it) != regions_.end() &&
@@ -92,9 +97,9 @@ public:
     if (std::next(it) == regions_.end() ||
         r.end < std::next(it)->begin) {
       // no overlap
-      regions_.insert_after(it, r);
+      it = regions_.insert_after(it, r);
     } else {
-      // at least two sections are overlapping -> merge
+      // at least two regions are overlapping -> merge
       it++;
       *it = get_union(*it, r);
 
@@ -104,9 +109,16 @@ public:
         regions_.erase_after(it);
       }
     }
+
+    // return an iterator to the added element
+    return it;
   }
 
-  void remove(region<T> r) {
+  iterator add(const region<T>& r) {
+    return add(r, regions_.before_begin());
+  }
+
+  void remove(const region<T>& r) {
     auto it = regions_.before_begin();
 
     while (std::next(it) != regions_.end()) {
@@ -139,7 +151,7 @@ public:
     }
   }
 
-  bool include(region<T> r) const {
+  bool include(const region<T>& r) const {
     for (const auto& r_ : regions_) {
       if (r.begin < r_.begin) break;
       if (r.end <= r_.end) return true;
@@ -147,7 +159,7 @@ public:
     return false;
   }
 
-  region_set<T> inverse(region<T> r) const {
+  region_set<T> complement(region<T> r) const {
     region_set<T> ret;
     std::forward_list<region<T>>& regs = ret.regions_;
 
@@ -164,6 +176,66 @@ public:
     if (r.begin < r.end) {
       regs.insert_after(it, r);
     }
+    return ret;
+  }
+
+  region_set<T> intersection(const region<T>& r) const {
+    region_set<T> ret;
+    std::forward_list<region<T>>& regs = ret.get();
+
+    auto it_ret = regs.before_begin();
+    auto it = regions_.begin();
+
+    while (it != regions_.end()) {
+      if (it->end <= r.begin) {
+        it++;
+        continue;
+      }
+
+      if (r.end <= it->begin) {
+        break;
+      }
+
+      it_ret = regs.insert_after(it_ret, get_intersection(*it, r));
+
+      if (r.end < it->end) {
+        break;
+      }
+
+      it++;
+    }
+
+    return ret;
+  }
+
+  region_set<T> intersection(const region_set<T>& rs) const {
+    region_set<T> ret;
+    std::forward_list<region<T>>& regs = ret.get();
+
+    auto it_ret = regs.before_begin();
+    auto it1 = regions_.begin();
+    auto it2 = rs.begin();
+
+    while (it1 != regions_.end() && it2 != rs.end()) {
+      if (it1->end <= it2->begin) {
+        it1++;
+        continue;
+      }
+
+      if (it2->end <= it1->begin) {
+        it2++;
+        continue;
+      }
+
+      it_ret = regs.insert_after(it_ret, get_intersection(*it1, *it2));
+
+      if (it1->end <= it2->end) {
+        it1++;
+      } else {
+        it2++;
+      }
+    }
+
     return ret;
   }
 
@@ -190,35 +262,18 @@ inline bool operator!=(const region_set<T>& rs1, const region_set<T>& rs2) noexc
 }
 
 template <typename T>
+inline region_set<T> get_complement(const region_set<T>& rs, const region<T>& r) {
+  return rs.complement(r);
+}
+
+template <typename T>
+inline region_set<T> get_intersection(const region_set<T>& rs, const region<T>& r) {
+  return rs.intersection(r);
+}
+
+template <typename T>
 inline region_set<T> get_intersection(const region_set<T>& rs1, const region_set<T>& rs2) {
-  region_set<T> ret;
-  std::forward_list<region<T>>& regs = ret.get();
-
-  auto it_ret = regs.before_begin();
-  auto it1 = rs1.begin();
-  auto it2 = rs2.begin();
-
-  while (it1 != rs1.end() && it2 != rs2.end()) {
-    if (it1->end <= it2->begin) {
-      it1++;
-      continue;
-    }
-
-    if (it2->end <= it1->begin) {
-      it2++;
-      continue;
-    }
-
-    it_ret = regs.insert_after(it_ret, get_intersection(*it1, *it2));
-
-    if (it1->end <= it2->end) {
-      it1++;
-    } else {
-      it2++;
-    }
-  }
-
-  return ret;
+  return rs1.intersection(rs2);
 }
 
 using block_region = region<block_size_t>;
@@ -295,19 +350,19 @@ ITYR_TEST_CASE("[ityr::ori::block_region_set] include") {
   ITYR_CHECK(!brs.include({0, 3}));
 }
 
-ITYR_TEST_CASE("[ityr::ori::block_region_set] inverse") {
+ITYR_TEST_CASE("[ityr::ori::block_region_set] complement") {
   block_region_set brs{{2, 5}, {6, 9}, {11, 20}, {50, 100}};
-  ITYR_CHECK(brs.inverse({0, 120}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 50}, {100, 120}}));
-  ITYR_CHECK(brs.inverse({0, 100}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 50}}));
-  ITYR_CHECK(brs.inverse({0, 25}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 25}}));
-  ITYR_CHECK(brs.inverse({8, 15}) == block_region_set({{9, 11}}));
-  ITYR_CHECK(brs.inverse({30, 40}) == block_region_set({{30, 40}}));
-  ITYR_CHECK(brs.inverse({50, 100}) == block_region_set({}));
-  ITYR_CHECK(brs.inverse({60, 90}) == block_region_set({}));
-  ITYR_CHECK(brs.inverse({2, 5}) == block_region_set({}));
-  ITYR_CHECK(brs.inverse({2, 6}) == block_region_set({{5, 6}}));
+  ITYR_CHECK(brs.complement({0, 120}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 50}, {100, 120}}));
+  ITYR_CHECK(brs.complement({0, 100}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 50}}));
+  ITYR_CHECK(brs.complement({0, 25}) == block_region_set({{0, 2}, {5, 6}, {9, 11}, {20, 25}}));
+  ITYR_CHECK(brs.complement({8, 15}) == block_region_set({{9, 11}}));
+  ITYR_CHECK(brs.complement({30, 40}) == block_region_set({{30, 40}}));
+  ITYR_CHECK(brs.complement({50, 100}) == block_region_set({}));
+  ITYR_CHECK(brs.complement({60, 90}) == block_region_set({}));
+  ITYR_CHECK(brs.complement({2, 5}) == block_region_set({}));
+  ITYR_CHECK(brs.complement({2, 6}) == block_region_set({{5, 6}}));
   block_region_set brs_empty{};
-  ITYR_CHECK(brs_empty.inverse({0, 100}) == block_region_set({{0, 100}}));
+  ITYR_CHECK(brs_empty.complement({0, 100}) == block_region_set({{0, 100}}));
 }
 
 ITYR_TEST_CASE("[ityr::ori::block_region_set] intersection") {

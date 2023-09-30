@@ -204,6 +204,16 @@ inline void acquire(release_handler rh) {
   core::instance::get().acquire(rh);
 }
 
+template <typename T>
+inline void set_readonly_coll(global_ptr<T> ptr, std::size_t count) {
+  core::instance::get().set_readonly_coll(const_cast<std::remove_const_t<T>*>(ptr.raw_ptr()), count * sizeof(T));
+}
+
+template <typename T>
+inline void unset_readonly_coll(global_ptr<T> ptr, std::size_t count) {
+  core::instance::get().unset_readonly_coll(const_cast<std::remove_const_t<T>*>(ptr.raw_ptr()), count * sizeof(T));
+}
+
 inline void poll() {
   core::instance::get().poll();
 }

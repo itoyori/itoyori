@@ -38,7 +38,7 @@ public:
       requested_bytes_ += requested_region.size();
       fetched_bytes_   += fetched_regions.size();
 
-      block_region_set hit_regions          = fetched_regions.inverse(requested_region);
+      block_region_set hit_regions          = fetched_regions.complement(requested_region);
       block_region_set temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
 
       std::size_t temporal_hit_size = temporal_hit_regions.size();
@@ -67,9 +67,9 @@ public:
     if (enabled_) {
       requested_bytes_ += requested_region.size();
 
-      block_region_set skip_fetch_hit_regions = valid_regions.inverse(requested_region);
+      block_region_set skip_fetch_hit_regions = valid_regions.complement(requested_region);
 
-      block_region_set hit_regions          = skip_fetch_hit_regions.inverse(requested_region);
+      block_region_set hit_regions          = skip_fetch_hit_regions.complement(requested_region);
       block_region_set temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
 
       std::size_t temporal_hit_size = temporal_hit_regions.size();

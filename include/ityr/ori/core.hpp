@@ -267,6 +267,23 @@ public:
     common::verbose("Acquire fence (lazy) end");
   }
 
+  void set_readonly_coll(void* addr, std::size_t size) {
+    release();
+    common::mpi_barrier(common::topology::mpicomm());
+
+    cache_manager_.set_readonly(addr, size);
+
+    common::mpi_barrier(common::topology::mpicomm());
+  }
+
+  void unset_readonly_coll(void* addr, std::size_t size) {
+    common::mpi_barrier(common::topology::mpicomm());
+
+    cache_manager_.unset_readonly(addr, size);
+
+    common::mpi_barrier(common::topology::mpicomm());
+  }
+
   void poll() {
     cache_manager_.poll();
   }
@@ -682,6 +699,9 @@ public:
 
   void acquire(release_handler) {}
 
+  void set_readonly_coll(void*, std::size_t) {}
+  void unset_readonly_coll(void*, std::size_t) {}
+
   void poll() {}
 
   void collect_deallocated() {
@@ -881,6 +901,9 @@ public:
   void acquire() {}
 
   void acquire(release_handler) {}
+
+  void set_readonly_coll(void*, std::size_t) {}
+  void unset_readonly_coll(void*, std::size_t) {}
 
   void poll() {}
 
