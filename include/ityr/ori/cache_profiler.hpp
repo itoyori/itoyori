@@ -6,16 +6,16 @@
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/cache_system.hpp"
-#include "ityr/ori/block_regions.hpp"
+#include "ityr/ori/block_region_set.hpp"
 
 namespace ityr::ori {
 
 class cache_profiler_disabled {
 public:
   cache_profiler_disabled(cache_entry_idx_t) {}
-  void record(cache_entry_idx_t, block_region, const block_regions&) {}
-  void record_writeonly(cache_entry_idx_t, block_region, const block_regions&) {}
-  void invalidate(cache_entry_idx_t, const block_regions&) {}
+  void record(cache_entry_idx_t, block_region, const block_region_set&) {}
+  void record_writeonly(cache_entry_idx_t, block_region, const block_region_set&) {}
+  void invalidate(cache_entry_idx_t, const block_region_set&) {}
   void start() {}
   void stop() {}
   void print() const {}
@@ -29,7 +29,7 @@ public:
 
   void record(cache_entry_idx_t    block_idx,
               block_region         requested_region,
-              const block_regions& fetched_regions) {
+              const block_region_set& fetched_regions) {
     ITYR_CHECK(0 <= block_idx);
     ITYR_CHECK(block_idx < n_blocks_);
     cache_block& blk = blocks_[block_idx];
@@ -38,8 +38,8 @@ public:
       requested_bytes_ += requested_region.size();
       fetched_bytes_   += fetched_regions.size();
 
-      block_regions hit_regions          = fetched_regions.inverse(requested_region);
-      block_regions temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
+      block_region_set hit_regions          = fetched_regions.inverse(requested_region);
+      block_region_set temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
 
       std::size_t temporal_hit_size = temporal_hit_regions.size();
       std::size_t spatial_hit_size  = hit_regions.size() - temporal_hit_size;
@@ -59,7 +59,7 @@ public:
 
   void record_writeonly(cache_entry_idx_t    block_idx,
                         block_region         requested_region,
-                        const block_regions& valid_regions) {
+                        const block_region_set& valid_regions) {
     ITYR_CHECK(0 <= block_idx);
     ITYR_CHECK(block_idx < n_blocks_);
     cache_block& blk = blocks_[block_idx];
@@ -67,10 +67,10 @@ public:
     if (enabled_) {
       requested_bytes_ += requested_region.size();
 
-      block_regions skip_fetch_hit_regions = valid_regions.inverse(requested_region);
+      block_region_set skip_fetch_hit_regions = valid_regions.inverse(requested_region);
 
-      block_regions hit_regions          = skip_fetch_hit_regions.inverse(requested_region);
-      block_regions temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
+      block_region_set hit_regions          = skip_fetch_hit_regions.inverse(requested_region);
+      block_region_set temporal_hit_regions = get_intersection(hit_regions, blk.requested_regions);
 
       std::size_t temporal_hit_size = temporal_hit_regions.size();
       std::size_t spatial_hit_size  = hit_regions.size() - temporal_hit_size;
@@ -86,7 +86,7 @@ public:
     blk.requested_regions.add(requested_region);
   }
 
-  void invalidate(cache_entry_idx_t block_idx, const block_regions& valid_regions) {
+  void invalidate(cache_entry_idx_t block_idx, const block_region_set& valid_regions) {
     ITYR_CHECK(0 <= block_idx);
     ITYR_CHECK(block_idx < n_blocks_);
     cache_block& blk = blocks_[block_idx];
@@ -142,7 +142,7 @@ public:
 
 private:
   struct cache_block {
-    block_regions requested_regions;
+    block_region_set requested_regions;
   };
 
   cache_entry_idx_t        n_blocks_;

@@ -13,7 +13,7 @@
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/prof_events.hpp"
-#include "ityr/ori/block_regions.hpp"
+#include "ityr/ori/block_region_set.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
 #include "ityr/ori/release_manager.hpp"
@@ -326,8 +326,8 @@ private:
     std::size_t              pm_offset       = 0;
     int                      ref_count       = 0;
     writeback_epoch_t        writeback_epoch = 0;
-    block_regions            valid_regions;
-    block_regions            dirty_regions;
+    block_region_set         valid_regions;
+    block_region_set         dirty_regions;
     cache_manager*           outer;
 
     cache_block(cache_manager* outer_p) : outer(outer_p) {}
@@ -439,7 +439,7 @@ private:
 
     std::byte* cache_begin = reinterpret_cast<std::byte*>(vm_.addr());
 
-    block_regions fetch_regions = cb.valid_regions.inverse(br_pad);
+    block_region_set fetch_regions = cb.valid_regions.inverse(br_pad);
 
     // fetch only nondirty sections
     for (auto [blk_offset_b, blk_offset_e] : fetch_regions) {
@@ -603,6 +603,8 @@ private:
 
   // A release epoch is an interval between the events when all cache become clean.
   release_manager                        rm_;
+
+
 
   cache_profiler                         cprof_;
 };

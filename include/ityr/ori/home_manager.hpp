@@ -11,7 +11,6 @@
 #include "ityr/ori/util.hpp"
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/prof_events.hpp"
-#include "ityr/ori/block_regions.hpp"
 #include "ityr/ori/cache_system.hpp"
 #include "ityr/ori/tlb.hpp"
 #include "ityr/ori/home_profiler.hpp"
