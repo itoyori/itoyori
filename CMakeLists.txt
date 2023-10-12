@@ -23,6 +23,7 @@ add_library(itoyori INTERFACE)
 target_include_directories(itoyori INTERFACE
   ${MPI_CXX_INCLUDE_PATH}
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/lxm_random/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/massivelogger/include>
   $<INSTALL_INTERFACE:include>
 )
@@ -63,6 +64,7 @@ install(TARGETS itoyori EXPORT itoyori-targets)
 
 include(GNUInstallDirs)
 install(DIRECTORY include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(DIRECTORY lxm_random/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(DIRECTORY massivelogger/include/ DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 set(ConfigPackageLocation lib/cmake/itoyori)

@@ -15,6 +15,8 @@
 #include "ityr/pattern/parallel_filter.hpp"
 #include "ityr/pattern/parallel_merge.hpp"
 #include "ityr/pattern/parallel_sort.hpp"
+#include "ityr/pattern/parallel_shuffle.hpp"
+#include "ityr/pattern/random.hpp"
 #include "ityr/pattern/reducer_extra.hpp"
 #include "ityr/container/global_span.hpp"
 #include "ityr/container/global_vector.hpp"
