@@ -240,6 +240,94 @@ inline void for_each(const ExecutionPolicy& policy,
   internal::loop_generic(policy, op, first1, last1, first2, first3);
 }
 
+/**
+ * @brief Apply an operator to each element in a range.
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename ForwardIterator4, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     ForwardIterator4       first4,
+                     Op                     op) {
+  internal::loop_generic(policy, op, first1, last1, first2, first3, first4);
+}
+
+/**
+ * @brief Apply an operator to each element in a range.
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename ForwardIterator4, typename ForwardIterator5, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     ForwardIterator4       first4,
+                     ForwardIterator5       first5,
+                     Op                     op) {
+  internal::loop_generic(policy, op, first1, last1, first2, first3, first4, first5);
+}
+
+/**
+ * @brief Apply an operator to each element in a range.
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename ForwardIterator4, typename ForwardIterator5,
+          typename ForwardIterator6, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     ForwardIterator4       first4,
+                     ForwardIterator5       first5,
+                     ForwardIterator6       first6,
+                     Op                     op) {
+  internal::loop_generic(policy, op, first1, last1, first2, first3, first4, first5, first6);
+}
+
+/**
+ * @brief Apply an operator to each element in a range.
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename ForwardIterator4, typename ForwardIterator5,
+          typename ForwardIterator6, typename ForwardIterator7, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     ForwardIterator4       first4,
+                     ForwardIterator5       first5,
+                     ForwardIterator6       first6,
+                     ForwardIterator6       first7,
+                     Op                     op) {
+  internal::loop_generic(policy, op, first1, last1, first2, first3, first4, first5, first6, first7);
+}
+
+/**
+ * @brief Apply an operator to each element in a range.
+ */
+template <typename ExecutionPolicy, typename ForwardIterator1, typename ForwardIterator2,
+          typename ForwardIterator3, typename ForwardIterator4, typename ForwardIterator5,
+          typename ForwardIterator6, typename ForwardIterator7, typename ForwardIterator8, typename Op>
+inline void for_each(const ExecutionPolicy& policy,
+                     ForwardIterator1       first1,
+                     ForwardIterator1       last1,
+                     ForwardIterator2       first2,
+                     ForwardIterator3       first3,
+                     ForwardIterator4       first4,
+                     ForwardIterator5       first5,
+                     ForwardIterator6       first6,
+                     ForwardIterator6       first7,
+                     ForwardIterator6       first8,
+                     Op                     op) {
+  internal::loop_generic(policy, op, first1, last1, first2, first3, first4, first5, first6, first7, first8);
+}
+
 ITYR_TEST_CASE("[ityr::pattern::serial_loop] serial for_each") {
   ori::init();
 
