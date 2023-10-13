@@ -11,6 +11,7 @@
 #include "ityr/ori/options.hpp"
 #include "ityr/ori/core.hpp"
 #include "ityr/ori/global_ptr.hpp"
+#include "ityr/ori/file_mem_manager.hpp"
 #include "ityr/ori/prof_events.hpp"
 
 namespace ityr::ori {
@@ -35,6 +36,7 @@ private:
 
   runtime_options                                            ori_opts_;
   common::singleton_initializer<core::instance>              core_;
+  common::singleton_initializer<file_mem_manager::instance>  file_mem_manager_;
   prof_events                                                prof_events_;
 };
 
@@ -232,6 +234,18 @@ inline void cache_prof_end() {
 
 inline void cache_prof_print() {
   core::instance::get().cache_prof_print();
+}
+
+inline void* file_mem_alloc_coll(std::filesystem::path fpath) {
+  return file_mem_manager::instance::get().create(fpath);
+}
+
+inline void file_mem_free_coll(void* addr) {
+  file_mem_manager::instance::get().destroy(addr);
+}
+
+inline file_mem& file_mem_get(void* addr) {
+  return file_mem_manager::instance::get().get(addr);
 }
 
 }

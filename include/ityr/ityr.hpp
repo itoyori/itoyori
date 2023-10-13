@@ -22,6 +22,7 @@
 #include "ityr/container/global_vector.hpp"
 #include "ityr/container/checkout_span.hpp"
 #include "ityr/container/workhint.hpp"
+#include "ityr/container/unique_file_ptr.hpp"
 
 namespace ityr {
 
