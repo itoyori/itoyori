@@ -72,7 +72,7 @@ inline auto coll_exec(const Fn& fn, const Args&... args) {
   ITYR_CHECK(!is_spmd());
   ITYR_CHECK(is_root());
   auto& w = worker::instance::get();
-  return w.sched().coll_exec(fn, args...);
+  return w.coll_exec(fn, args...);
 }
 
 template <typename PreSuspendCallback, typename PostSuspendCallback>

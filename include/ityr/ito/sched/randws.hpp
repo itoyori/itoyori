@@ -263,40 +263,19 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
-  template <typename Fn, typename... Args>
-  auto coll_exec(const Fn& fn, const Args&... args) {
-    using retval_t = std::invoke_result_t<Fn, Args...>;
-
-    auto begin_rank = common::topology::my_rank();
-    std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
-
-    auto coll_task_fn = [=, &retv]() {
-      if constexpr (std::is_void_v<retval_t>) {
-        fn(args...);
-        (void)retv;
-      } else {
-        auto&& ret = fn(args...);
-        if (common::topology::my_rank() == begin_rank) {
-          retv = std::forward<decltype(ret)>(ret);
-        }
-      }
-    };
-
-    using callable_task_t = callable_task<decltype(coll_task_fn)>;
+  template <typename Fn>
+  void coll_exec(const Fn& fn) {
+    using callable_task_t = callable_task<Fn>;
 
     size_t task_size = sizeof(callable_task_t);
     void* task_ptr = suspended_thread_allocator_.allocate(task_size);
 
-    auto t = new (task_ptr) callable_task_t(coll_task_fn);
+    auto t = new (task_ptr) callable_task_t(fn);
 
-    coll_task ct {task_ptr, task_size, begin_rank};
+    coll_task ct {task_ptr, task_size, common::topology::my_rank()};
     execute_coll_task(t, ct);
 
     suspended_thread_allocator_.deallocate(t, task_size);
-
-    if constexpr (!std::is_void_v<retval_t>) {
-      return retv;
-    }
   }
 
   bool is_executing_root() const {

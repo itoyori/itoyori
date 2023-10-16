@@ -37,9 +37,9 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
-  template <typename Fn, typename... Args>
-  auto coll_exec(Fn&& fn, Args&&... args) {
-    return std::forward<Fn>(fn)(std::forward<Args>(args)...);
+  template <typename Fn>
+  void coll_exec(const Fn& fn) {
+    fn();
   }
 
   bool is_executing_root() const {
