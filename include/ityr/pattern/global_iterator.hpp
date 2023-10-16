@@ -63,7 +63,31 @@ public:
   using checkout_iterator = internal::checkout_iterator_t<base_t, Mode>;
 
   global_iterator() : base_t(nullptr) {}
-  global_iterator(ori::global_ptr<T> gptr, Mode) : base_t(gptr) {}
+  global_iterator(ori::global_ptr<T> gptr) : base_t(gptr) {}
+
+  constexpr this_t& operator+=(difference_type diff) noexcept {
+    base_t::operator+=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator-=(difference_type diff) noexcept {
+    base_t::operator-=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
+
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
+
+  constexpr this_t operator+(difference_type diff) const noexcept {
+    return this_t(base_t::operator+(diff));
+  }
+
+  constexpr this_t operator-(difference_type diff) const noexcept {
+    return this_t(base_t::operator-(diff));
+  }
 
   auto checkout_nb(std::size_t count) const {
     if constexpr(std::is_same_v<mode, checkout_mode::no_access_t>) {
@@ -131,8 +155,8 @@ public:
  */
 template <typename T, typename Mode>
 inline global_iterator<T, Mode>
-make_global_iterator(ori::global_ptr<T> gptr, Mode mode) {
-  return global_iterator(gptr, mode);
+make_global_iterator(ori::global_ptr<T> gptr, Mode) {
+  return global_iterator<T, Mode>(gptr);
 }
 
 /**
@@ -141,6 +165,7 @@ make_global_iterator(ori::global_ptr<T> gptr, Mode mode) {
  */
 template <typename GlobalIterator>
 class global_move_iterator : public GlobalIterator {
+  using this_t = global_move_iterator<GlobalIterator>;
   using base_t = GlobalIterator;
 
 public:
@@ -159,6 +184,30 @@ public:
 
   GlobalIterator base() const {
     return static_cast<base_t>(*this);
+  }
+
+  constexpr this_t& operator+=(difference_type diff) noexcept {
+    base_t::operator+=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator-=(difference_type diff) noexcept {
+    base_t::operator-=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
+
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
+
+  constexpr this_t operator+(difference_type diff) const noexcept {
+    return this_t(base_t::operator+(diff));
+  }
+
+  constexpr this_t operator-(difference_type diff) const noexcept {
+    return this_t(base_t::operator-(diff));
   }
 
   auto checkout_nb(std::size_t count) const {
@@ -216,6 +265,7 @@ make_move_iterator(ori::global_ptr<T> gptr) {
  */
 template <typename GlobalIterator>
 class global_reverse_iterator : public std::reverse_iterator<GlobalIterator> {
+  using this_t = global_reverse_iterator<GlobalIterator>;
   using base_t = std::reverse_iterator<GlobalIterator>;
 
 public:
@@ -234,6 +284,30 @@ public:
     return static_cast<base_t>(*this).base();
   }
 
+  constexpr this_t& operator+=(difference_type diff) noexcept {
+    base_t::operator+=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator-=(difference_type diff) noexcept {
+    base_t::operator-=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
+
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
+
+  constexpr this_t operator+(difference_type diff) const noexcept {
+    return this_t(base_t::operator+(diff));
+  }
+
+  constexpr this_t operator-(difference_type diff) const noexcept {
+    return this_t(base_t::operator-(diff));
+  }
+
   auto checkout_nb(std::size_t count) const {
     GlobalIterator git = base();
     auto&& [cs, it] = std::prev(git, count).checkout_nb(count);
@@ -247,7 +321,7 @@ public:
  * @param gptr Global pointer to be converted to global iterator.
  * @param mode Checkout mode (`ityr::checkout_mode`).
  *
- * @return The global move iterator (`ityr::global_move_iterator`).
+ * @return The global reverse iterator (`ityr::global_reverse_iterator`).
  *
  * This function converts a global pointer to a reverse global iterator with `mode`.
  *
@@ -266,6 +340,7 @@ make_reverse_iterator(ori::global_ptr<T> gptr, Mode mode) {
  */
 template <typename GlobalIterator>
 class global_construct_iterator : public GlobalIterator {
+  using this_t = global_construct_iterator<GlobalIterator>;
   using base_t = GlobalIterator;
 
   static_assert(std::is_same_v<typename GlobalIterator::mode, checkout_mode::write_t>);
@@ -284,6 +359,30 @@ public:
 
   GlobalIterator base() const {
     return static_cast<base_t>(*this);
+  }
+
+  constexpr this_t& operator+=(difference_type diff) noexcept {
+    base_t::operator+=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator-=(difference_type diff) noexcept {
+    base_t::operator-=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
+
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
+
+  constexpr this_t operator+(difference_type diff) const noexcept {
+    return this_t(base_t::operator+(diff));
+  }
+
+  constexpr this_t operator-(difference_type diff) const noexcept {
+    return this_t(base_t::operator-(diff));
   }
 
   auto checkout_nb(std::size_t count) const {
@@ -334,6 +433,7 @@ make_construct_iterator(ori::global_ptr<T> gptr) {
  */
 template <typename GlobalIterator>
 class global_destruct_iterator : public GlobalIterator {
+  using this_t = global_destruct_iterator<GlobalIterator>;
   using base_t = GlobalIterator;
 
   static_assert(std::is_same_v<typename GlobalIterator::mode, checkout_mode::read_write_t>);
@@ -352,6 +452,30 @@ public:
 
   GlobalIterator base() const {
     return static_cast<base_t>(*this);
+  }
+
+  constexpr this_t& operator+=(difference_type diff) noexcept {
+    base_t::operator+=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator-=(difference_type diff) noexcept {
+    base_t::operator-=(diff);
+    return *this;
+  }
+
+  constexpr this_t& operator++() noexcept { return (*this) += 1; }
+  constexpr this_t& operator--() noexcept { return (*this) -= 1; }
+
+  constexpr this_t operator++(int) noexcept { this_t tmp(*this); ++(*this); return tmp; }
+  constexpr this_t operator--(int) noexcept { this_t tmp(*this); --(*this); return tmp; }
+
+  constexpr this_t operator+(difference_type diff) const noexcept {
+    return this_t(base_t::operator+(diff));
+  }
+
+  constexpr this_t operator-(difference_type diff) const noexcept {
+    return this_t(base_t::operator-(diff));
   }
 
   auto checkout_nb(std::size_t count) const {

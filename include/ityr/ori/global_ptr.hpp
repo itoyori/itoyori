@@ -72,10 +72,6 @@ public:
     return this_t(raw_ptr_ - diff);
   }
 
-  constexpr difference_type operator-(const this_t& p) const noexcept {
-    return raw_ptr_ - p.raw_ptr();
-  }
-
   constexpr void swap(this_t& p) noexcept {
     std::swap(raw_ptr_, p.raw_ptr_);
   }
@@ -88,6 +84,11 @@ public:
 private:
   T* raw_ptr_ = nullptr;
 };
+
+template <typename T1, typename T2>
+inline auto operator-(const global_ptr<T1>& p1, const global_ptr<T2>& p2) {
+  return p1.raw_ptr() - p2.raw_ptr();
+}
 
 template <typename T>
 inline constexpr bool operator==(const global_ptr<T>& p1, const global_ptr<T>& p2) noexcept {
