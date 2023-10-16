@@ -84,7 +84,10 @@ public:
    * @brief Construct a checkout span by checking out a global memory region.
    */
   explicit checkout_span(ori::global_ptr<T> gptr, std::size_t n, Mode)
-    : ptr_(ori::checkout(gptr, n, Mode{})), n_(n) {}
+    : ptr_((gptr && n > 0) ? ori::checkout(gptr, n, Mode{}) : nullptr),
+      n_(n) {
+    ITYR_CHECK(((ptr_ && n_ > 0) || (!ptr_ && n == 0)));
+  }
 
   /**
    * @brief Perform the checkin operation when destroyed.
