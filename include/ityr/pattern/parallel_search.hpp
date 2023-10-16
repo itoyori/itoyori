@@ -93,16 +93,29 @@ inline ForwardIterator min_element(const ExecutionPolicy& policy,
     return first;
   }
 
+  using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+
   auto leaf_op = [=](const auto& f, const auto& l) {
     auto it = std::min_element(f, l, comp);
-    auto val = *it;
-    return std::make_tuple(val, std::make_tuple(it));
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      return std::make_tuple(*it, std::make_tuple(it));
+    } else {
+      return std::make_tuple(std::monostate{}, std::make_tuple(it));
+    }
   };
 
   auto select_op = [=](const auto& l, const auto& r) {
     auto [val_l, its_l] = l;
     auto [val_r, its_r] = r;
-    return comp(val_r, val_l) ? r : l;
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      return comp(val_r, val_l) ? r : l;
+    } else {
+      auto [it_l] = its_l;
+      auto [it_r] = its_r;
+      auto [css, its] = internal::checkout_global_iterators(1, it_l, it_r);
+      auto [it_l_, it_r_] = its;
+      return comp(*it_r_, *it_l_) ? r : l;
+    }
   };
 
   auto [val, its] = internal::search_aux(policy, leaf_op, select_op, first, last);
@@ -183,16 +196,29 @@ inline ForwardIterator max_element(const ExecutionPolicy& policy,
     return first;
   }
 
+  using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+
   auto leaf_op = [=](const auto& f, const auto& l) {
     auto it = std::max_element(f, l, comp);
-    auto val = *it;
-    return std::make_tuple(val, std::make_tuple(it));
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      return std::make_tuple(*it, std::make_tuple(it));
+    } else {
+      return std::make_tuple(std::monostate{}, std::make_tuple(it));
+    }
   };
 
   auto select_op = [=](const auto& l, const auto& r) {
     auto [val_l, its_l] = l;
     auto [val_r, its_r] = r;
-    return comp(val_l, val_r) ? r : l;
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      return comp(val_l, val_r) ? r : l;
+    } else {
+      auto [it_l] = its_l;
+      auto [it_r] = its_r;
+      auto [css, its] = internal::checkout_global_iterators(1, it_l, it_r);
+      auto [it_l_, it_r_] = its;
+      return comp(*it_l_, *it_r_) ? r : l;
+    }
   };
 
   auto [val, its] = internal::search_aux(policy, leaf_op, select_op, first, last);
@@ -276,38 +302,56 @@ minmax_element(const ExecutionPolicy& policy,
     return std::make_pair(first, first);
   }
 
+  using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+
   auto leaf_op = [=](const auto& f, const auto& l) {
     auto [min_it, max_it] = std::minmax_element(f, l, comp);
-    auto min_val = *min_it;
-    auto max_val = *max_it;
-    return std::make_tuple(
-        std::make_pair(min_val, max_val), std::make_tuple(min_it, max_it));
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      return std::make_tuple(
+          std::make_pair(*min_it, *max_it), std::make_tuple(min_it, max_it));
+    } else {
+      return std::make_tuple(
+          std::monostate{}, std::make_tuple(min_it, max_it));
+    }
   };
 
   auto select_op = [=](const auto& l, const auto& r) {
     auto [vals_l, its_l] = l;
     auto [vals_r, its_r] = r;
-    auto [min_val_l, max_val_l] = vals_l;
-    auto [min_val_r, max_val_r] = vals_r;
     auto [min_it_l, max_it_l] = its_l;
     auto [min_it_r, max_it_r] = its_r;
 
-    decltype(min_val_l) min_val = min_val_l;
-    decltype(min_it_l) min_it = min_it_l;
-    if (comp(min_val_r, min_val_l)) {
-      min_val = min_val_r;
-      min_it  = min_it_r;
-    }
+    if constexpr (std::is_trivially_copyable_v<value_type>) {
+      auto [min_val_l, max_val_l] = vals_l;
+      auto [min_val_r, max_val_r] = vals_r;
 
-    decltype(max_val_l) max_val = max_val_l;
-    decltype(max_it_l) max_it = max_it_l;
-    if (comp(max_val_l, max_val_r)) {
-      max_val = max_val_r;
-      max_it  = max_it_r;
-    }
+      decltype(min_val_l) min_val = min_val_l;
+      decltype(min_it_l) min_it = min_it_l;
+      if (comp(min_val_r, min_val_l)) {
+        min_val = min_val_r;
+        min_it  = min_it_r;
+      }
 
-    return std::make_tuple(
-        std::make_pair(min_val, max_val), std::make_tuple(min_it, max_it));
+      decltype(max_val_l) max_val = max_val_l;
+      decltype(max_it_l) max_it = max_it_l;
+      if (comp(max_val_l, max_val_r)) {
+        max_val = max_val_r;
+        max_it  = max_it_r;
+      }
+
+      return std::make_tuple(
+          std::make_pair(min_val, max_val), std::make_tuple(min_it, max_it));
+
+    } else {
+      auto [css, its] = internal::checkout_global_iterators(
+          1, min_it_l, max_it_l, min_it_r, max_it_r);
+      auto [min_it_l_, max_it_l_, min_it_r_, max_it_r_] = its;
+
+      auto min_it = comp(*min_it_r_, *min_it_l_) ? min_it_r : min_it_l;
+      auto max_it = comp(*max_it_l_, *max_it_r_) ? max_it_r : max_it_l;
+      return std::make_tuple(
+          std::monostate{}, std::make_tuple(min_it, max_it));
+    }
   };
 
   auto [vals, its] = internal::search_aux(policy, leaf_op, select_op, first, last);
