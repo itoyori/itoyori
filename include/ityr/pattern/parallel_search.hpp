@@ -227,6 +227,123 @@ inline ForwardIterator max_element(const ExecutionPolicy& policy,
   return max_element(policy, first, last, std::less<>{});
 }
 
+/**
+ * @brief Search for the minimum and maximum element in a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Begin iterator.
+ * @param last   End iterator.
+ * @param comp   Binary comparison operator. Returns true if the first argument is less than
+ *               the second argument.
+ *
+ * @return Pair of iterators to the first minimum and maximum element in the range `[first, last)`.
+ *
+ * This function returns a pair of iterators to the minimum (`.first`) and maximum (`.second`) element
+ * in the given range `[first, last)`.
+ * If multiple minimum/maximum elements exist, the iterator to the first element is returned for each.
+ *
+ * If global pointers are provided as iterators, they are automatically checked out with the read-only
+ * mode in the specified granularity (`ityr::execution::sequenced_policy::checkout_count` if serial,
+ * or `ityr::execution::parallel_policy::checkout_count` if parallel) without explicitly passing them
+ * as global iterators.
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {2, -5, -3, 1, 5};
+ * auto [min_it, max_it] = ityr::minmax_element(ityr::execution::par, v.begin(), v.end(),
+ *                                              [](int x, int y) { return std::abs(x) < std::abs(y); });
+ * // min_it = v.begin() + 3, *it = 1
+ * // max_it = v.begin() + 1, *it = -5
+ * ```
+ *
+ * @see [std::minmax_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/minmax_element)
+ * @see `ityr::min_element()`
+ * @see `ityr::max_element()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator, typename Compare>
+inline std::pair<ForwardIterator, ForwardIterator>
+minmax_element(const ExecutionPolicy& policy,
+               ForwardIterator        first,
+               ForwardIterator        last,
+               Compare                comp) {
+  if (std::distance(first, last) <= 1) {
+    return std::make_pair(first, first);
+  }
+
+  auto leaf_op = [=](const auto& f, const auto& l) {
+    auto [min_it, max_it] = std::minmax_element(f, l, comp);
+    auto min_val = *min_it;
+    auto max_val = *max_it;
+    return std::make_tuple(
+        std::make_pair(min_val, max_val), std::make_tuple(min_it, max_it));
+  };
+
+  auto select_op = [=](const auto& l, const auto& r) {
+    auto [vals_l, its_l] = l;
+    auto [vals_r, its_r] = r;
+    auto [min_val_l, max_val_l] = vals_l;
+    auto [min_val_r, max_val_r] = vals_r;
+    auto [min_it_l, max_it_l] = its_l;
+    auto [min_it_r, max_it_r] = its_r;
+
+    decltype(min_val_l) min_val = min_val_l;
+    decltype(min_it_l) min_it = min_it_l;
+    if (comp(min_val_r, min_val_l)) {
+      min_val = min_val_r;
+      min_it  = min_it_r;
+    }
+
+    decltype(max_val_l) max_val = max_val_l;
+    decltype(max_it_l) max_it = max_it_l;
+    if (comp(max_val_l, max_val_r)) {
+      max_val = max_val_r;
+      max_it  = max_it_r;
+    }
+
+    return std::make_tuple(
+        std::make_pair(min_val, max_val), std::make_tuple(min_it, max_it));
+  };
+
+  auto [vals, its] = internal::search_aux(policy, leaf_op, select_op, first, last);
+  auto [min_it, max_it] = its;
+  return std::make_pair(min_it, max_it);
+}
+
+/**
+ * @brief Search for the minimum and maximum element in a range.
+ *
+ * @param policy Execution policy (`ityr::execution`).
+ * @param first  Begin iterator.
+ * @param last   End iterator.
+ *
+ * @return Pair of iterators to the first minimum and maximum element in the range `[first, last)`.
+ *
+ * Equivalent to `ityr::minmax_element(policy, first, last, std::less<>{});
+ *
+ * Example:
+ * ```
+ * ityr::global_vector<int> v = {2, 5, 3, 1, 5};
+ * auto [min_it, max_it] = ityr::minmax_element(ityr::execution::par, v.begin(), v.end());
+ * // min_it = v.begin() + 3, *it = 1
+ * // max_it = v.begin() + 1, *it = 5
+ * ```
+ *
+ * @see [std::minmax_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/minmax_element)
+ * @see `ityr::min_element()`
+ * @see `ityr::max_element()`
+ * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
+ *      `ityr::execution::parallel_policy`, `ityr::execution::par`
+ */
+template <typename ExecutionPolicy, typename ForwardIterator>
+inline std::pair<ForwardIterator, ForwardIterator>
+minmax_element(const ExecutionPolicy& policy,
+               ForwardIterator        first,
+               ForwardIterator        last) {
+  return minmax_element(policy, first, last, std::less<>{});
+}
+
 ITYR_TEST_CASE("[ityr::pattern::parallel_search] min, max, minmax_element") {
   ito::init();
   ori::init();
@@ -259,6 +376,12 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_search] min, max, minmax_element") {
     auto min_it = min_element(execution::parallel_policy(100), p, p + n);
     ITYR_CHECK(min_it == p + min_pos);
     ITYR_CHECK((*min_it).get() == min_val);
+
+    auto [min_it2, max_it2] = minmax_element(execution::parallel_policy(100), p, p + n);
+    ITYR_CHECK(min_it2 == p + min_pos);
+    ITYR_CHECK((*min_it2).get() == min_val);
+    ITYR_CHECK(max_it2 == p + max_pos);
+    ITYR_CHECK((*max_it2).get() == max_val);
   });
 
   ori::free_coll(p);
