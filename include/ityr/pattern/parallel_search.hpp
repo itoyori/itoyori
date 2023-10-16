@@ -80,6 +80,7 @@ inline auto search_aux(const execution::parallel_policy<W>& policy,
  *
  * @see [std::min_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/min_element)
  * @see `ityr::max_element()`
+ * @see `ityr::minmax_element()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
@@ -129,6 +130,7 @@ inline ForwardIterator min_element(const ExecutionPolicy& policy,
  *
  * @see [std::min_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/min_element)
  * @see `ityr::max_element()`
+ * @see `ityr::minmax_element()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
@@ -168,6 +170,7 @@ inline ForwardIterator min_element(const ExecutionPolicy& policy,
  *
  * @see [std::max_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/max_element)
  * @see `ityr::min_element()`
+ * @see `ityr::minmax_element()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
@@ -217,6 +220,7 @@ inline ForwardIterator max_element(const ExecutionPolicy& policy,
  *
  * @see [std::max_element -- cppreference.com](https://en.cppreference.com/w/cpp/algorithm/max_element)
  * @see `ityr::min_element()`
+ * @see `ityr::minmax_element()`
  * @see `ityr::execution::sequenced_policy`, `ityr::execution::seq`,
  *      `ityr::execution::parallel_policy`, `ityr::execution::par`
  */
