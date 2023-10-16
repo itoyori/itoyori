@@ -132,9 +132,7 @@ public:
    * @brief Manually perform the checkout operation by checking in the previous span.
    */
   void checkout(ori::global_ptr<T> gptr, std::size_t n, Mode) {
-    if (ptr_) {
-      checkin();
-    }
+    checkin();
     ptr_ = ori::checkout(gptr, n, Mode{});
     n_ = n;
   }
@@ -143,9 +141,7 @@ public:
    * @brief Manually perform the nonblocking checkout operation by checking in the previous span.
    */
   void checkout_nb(ori::global_ptr<T> gptr, std::size_t n, Mode) {
-    if (ptr_) {
-      checkin();
-    }
+    checkin();
     ptr_ = ori::checkout_nb(gptr, n, Mode{});
     n_ = n;
   }
@@ -154,10 +150,11 @@ public:
    * @brief Manually perform the checkin operation by discarding the current checkout span.
    */
   void checkin() {
-    ITYR_CHECK(ptr_);
-    ori::checkin(ptr_, n_, Mode{});
-    ptr_ = nullptr;
-    n_   = 0;
+    if (ptr_) {
+      ori::checkin(ptr_, n_, Mode{});
+      ptr_ = nullptr;
+      n_   = 0;
+    }
   }
 
 private:
