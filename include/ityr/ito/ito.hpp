@@ -158,7 +158,7 @@ ITYR_TEST_CASE("[ityr::ito] load balancing") {
     lb(common::topology::n_ranks());
 
     auto my_rank = common::topology::my_rank();
-    int ret = coll_exec([=] {
+    auto ret = coll_exec([=] {
       return common::mpi_reduce_value(1, my_rank, common::topology::mpicomm());
     });
     ITYR_CHECK(ret == common::topology::n_ranks());
@@ -186,6 +186,45 @@ ITYR_TEST_CASE("[ityr::ito] move semantics") {
 
     ITYR_CHECK(ret.value() == 9);
   }, std::move(mo1));
+
+  fini();
+}
+
+ITYR_TEST_CASE("[ityr::ito] nested root/coll_exec()") {
+  init();
+
+  auto ret = root_exec([] {
+    ITYR_CHECK(is_root());
+    ITYR_CHECK(!is_spmd());
+
+    return coll_exec([my_rank = common::topology::my_rank()] {
+      ITYR_CHECK(is_spmd());
+
+      auto ret = root_exec([] {
+        ITYR_CHECK(is_root());
+        ITYR_CHECK(!is_spmd());
+
+        return coll_exec([my_rank = common::topology::my_rank()] {
+          ITYR_CHECK(is_spmd());
+
+          auto ret = root_exec([] {
+            ITYR_CHECK(is_root());
+            ITYR_CHECK(!is_spmd());
+
+            return coll_exec([my_rank = common::topology::my_rank()] {
+              ITYR_CHECK(is_spmd());
+              return common::mpi_reduce_value(1, my_rank, common::topology::mpicomm());
+            });
+          });
+
+          return ret + common::mpi_reduce_value(1, my_rank, common::topology::mpicomm());
+        });
+      });
+
+      return ret + common::mpi_reduce_value(1, my_rank, common::topology::mpicomm());
+    });
+  });
+  ITYR_CHECK(ret == common::topology::n_ranks() * 3);
 
   fini();
 }

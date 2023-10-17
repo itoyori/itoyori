@@ -18,7 +18,7 @@ public:
 
     using retval_t = std::invoke_result_t<Fn, Args...>;
     if constexpr (std::is_void_v<retval_t>) {
-      if (common::topology::my_rank() == 0) {
+      if (common::topology::my_rank() == coll_master_) {
         sched_.root_exec<no_retval_t>(cb, std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
@@ -32,7 +32,7 @@ public:
 
     } else {
       retval_t retval {};
-      if (common::topology::my_rank() == 0) {
+      if (common::topology::my_rank() == coll_master_) {
         retval = sched_.root_exec<retval_t>(cb, std::forward<Fn>(fn), std::forward<Args>(args)...);
       } else {
         common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
@@ -42,7 +42,7 @@ public:
 
       is_spmd_ = true;
 
-      return common::mpi_bcast_value(retval, 0, common::topology::mpicomm());
+      return common::mpi_bcast_value(retval, coll_master_, common::topology::mpicomm());
     }
   }
 
@@ -52,20 +52,23 @@ public:
 
     using retval_t = std::invoke_result_t<Fn, Args...>;
 
-    auto begin_rank = common::topology::my_rank();
+    auto next_master = common::topology::my_rank();
     std::conditional_t<std::is_void_v<retval_t>, no_retval_t, retval_t> retv;
 
     auto coll_task_fn = [=, &retv]() {
       is_spmd_ = true;
+      auto prev_coll_master = coll_master_;
+      coll_master_ = next_master;
       if constexpr (std::is_void_v<retval_t>) {
         fn(args...);
         (void)retv;
       } else {
         auto&& ret = fn(args...);
-        if (common::topology::my_rank() == begin_rank) {
+        if (common::topology::my_rank() == next_master) {
           retv = std::forward<decltype(ret)>(ret);
         }
       }
+      coll_master_ = prev_coll_master;
       is_spmd_ = false;
     };
 
@@ -81,8 +84,9 @@ public:
   scheduler& sched() { return sched_; }
 
 private:
-  scheduler sched_;
-  bool      is_spmd_ = true;
+  scheduler                sched_;
+  bool                     is_spmd_ = true;
+  common::topology::rank_t coll_master_ = 0;
 };
 
 using instance = common::singleton<worker>;

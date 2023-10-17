@@ -302,6 +302,10 @@ public:
   scheduler_adws()
     : max_depth_(adws_max_depth_option::value()),
       stack_(stack_size_option::value()),
+      // Add a margin of sizeof(context_frame) to the bottom of the stack, because
+      // this region can be accessed by the clear_parent_frame() function later.
+      // This stack base is updated only in coll_exec().
+      stack_base_(reinterpret_cast<context_frame*>(stack_.bottom()) - 1),
       primary_wsq_(adws_wsqueue_capacity_option::value(), max_depth_),
       migration_wsq_(adws_wsqueue_capacity_option::value(), max_depth_),
       thread_state_allocator_(thread_state_allocator_size_option::value()),
@@ -314,10 +318,14 @@ public:
 
     thread_state<T>* ts = new (thread_state_allocator_.allocate(sizeof(thread_state<T>))) thread_state<T>;
 
+    auto prev_sched_cf = sched_cf_;
+
     suspend([&](context_frame* cf) {
       sched_cf_ = cf;
       root_on_stack([&, ts, fn = std::forward<Fn>(fn),
                      args_tuple = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+        migrate_current_thread_to(0, nullptr, nullptr);
+
         common::verbose("Starting root thread %p", ts);
 
         dist_range root_drange {common::topology::n_ranks()};
@@ -350,8 +358,15 @@ public:
     thread_state_allocator_.deallocate(ts, sizeof(thread_state<T>));
 
     if (dag_prof_enabled_) {
-      dag_prof_result_ = retval.dag_prof;
+      if (tls_) {
+        // nested root/coll_exec()
+        tls_->dag_prof.merge_serial(retval.dag_prof);
+      } else {
+        dag_prof_result_ = retval.dag_prof;
+      }
     }
+
+    sched_cf_ = prev_sched_cf;
 
     common::profiler::switch_phase<prof_phase_sched_join, prof_phase_spmd>();
 
@@ -405,27 +420,9 @@ public:
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
 
       // migrate the cross-worker-task to the owner
-      auto target_rank = tls_->drange.owner();
-      if (target_rank != common::topology::my_rank()) {
-        auto cb_ret = call_cb<prof_phase_thread, prof_phase_sched_migrate,
-                              prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
-
-        suspend([&](context_frame* cf) {
-          suspended_state ss = evacuate(cf);
-
-          common::verbose("Migrate continuation of cross-worker-task [%f, %f) to process %d",
-                          tls_->drange.begin(), tls_->drange.end(), target_rank);
-
-          cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
-
-          evacuate_all();
-          common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
-          resume_sched();
-        });
-
-        call_cb<prof_phase_sched_resume_migrate, prof_phase_thread,
-                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
-      }
+      migrate_current_thread_to(tls_->drange.owner(),
+                                std::forward<PreSuspendCallback>(pre_suspend_cb),
+                                std::forward<PostSuspendCallback>(post_suspend_cb));
 
       if (tgdata->owns_dtree_node) {
         // Set the completed current task group as non-dominant to reduce steal requests
@@ -497,11 +494,8 @@ public:
         common::verbose<3>("push context frame [%p, %p) into task queue", cf, cf->parent_frame);
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange         = new_drange,
-                                    .dtree_node_ref = tls_->dtree_node_ref,
-                                    .tg_version     = tls_->tg_version,
-                                    .undistributed  = true,
-                                    .dag_prof       = {}};
+               thread_local_storage{nullptr, new_drange, tls_->dtree_node_ref,
+                                    tls_->tg_version, true, {}};
 
         std::size_t cf_size = reinterpret_cast<uintptr_t>(cf->parent_frame) - reinterpret_cast<uintptr_t>(cf);
 
@@ -562,11 +556,8 @@ public:
                         ts, new_drange.begin(), new_drange.end());
 
         tls_ = new (alloca(sizeof(thread_local_storage)))
-               thread_local_storage{.drange         = new_drange,
-                                    .dtree_node_ref = dtree_node_ref,
-                                    .tg_version     = tg_version,
-                                    .undistributed  = true,
-                                    .dag_prof       = {}};
+               thread_local_storage{nullptr, new_drange, dtree_node_ref,
+                                    tg_version, true, {}};
 
         if (new_drange.is_cross_worker()) {
           dtree_.copy_parents(dtree_node_ref);
@@ -751,6 +742,11 @@ public:
 
   template <typename Fn>
   void coll_exec(const Fn& fn) {
+    common::profiler::switch_phase<prof_phase_thread, prof_phase_spmd>();
+
+    tls_->dag_prof.stop();
+    // TODO: consider dag prof for inside coll tasks
+
     using callable_task_t = callable_task<Fn>;
 
     size_t task_size = sizeof(callable_task_t);
@@ -762,10 +758,15 @@ public:
     execute_coll_task(t, ct);
 
     suspended_thread_allocator_.deallocate(t, task_size);
+
+    tls_->dag_prof.start();
+    tls_->dag_prof.increment_strand_count();
+
+    common::profiler::switch_phase<prof_phase_spmd, prof_phase_thread>();
   }
 
   bool is_executing_root() const {
-    return cf_top_ && cf_top_ == stack_top();
+    return cf_top_ && cf_top_ == stack_base_;
   }
 
   template <typename T>
@@ -786,7 +787,7 @@ private:
   struct coll_task {
     void*                    task_ptr;
     std::size_t              task_size;
-    common::topology::rank_t begin_rank;
+    common::topology::rank_t master_rank;
   };
 
   struct cross_worker_task {
@@ -1229,8 +1230,6 @@ private:
   }
 
   void resume_sched() {
-    cf_top_ = nullptr;
-    tls_ = nullptr;
     common::verbose("Resume scheduler context");
     context::resume(sched_cf_);
   }
@@ -1401,6 +1400,32 @@ private:
     return false;
   }
 
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void migrate_current_thread_to(common::topology::rank_t target_rank,
+                                 PreSuspendCallback&&     pre_suspend_cb,
+                                 PostSuspendCallback&&    post_suspend_cb) {
+    if (target_rank == common::topology::my_rank()) return;
+
+    auto cb_ret = call_cb<prof_phase_thread, prof_phase_sched_migrate,
+                          prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
+
+    suspend([&](context_frame* cf) {
+      suspended_state ss = evacuate(cf);
+
+      common::verbose("Migrate continuation of cross-worker-task [%f, %f) to process %d",
+                      tls_->drange.begin(), tls_->drange.end(), target_rank);
+
+      cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
+
+      evacuate_all();
+      common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
+      resume_sched();
+    });
+
+    call_cb<prof_phase_sched_resume_migrate, prof_phase_thread,
+            prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
+  }
+
   template <typename Callback, typename... CallbackArgs>
   struct callback_retval {
     using type = std::invoke_result_t<Callback, CallbackArgs...>;
@@ -1456,16 +1481,12 @@ private:
         std::forward<Callback>(cb), std::forward<CallbackArgs>(cb_args)...);
   }
 
-  context_frame* stack_top() const {
-    // Add a margin of sizeof(context_frame) to the bottom of the stack, because
-    // this region can be accessed by the clear_parent_frame() function later
-    return reinterpret_cast<context_frame*>(stack_.bottom()) - 1;
-  }
-
   template <typename Fn>
   void root_on_stack(Fn&& fn) {
-    cf_top_ = stack_top();
-    context::call_on_stack(stack_.top(), stack_.size() - sizeof(context_frame),
+    cf_top_ = stack_base_;
+    std::size_t stack_size_bytes = reinterpret_cast<std::byte*>(stack_base_) -
+                                   reinterpret_cast<std::byte*>(stack_.top());
+    context::call_on_stack(stack_.top(), stack_size_bytes,
                            [](void* fn_, void*, void*, void*) {
       Fn fn = std::forward<Fn>(*reinterpret_cast<Fn*>(fn_)); // copy closure to the new stack frame
       fn();
@@ -1474,25 +1495,37 @@ private:
 
   void execute_coll_task(task_general* t, coll_task ct) {
     // TODO: consider copy semantics for tasks
-    coll_task ct_ {t, ct.task_size, ct.begin_rank};
+    coll_task ct_ {t, ct.task_size, ct.master_rank};
 
     // pass coll task to other processes in a binary tree form
     auto n_ranks = common::topology::n_ranks();
-    auto my_rank_shifted = (common::topology::my_rank() + n_ranks - ct.begin_rank) % n_ranks;
+    auto my_rank = common::topology::my_rank();
+    auto my_rank_shifted = (my_rank + n_ranks - ct.master_rank) % n_ranks;
     for (common::topology::rank_t i = common::next_pow2(n_ranks); i > 1; i /= 2) {
       if (my_rank_shifted % i == 0) {
         auto target_rank_shifted = my_rank_shifted + i / 2;
         if (target_rank_shifted < n_ranks) {
-          auto target_rank = (target_rank_shifted + ct.begin_rank) % n_ranks;
+          auto target_rank = (target_rank_shifted + ct.master_rank) % n_ranks;
           coll_task_mailbox_.put(ct_, target_rank);
         }
       }
     }
 
-    // Ensure all processes have finished coll task execution before deallocation
-    common::mpi_barrier(common::topology::mpicomm());
+    auto prev_stack_base = stack_base_;
+    if (my_rank == ct.master_rank) {
+      // Allocate half the rest of the stack space for nested root/coll_exec()
+      stack_base_ = cf_top_ - (cf_top_ - reinterpret_cast<context_frame*>(stack_.top())) / 2;
+    }
+
+    // Ensure all processes have finished coll task execution before deallocation.
+    // In addition, collectively set the next stack base for nested root_exec() calls because
+    // the stack frame of the scheduler of the master worker is in the RDMA-capable stack region.
+    // TODO: check if the scheduler's stack frame and nested root_exec()'s stack frame do not overlap
+    stack_base_ = common::mpi_bcast_value(stack_base_, ct.master_rank, common::topology::mpicomm());
 
     t->execute();
+
+    stack_base_ = prev_stack_base;
 
     // Ensure all processes have finished coll task execution before deallocation
     common::mpi_barrier(common::topology::mpicomm());
@@ -1509,7 +1542,11 @@ private:
                          reinterpret_cast<std::byte*>(ct->task_ptr),
                          ct->task_size);
 
+      common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_spmd>();
+
       execute_coll_task(t, *ct);
+
+      common::profiler::switch_phase<prof_phase_spmd, prof_phase_sched_loop>();
 
       suspended_thread_allocator_.deallocate(t, ct->task_size);
     }
@@ -1564,6 +1601,7 @@ private:
 
   int                                max_depth_;
   callstack                          stack_;
+  context_frame*                     stack_base_;
   oneslot_mailbox<void>              exit_request_mailbox_;
   oneslot_mailbox<coll_task>         coll_task_mailbox_;
   oneslot_mailbox<cross_worker_task> cross_worker_mailbox_;
