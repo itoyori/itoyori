@@ -236,7 +236,7 @@ inline void cache_prof_print() {
   core::instance::get().cache_prof_print();
 }
 
-inline void* file_mem_alloc_coll(std::filesystem::path fpath) {
+inline void* file_mem_alloc_coll(const std::string& fpath) {
   return file_mem_manager::instance::get().create(fpath);
 }
 

@@ -34,7 +34,7 @@ public:
 
   constexpr unique_file_ptr() noexcept {}
 
-  explicit unique_file_ptr(std::filesystem::path fpath)
+  explicit unique_file_ptr(const std::string& fpath)
     : ptr_(reinterpret_cast<pointer>(alloc_coll(fpath))) {
     ITYR_CHECK(ori::file_mem_get(ptr_).size() % sizeof(T) == 0);
   }
@@ -114,13 +114,13 @@ public:
   }
 
 private:
-  static void* alloc_coll(std::filesystem::path fpath) {
+  static void* alloc_coll(const std::string& fpath) {
     if (ito::is_spmd()) {
       return ori::file_mem_alloc_coll(fpath);
     } else if (ito::is_root()) {
       // FIXME: ugly hack to pass heap-allocated string to other processes
       constexpr std::size_t max_chars = 256;
-      if (fpath.string().size() >= max_chars) {
+      if (fpath.size() >= max_chars) {
         common::die("File path length for unique_file_ptr must be less than %ld.", max_chars);
       }
       std::array<char, max_chars> buf;
@@ -255,7 +255,7 @@ operator<<(std::basic_ostream<CharT, Traits>& ostream, const unique_file_ptr<T>&
  * @see `ityr::unique_file_ptr`
  */
 template <typename T>
-inline unique_file_ptr<T> make_unique_file(std::filesystem::path fpath) {
+inline unique_file_ptr<T> make_unique_file(const std::string& fpath) {
   return unique_file_ptr<T>(fpath);
 }
 

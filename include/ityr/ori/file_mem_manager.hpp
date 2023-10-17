@@ -19,7 +19,7 @@ public:
     }
   }
 
-  void* create(std::filesystem::path fpath) {
+  void* create(const std::string& fpath) {
     entry e(fpath);
 
     ITYR_CHECK(file_mem_entries_.find(e.vm.addr()) == file_mem_entries_.end());
@@ -41,7 +41,7 @@ public:
 private:
   struct entry {
     entry() {}
-    entry(std::filesystem::path fpath)
+    entry(const std::string& fpath)
       : fm(fpath),
         vm(common::reserve_same_vm_coll(fm.size(), common::get_page_size())) {
       fm.map_to_vm(vm.addr(), vm.size(), 0);

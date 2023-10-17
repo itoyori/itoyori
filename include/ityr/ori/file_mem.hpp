@@ -2,7 +2,6 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <filesystem>
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/virtual_mem.hpp"
@@ -14,7 +13,7 @@ class file_mem {
 public:
   file_mem() {}
 
-  explicit file_mem(std::filesystem::path fpath)
+  explicit file_mem(const std::string& fpath)
     : fd_(file_open(fpath)),
       size_(file_size(fd_)) {}
 
@@ -53,7 +52,7 @@ public:
   }
 
 private:
-  static int file_open(std::filesystem::path fpath) {
+  static int file_open(const std::string& fpath) {
     int fd = open(fpath.c_str(), O_RDONLY);
     if (fd == -1) {
       perror("open");
