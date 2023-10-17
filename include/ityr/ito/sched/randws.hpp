@@ -588,11 +588,13 @@ private:
       stack_base_ = cf_top_ - (cf_top_ - reinterpret_cast<context_frame*>(stack_.top())) / 2;
     }
 
-    // Ensure all processes have finished coll task execution before deallocation.
     // In addition, collectively set the next stack base for nested root_exec() calls because
     // the stack frame of the scheduler of the master worker is in the RDMA-capable stack region.
     // TODO: check if the scheduler's stack frame and nested root_exec()'s stack frame do not overlap
     stack_base_ = common::mpi_bcast_value(stack_base_, ct.master_rank, common::topology::mpicomm());
+
+    // Ensure all processes have finished coll task execution before deallocation.
+    common::mpi_barrier(common::topology::mpicomm());
 
     t->execute();
 

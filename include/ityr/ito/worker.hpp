@@ -42,6 +42,8 @@ public:
 
       is_spmd_ = true;
 
+      common::mpi_barrier(common::topology::mpicomm());
+
       return common::mpi_bcast_value(retval, coll_master_, common::topology::mpicomm());
     }
   }
