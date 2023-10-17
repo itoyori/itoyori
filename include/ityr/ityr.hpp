@@ -117,6 +117,27 @@ inline bool is_master() {
 }
 
 /**
+ * @brief Return true if the current thread is the root thread.
+ */
+inline bool is_root() {
+  return ito::is_root();
+}
+
+/**
+ * @brief Migrate the current thread to `target_rank`. For the root thread only.
+ */
+inline void migrate_to(rank_t target_rank) {
+  ito::migrate_to(target_rank, [] { ori::release(); }, [] { ori::acquire(); });
+}
+
+/**
+ * @brief Migrate the current thread to the master worker (of rank 0).
+ */
+inline void migrate_to_master() {
+  ito::migrate_to(0, [] { ori::release(); }, [] { ori::acquire(); });
+}
+
+/**
  * @brief Return true if the current execution context is within the SPMD region.
  */
 inline bool is_spmd() {

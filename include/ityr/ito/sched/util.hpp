@@ -14,6 +14,10 @@
 
 namespace ityr::ito {
 
+/*
+ * DAG profiler
+ */
+
 class dag_profiler_disabled {
 public:
   static constexpr bool enabled = false;
@@ -96,6 +100,10 @@ private:
 
 using dag_profiler = ITYR_CONCAT(dag_profiler_, ITYR_ITO_DAG_PROF);
 
+/*
+ * Misc
+ */
+
 class task_general {
 public:
   virtual ~task_general() = default;
@@ -145,6 +153,69 @@ inline decltype(auto) invoke_fn(Fn&& fn, ArgsTuple&& args_tuple) {
     return no_retval_t{};
   }
 }
+
+/*
+ * Call with profiler events
+ */
+
+template <typename Fn, typename... Args>
+struct callback_retval {
+  using type = std::invoke_result_t<Fn, Args...>;
+};
+
+template <typename... Args>
+struct callback_retval<std::nullptr_t, Args...> {
+  using type = void;
+};
+
+template <typename... Args>
+struct callback_retval<std::nullptr_t&, Args...> {
+  using type = void;
+};
+
+template <typename Fn, typename... Args>
+using callback_retval_t = typename callback_retval<Fn, Args...>::type;
+
+template <typename PhaseFrom, typename PhaseFn, typename PhaseTo,
+          typename Fn, typename... Args>
+inline auto call_with_prof_events(Fn&& fn, Args&&... args) {
+  using retval_t = callback_retval_t<Fn, Args...>;
+
+  if constexpr (!std::is_null_pointer_v<std::remove_reference_t<Fn>>) {
+    common::profiler::switch_phase<PhaseFrom, PhaseFn>();
+
+    if constexpr (!std::is_void_v<retval_t>) {
+      auto ret = std::forward<Fn>(fn)(std::forward<Args>(args)...);
+      common::profiler::switch_phase<PhaseFn, PhaseTo>();
+      return ret;
+
+    } else {
+      std::forward<Fn>(fn)(std::forward<Args>(args)...);
+      common::profiler::switch_phase<PhaseFn, PhaseTo>();
+    }
+
+  } else if constexpr (!std::is_same_v<PhaseFrom, PhaseTo>) {
+    common::profiler::switch_phase<PhaseFrom, PhaseTo>();
+  }
+
+  if constexpr (!std::is_void_v<retval_t>) {
+    return retval_t{};
+  } else {
+    return no_retval_t{};
+  }
+}
+
+template <typename PhaseFrom, typename PhaseFn, typename PhaseTo,
+          typename Fn, typename... Args>
+inline auto call_with_prof_events(Fn&& fn, no_retval_t, Args&&... args) {
+  // skip no_retval_t args
+  return call_with_prof_events<PhaseFrom, PhaseFn, PhaseTo>(
+      std::forward<Fn>(fn), std::forward<Args>(args)...);
+}
+
+/*
+ * Mailbox
+ */
 
 template <typename Entry>
 class oneslot_mailbox {

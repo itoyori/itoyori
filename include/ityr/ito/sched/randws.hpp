@@ -175,13 +175,9 @@ public:
     if (th.serialized) {
       common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
     } else {
-      if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftForkCallback>>) {
-        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_cb_drift_fork>();
-        on_drift_fork_cb();
-        common::profiler::switch_phase<prof_phase_cb_drift_fork, prof_phase_thread>();
-      } else {
-        common::profiler::switch_phase<prof_phase_sched_resume_stolen, prof_phase_thread>();
-      }
+      call_with_prof_events<prof_phase_sched_resume_stolen,
+                            prof_phase_cb_drift_fork,
+                            prof_phase_thread>(on_drift_fork_cb);
     }
 
     // restart to count only the last task in the task group
@@ -263,6 +259,12 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop()) {
+      auto mte = migration_mailbox_.pop();
+      if (mte.has_value()) {
+        execute_migrated_task(*mte);
+        continue;
+      }
+
       steal();
 
       if constexpr (!std::is_null_pointer_v<std::remove_reference_t<SchedLoopCallback>>) {
@@ -275,6 +277,38 @@ public:
 
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
+
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void migrate_to(common::topology::rank_t target_rank,
+                  PreSuspendCallback&&     pre_suspend_cb,
+                  PostSuspendCallback&&    post_suspend_cb) {
+    // Currently only for the root thread
+    ITYR_CHECK(is_executing_root());
+
+    if (target_rank == common::topology::my_rank()) return;
+
+    auto cb_ret = call_with_prof_events<prof_phase_thread,
+                                        prof_phase_cb_pre_suspend,
+                                        prof_phase_sched_migrate>(
+        std::forward<PreSuspendCallback>(pre_suspend_cb));
+
+    suspend([&](context_frame* cf) {
+      suspended_state ss = evacuate(cf);
+
+      common::verbose("Migrate continuation of the root thread to process %d",
+                      target_rank);
+
+      migration_mailbox_.put(ss, target_rank);
+
+      common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
+      resume_sched();
+    });
+
+    call_with_prof_events<prof_phase_sched_resume_migrate,
+                          prof_phase_cb_post_suspend,
+                          prof_phase_thread>(
+        std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
+  }
 
   template <typename Fn>
   void coll_exec(const Fn& fn) {
@@ -373,11 +407,9 @@ private:
       return;
     }
 
-    if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
-      common::profiler::switch_phase<prof_phase_sched_die, prof_phase_cb_drift_die>();
-      on_drift_die_cb();
-      common::profiler::switch_phase<prof_phase_cb_drift_die, prof_phase_sched_die>();
-    }
+    call_with_prof_events<prof_phase_sched_die,
+                          prof_phase_cb_drift_die,
+                          prof_phase_sched_die>(on_drift_die_cb);
 
     if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
       put_retval_remote(ts, {std::move(ret), tls_->dag_prof});
@@ -496,6 +528,17 @@ private:
   void resume_sched() {
     common::verbose("Resume scheduler context");
     context::resume(sched_cf_);
+  }
+
+  void execute_migrated_task(const suspended_state& ss) {
+    ITYR_CHECK(ss.evacuation_ptr);
+    common::verbose("Received a continuation of the root thread");
+    common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_resume_migrate>();
+
+    suspend([&](context_frame* cf) {
+      sched_cf_ = cf;
+      resume(ss);
+    });
   }
 
   suspended_state evacuate(context_frame* cf) {
@@ -632,18 +675,19 @@ private:
     std::size_t frame_size;
   };
 
-  callstack                  stack_;
-  context_frame*             stack_base_;
-  oneslot_mailbox<void>      exit_request_mailbox_;
-  oneslot_mailbox<coll_task> coll_task_mailbox_;
-  wsqueue<wsqueue_entry>     wsq_;
-  common::remotable_resource thread_state_allocator_;
-  common::remotable_resource suspended_thread_allocator_;
-  context_frame*             cf_top_           = nullptr;
-  context_frame*             sched_cf_         = nullptr;
-  thread_local_storage*      tls_              = nullptr;
-  bool                       dag_prof_enabled_ = false;
-  dag_profiler               dag_prof_result_;
+  callstack                        stack_;
+  context_frame*                   stack_base_;
+  oneslot_mailbox<void>            exit_request_mailbox_;
+  oneslot_mailbox<coll_task>       coll_task_mailbox_;
+  oneslot_mailbox<suspended_state> migration_mailbox_;
+  wsqueue<wsqueue_entry>           wsq_;
+  common::remotable_resource       thread_state_allocator_;
+  common::remotable_resource       suspended_thread_allocator_;
+  context_frame*                   cf_top_           = nullptr;
+  context_frame*                   sched_cf_         = nullptr;
+  thread_local_storage*            tls_              = nullptr;
+  bool                             dag_prof_enabled_ = false;
+  dag_profiler                     dag_prof_result_;
 };
 
 }

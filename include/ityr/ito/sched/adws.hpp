@@ -324,7 +324,7 @@ public:
       sched_cf_ = cf;
       root_on_stack([&, ts, fn = std::forward<Fn>(fn),
                      args_tuple = std::make_tuple(std::forward<Args>(args)...)]() mutable {
-        migrate_current_thread_to(0, nullptr, nullptr);
+        migrate_to(0, nullptr, nullptr);
 
         common::verbose("Starting root thread %p", ts);
 
@@ -420,9 +420,9 @@ public:
                       tls_->drange.begin(), tls_->drange.end(), tls_->dtree_node_ref.depth);
 
       // migrate the cross-worker-task to the owner
-      migrate_current_thread_to(tls_->drange.owner(),
-                                std::forward<PreSuspendCallback>(pre_suspend_cb),
-                                std::forward<PostSuspendCallback>(post_suspend_cb));
+      migrate_to(tls_->drange.owner(),
+                 std::forward<PreSuspendCallback>(pre_suspend_cb),
+                 std::forward<PostSuspendCallback>(post_suspend_cb));
 
       if (tgdata->owns_dtree_node) {
         // Set the completed current task group as non-dominant to reduce steal requests
@@ -540,8 +540,9 @@ public:
       if (target_rank == common::topology::my_rank()) {
         common::profiler::switch_phase<prof_phase_sched_resume_popped, prof_phase_thread>();
       } else {
-        call_cb<prof_phase_sched_resume_stolen, prof_phase_thread,
-                prof_phase_cb_drift_fork>(on_drift_fork_cb);
+        call_with_prof_events<prof_phase_sched_resume_stolen,
+                              prof_phase_cb_drift_fork,
+                              prof_phase_thread>(on_drift_fork_cb);
       }
 
     } else {
@@ -570,8 +571,9 @@ public:
 
         // If the new task is executed on another process
         if (my_rank != common::topology::my_rank()) {
-          call_cb<prof_phase_sched_start_new, prof_phase_thread,
-                  prof_phase_cb_drift_fork>(on_drift_fork_cb);
+          call_with_prof_events<prof_phase_sched_start_new,
+                                prof_phase_cb_drift_fork,
+                                prof_phase_thread>(on_drift_fork_cb);
         } else {
           common::profiler::switch_phase<prof_phase_sched_start_new, prof_phase_thread>();
         }
@@ -597,7 +599,7 @@ public:
         common::verbose("Migrate cross-worker-task %p [%f, %f) to process %d",
                         ts, new_drange.begin(), new_drange.end(), target_rank);
 
-        cross_worker_mailbox_.put({nullptr, t, task_size}, target_rank);
+        migration_mailbox_.put({nullptr, t, task_size}, target_rank);
       } else {
         common::verbose("Migrate non-cross-worker-task %p [%f, %f) to process %d",
                         ts, new_drange.begin(), new_drange.end(), target_rank);
@@ -691,9 +693,9 @@ public:
     common::verbose("Enter scheduling loop");
 
     while (!should_exit_sched_loop()) {
-      auto cwt = cross_worker_mailbox_.pop();
-      if (cwt.has_value()) {
-        execute_cross_worker_task(*cwt);
+      auto mte = migration_mailbox_.pop();
+      if (mte.has_value()) {
+        execute_migrated_task(*mte);
         continue;
       }
 
@@ -738,6 +740,36 @@ public:
     check_cross_worker_task_arrival<prof_phase_thread, prof_phase_thread>(
         std::forward<PreSuspendCallback>(pre_suspend_cb),
         std::forward<PostSuspendCallback>(post_suspend_cb));
+  }
+
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void migrate_to(common::topology::rank_t target_rank,
+                  PreSuspendCallback&&     pre_suspend_cb,
+                  PostSuspendCallback&&    post_suspend_cb) {
+    if (target_rank == common::topology::my_rank()) return;
+
+    auto cb_ret = call_with_prof_events<prof_phase_thread,
+                                        prof_phase_cb_pre_suspend,
+                                        prof_phase_sched_migrate>(
+        std::forward<PreSuspendCallback>(pre_suspend_cb));
+
+    suspend([&](context_frame* cf) {
+      suspended_state ss = evacuate(cf);
+
+      common::verbose("Migrate continuation of cross-worker-task [%f, %f) to process %d",
+                      tls_->drange.begin(), tls_->drange.end(), target_rank);
+
+      migration_mailbox_.put(ss, target_rank);
+
+      evacuate_all();
+      common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
+      resume_sched();
+    });
+
+    call_with_prof_events<prof_phase_sched_resume_migrate,
+                          prof_phase_cb_post_suspend,
+                          prof_phase_thread>(
+        std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
   }
 
   template <typename Fn>
@@ -790,12 +822,6 @@ private:
     common::topology::rank_t master_rank;
   };
 
-  struct cross_worker_task {
-    void*       evacuation_ptr;
-    void*       frame_base;
-    std::size_t frame_size;
-  };
-
   struct primary_wsq_entry {
     void*       evacuation_ptr;
     void*       frame_base;
@@ -831,7 +857,7 @@ private:
 
       if (tls_->undistributed &&
           tls_->drange.begin_rank() + 1 < tls_->drange.end_rank()) {
-        std::vector<std::pair<cross_worker_task, common::topology::rank_t>> tasks;
+        std::vector<std::pair<suspended_state, common::topology::rank_t>> tasks;
 
         // If a cross-worker task with range [i.xxx, j.xxx) is completed without distributing
         // child cross-worker tasks to workers i+1, i+2, ..., j-1, it should pass the dist node
@@ -860,7 +886,7 @@ private:
 
         // allocate memory then put
         for (auto [t, target_rank] : tasks) {
-          cross_worker_mailbox_.put(t, target_rank);
+          migration_mailbox_.put(t, target_rank);
         }
 
         // Wait until all tasks are completed on remote workers
@@ -914,8 +940,9 @@ private:
   template <typename T, typename OnDriftDieCallback>
   void on_die_drifted(thread_state<T>* ts, T&& ret, OnDriftDieCallback on_drift_die_cb) {
     if constexpr (!std::is_null_pointer_v<std::remove_reference_t<OnDriftDieCallback>>) {
-      call_cb<prof_phase_sched_die, prof_phase_sched_die,
-              prof_phase_cb_drift_die>(on_drift_die_cb);
+      call_with_prof_events<prof_phase_sched_die,
+                            prof_phase_cb_drift_die,
+                            prof_phase_sched_die>(on_drift_die_cb);
     }
 
     if constexpr (!std::is_same_v<T, no_retval_t> || dag_profiler::enabled) {
@@ -1009,9 +1036,9 @@ private:
       }
 
       // Periodic check for cross-worker task arrival
-      auto cwt = cross_worker_mailbox_.pop();
-      if (cwt.has_value()) {
-        execute_cross_worker_task(*cwt);
+      auto mte = migration_mailbox_.pop();
+      if (mte.has_value()) {
+        execute_migrated_task(*mte);
         return;
       }
     }
@@ -1248,15 +1275,15 @@ private:
     });
   }
 
-  void execute_cross_worker_task(const cross_worker_task& cwt) {
-    if (cwt.evacuation_ptr == nullptr) {
+  void execute_migrated_task(const suspended_state& ss) {
+    if (ss.evacuation_ptr == nullptr) {
       // This task is a new task
       common::verbose("Received a new cross-worker task");
       common::profiler::switch_phase<prof_phase_sched_loop, prof_phase_sched_start_new>();
 
       suspend([&](context_frame* cf) {
         sched_cf_ = cf;
-        start_new_task(cwt.frame_base, cwt.frame_size);
+        start_new_task(ss.frame_base, ss.frame_size);
       });
 
     } else {
@@ -1266,7 +1293,7 @@ private:
 
       suspend([&](context_frame* cf) {
         sched_cf_ = cf;
-        resume(suspended_state{cwt.evacuation_ptr, cwt.frame_base, cwt.frame_size});
+        resume(ss);
       });
     }
   }
@@ -1356,11 +1383,13 @@ private:
             typename PreSuspendCallback, typename PostSuspendCallback>
   bool check_cross_worker_task_arrival(PreSuspendCallback&&  pre_suspend_cb,
                                        PostSuspendCallback&& post_suspend_cb) {
-    if (cross_worker_mailbox_.arrived()) {
+    if (migration_mailbox_.arrived()) {
       tls_->dag_prof.stop();
 
-      auto cb_ret = call_cb<PhaseFrom, prof_phase_sched_evacuate,
-                            prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
+      auto cb_ret = call_with_prof_events<PhaseFrom,
+                                          prof_phase_cb_pre_suspend,
+                                          prof_phase_sched_evacuate>(
+          std::forward<PreSuspendCallback>(pre_suspend_cb));
 
       auto my_rank = common::topology::my_rank();
 
@@ -1382,11 +1411,15 @@ private:
       });
 
       if (my_rank == common::topology::my_rank()) {
-        call_cb<prof_phase_sched_resume_popped, PhaseTo,
-                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
+        call_with_prof_events<prof_phase_sched_resume_popped,
+                              prof_phase_cb_post_suspend,
+                              PhaseTo>(
+            std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       } else {
-        call_cb<prof_phase_sched_resume_stolen, PhaseTo,
-                prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
+        call_with_prof_events<prof_phase_sched_resume_stolen,
+                              prof_phase_cb_post_suspend,
+                              PhaseTo>(
+            std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
       }
 
       tls_->dag_prof.start();
@@ -1398,87 +1431,6 @@ private:
     }
 
     return false;
-  }
-
-  template <typename PreSuspendCallback, typename PostSuspendCallback>
-  void migrate_current_thread_to(common::topology::rank_t target_rank,
-                                 PreSuspendCallback&&     pre_suspend_cb,
-                                 PostSuspendCallback&&    post_suspend_cb) {
-    if (target_rank == common::topology::my_rank()) return;
-
-    auto cb_ret = call_cb<prof_phase_thread, prof_phase_sched_migrate,
-                          prof_phase_cb_pre_suspend>(std::forward<PreSuspendCallback>(pre_suspend_cb));
-
-    suspend([&](context_frame* cf) {
-      suspended_state ss = evacuate(cf);
-
-      common::verbose("Migrate continuation of cross-worker-task [%f, %f) to process %d",
-                      tls_->drange.begin(), tls_->drange.end(), target_rank);
-
-      cross_worker_mailbox_.put({ss.evacuation_ptr, ss.frame_base, ss.frame_size}, target_rank);
-
-      evacuate_all();
-      common::profiler::switch_phase<prof_phase_sched_migrate, prof_phase_sched_loop>();
-      resume_sched();
-    });
-
-    call_cb<prof_phase_sched_resume_migrate, prof_phase_thread,
-            prof_phase_cb_post_suspend>(std::forward<PostSuspendCallback>(post_suspend_cb), cb_ret);
-  }
-
-  template <typename Callback, typename... CallbackArgs>
-  struct callback_retval {
-    using type = std::invoke_result_t<Callback, CallbackArgs...>;
-  };
-
-  template <typename... CallbackArgs>
-  struct callback_retval<std::nullptr_t, CallbackArgs...> {
-    using type = void;
-  };
-
-  template <typename... CallbackArgs>
-  struct callback_retval<std::nullptr_t&, CallbackArgs...> {
-    using type = void;
-  };
-
-  template <typename Callback, typename... CallbackArgs>
-  using callback_retval_t = typename callback_retval<Callback, CallbackArgs...>::type;
-
-  template <typename PhaseFrom, typename PhaseTo, typename PhaseCB,
-            typename Callback, typename... CallbackArgs>
-  auto call_cb(Callback&& cb, CallbackArgs&&... cb_args) {
-    using retval_t = callback_retval_t<Callback, CallbackArgs...>;
-
-    if constexpr (!std::is_null_pointer_v<std::remove_reference_t<Callback>>) {
-      common::profiler::switch_phase<PhaseFrom, PhaseCB>();
-
-      if constexpr (!std::is_void_v<retval_t>) {
-        auto ret = std::forward<Callback>(cb)(std::forward<CallbackArgs>(cb_args)...);
-        common::profiler::switch_phase<PhaseCB, PhaseTo>();
-        return ret;
-
-      } else {
-        std::forward<Callback>(cb)(std::forward<CallbackArgs>(cb_args)...);
-        common::profiler::switch_phase<PhaseCB, PhaseTo>();
-      }
-
-    } else if constexpr (!std::is_same_v<PhaseFrom, PhaseTo>) {
-      common::profiler::switch_phase<PhaseFrom, PhaseTo>();
-    }
-
-    if constexpr (!std::is_void_v<retval_t>) {
-      return retval_t{};
-    } else {
-      return no_retval_t{};
-    }
-  }
-
-  template <typename PhaseFrom, typename PhaseTo, typename PhaseCB,
-            typename Callback, typename... CallbackArgs>
-  auto call_cb(Callback&& cb, no_retval_t, CallbackArgs&&... cb_args) {
-    // skip no_retval_t args
-    return call_cb<PhaseFrom, PhaseTo, PhaseCB>(
-        std::forward<Callback>(cb), std::forward<CallbackArgs>(cb_args)...);
   }
 
   template <typename Fn>
@@ -1604,7 +1556,7 @@ private:
   context_frame*                     stack_base_;
   oneslot_mailbox<void>              exit_request_mailbox_;
   oneslot_mailbox<coll_task>         coll_task_mailbox_;
-  oneslot_mailbox<cross_worker_task> cross_worker_mailbox_;
+  oneslot_mailbox<suspended_state>   migration_mailbox_;
   wsqueue<primary_wsq_entry, false>  primary_wsq_;
   wsqueue<migration_wsq_entry, true> migration_wsq_;
   common::remotable_resource         thread_state_allocator_;

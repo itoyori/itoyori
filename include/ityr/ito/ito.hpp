@@ -76,6 +76,22 @@ inline auto coll_exec(const Fn& fn, const Args&... args) {
 }
 
 template <typename PreSuspendCallback, typename PostSuspendCallback>
+inline void migrate_to(common::topology::rank_t target_rank,
+                       PreSuspendCallback&&     pre_suspend_cb,
+                       PostSuspendCallback&&    post_suspend_cb) {
+  ITYR_CHECK(!is_spmd());
+  ITYR_CHECK(is_root());
+  auto& w = worker::instance::get();
+  w.sched().migrate_to(target_rank,
+                       std::forward<PreSuspendCallback>(pre_suspend_cb),
+                       std::forward<PostSuspendCallback>(post_suspend_cb));
+}
+
+inline void migrate_to(common::topology::rank_t target_rank) {
+  migrate_to(target_rank, nullptr, nullptr);
+}
+
+template <typename PreSuspendCallback, typename PostSuspendCallback>
 inline void poll(PreSuspendCallback&&  pre_suspend_cb,
                  PostSuspendCallback&& post_suspend_cb) {
   auto& w = worker::instance::get();
@@ -225,6 +241,20 @@ ITYR_TEST_CASE("[ityr::ito] nested root/coll_exec()") {
     });
   });
   ITYR_CHECK(ret == common::topology::n_ranks() * 3);
+
+  fini();
+}
+
+ITYR_TEST_CASE("[ityr::ito] migrate_to") {
+  init();
+
+  root_exec([] {
+    for (int i = 0; i < 10; i++) {
+      auto target_rank = i % common::topology::n_ranks();
+      migrate_to(target_rank);
+      ITYR_CHECK(common::topology::my_rank() == target_rank);
+    }
+  });
 
   fini();
 }

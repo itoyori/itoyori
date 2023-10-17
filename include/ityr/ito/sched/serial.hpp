@@ -37,6 +37,9 @@ public:
   template <typename PreSuspendCallback, typename PostSuspendCallback>
   void poll(PreSuspendCallback&&, PostSuspendCallback&&) {}
 
+  template <typename PreSuspendCallback, typename PostSuspendCallback>
+  void migrate_to(common::topology::rank_t, PreSuspendCallback&&, PostSuspendCallback&&) {}
+
   template <typename Fn>
   void coll_exec(const Fn& fn) {
     fn();
