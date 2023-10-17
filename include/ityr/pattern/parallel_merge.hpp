@@ -16,68 +16,96 @@ find_split_points_for_merge(RandomAccessIterator1 first1,
                             RandomAccessIterator2 first2,
                             RandomAccessIterator2 last2,
                             Compare               comp) {
-  std::size_t n1 = std::distance(first1, last1);
-  std::size_t n2 = std::distance(first2, last2);
+  auto n1 = std::distance(first1, last1);
+  auto n2 = std::distance(first2, last2);
+
+  ITYR_CHECK(n1 > 0);
 
   if (n1 > n2) {
     // so that the size of [first1, last1) is always smaller than that of [first2, last2)
-    auto [p1, p2] = find_split_points_for_merge(first2, last2, first1, last1, comp);
-    return std::make_pair(p2, p1);
+    auto [p2, p1] = find_split_points_for_merge(first2, last2, first1, last1, comp);
+    return std::make_pair(p1, p2);
   }
 
-  std::size_t m = (n1 + n2) / 2;
-
-  if (n1 == 0) {
-    return std::make_pair(first1, std::next(first2, m));
-  }
+  auto m = (n1 + n2) / 2;
 
   if (n1 == 1) {
     RandomAccessIterator2 it2 = std::next(first2, m);
     ITYR_CHECK(first2 <= std::prev(it2));
-    auto&& [css, its] = checkout_global_iterators(1, first1, std::prev(it2));
-    auto [it1r, it2l] = its;
+    auto&& [css, its] = checkout_global_iterators(1, first1, it2);
+    auto [it1, it2r] = its;
 
-    if (comp(*it1r, *it2l)) {
-      return std::make_pair(std::next(first1), std::prev(it2));
+    if (comp(*it1, *it2r)) {
+      return std::make_pair(last1, it2);
     } else {
       return std::make_pair(first1, it2);
     }
   }
 
-  RandomAccessIterator1 low  = first1;
-  RandomAccessIterator1 high = last1;
+  // Binary search over the larger region
+  RandomAccessIterator2 low  = first2;
+  RandomAccessIterator2 high = last2;
 
   while (true) {
     ITYR_CHECK(low <= high);
 
-    RandomAccessIterator1 it1 = std::next(low, std::distance(low, high) / 2);
-    RandomAccessIterator2 it2 = std::next(first2, m - std::distance(first1, it1));
+    RandomAccessIterator2 it2 = std::next(low, std::distance(low, high) / 2);
 
-    if (it1 == first1 || it1 == last1) {
-      return std::make_pair(it1, it2);
-    }
+    auto c2 = std::distance(first2, it2);
+    if (m <= c2) {
+      // it2 is close to the right end (last2)
+      auto&& [css, its] = checkout_global_iterators(1, first1, std::prev(it2));
+      auto [it1r, it2l] = its;
 
-    ITYR_CHECK(it2 != first2);
-    ITYR_CHECK(it2 != last2);
+      if (comp(*it1r, *it2l)) {
+        ITYR_CHECK(high != it2);
+        high = it2;
 
-    auto&& [css, its] = checkout_global_iterators(2, std::prev(it1), std::prev(it2));
-    auto [it1_, it2_] = its;
+      } else {
+        return std::make_pair(first1, it2);
+      }
 
-    auto it1l = it1_;
-    auto it1r = std::next(it1_);
-    auto it2l = it2_;
-    auto it2r = std::next(it2_);
+    } else if (m - c2 >= n1) {
+      // it2 is close to the left end (first2)
+      auto&& [css, its] = checkout_global_iterators(1, std::prev(last1), it2);
+      auto [it1l, it2r] = its;
 
-    if (comp(*it2r, *it1l)) {
-      ITYR_CHECK(high != std::prev(it1));
-      high = std::prev(it1);
+      if (comp(*it2r, *it1l)) {
+        ITYR_CHECK(low != std::next(it2));
+        low = std::next(it2);
 
-    } else if (comp(*it1r, *it2l)) {
-      ITYR_CHECK(low != std::next(it1));
-      low = std::next(it1);
+      } else {
+        return std::make_pair(last1, it2);
+      }
 
     } else {
-      return std::make_pair(it1, it2);
+      // Both regions are split in the middle
+      RandomAccessIterator1 it1 = std::next(first1, m - c2);
+
+      ITYR_CHECK(it1 != first1);
+      ITYR_CHECK(it1 != last1);
+      ITYR_CHECK(it2 != first2);
+      ITYR_CHECK(it2 != last2);
+
+      auto&& [css, its] = checkout_global_iterators(2, std::prev(it1), std::prev(it2));
+      auto [it1_, it2_] = its;
+
+      auto it1l = it1_;
+      auto it1r = std::next(it1_);
+      auto it2l = it2_;
+      auto it2r = std::next(it2_);
+
+      if (comp(*it2r, *it1l)) {
+        ITYR_CHECK(low != std::next(it2));
+        low = std::next(it2);
+
+      } else if (comp(*it1r, *it2l)) {
+        ITYR_CHECK(high != it2);
+        high = it2;
+
+      } else {
+        return std::make_pair(it1, it2);
+      }
     }
   }
 }
@@ -86,30 +114,40 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] find_split_points_for_merge") {
   ito::init();
   ori::init();
 
-  auto check_fn = [](std::initializer_list<int> il1, std::initializer_list<int> il2,
-                     std::size_t expected1, std::size_t expected2) {
-    auto [it1, it2] = find_split_points_for_merge(il1.begin(), il1.end(), il2.begin(), il2.end(), std::less<>{});
-    ITYR_CHECK(it1 == std::next(il1.begin(), expected1));
-    ITYR_CHECK(it2 == std::next(il2.begin(), expected2));
+  auto check_fn = [](std::vector<int> v1, std::vector<int> v2) {
+    auto [it1, it2] = find_split_points_for_merge(v1.begin(), v1.end(), v2.begin(), v2.end(), std::less<>{});
+    if (it1 != v1.begin() && it2 != v2.end()) {
+      ITYR_CHECK(*std::prev(it1) <= *it2);
+    }
+    if (it2 != v2.begin() && it1 != v1.end()) {
+      ITYR_CHECK(*std::prev(it2) <= *it1);
+    }
+    ITYR_CHECK(!(it1 == v1.begin() && it2 == v2.begin()));
+    ITYR_CHECK(!(it1 == v1.end() && it2 == v2.end()));
   };
 
-  check_fn({}, {}, 0, 0);
-  check_fn({}, {1}, 0, 0);
-  check_fn({}, {1, 2, 3, 4, 5}, 0, 2);
-  check_fn({0}, {1, 2, 3, 4, 5}, 1, 2);
-  check_fn({2}, {1, 2, 3, 4, 5}, 1, 2);
-  check_fn({3}, {1, 2, 3, 4, 5}, 0, 3);
-  check_fn({6}, {1, 2, 3, 4, 5}, 0, 3);
-  check_fn({1, 2, 3, 4, 5}, {1, 2, 3, 4, 5}, 2, 3);
-  check_fn({1, 2, 3, 4, 5}, {4, 5, 6, 7, 8}, 4, 1);
-  check_fn({1, 2, 3, 4, 5}, {6, 7, 8, 9, 10}, 5, 0);
-  check_fn({6, 7, 8, 9, 10}, {1, 2, 3, 4, 5}, 0, 5);
+  check_fn({0}, {1, 2, 3, 4, 5});
+  check_fn({2}, {1, 2, 3, 4, 5});
+  check_fn({3}, {1, 2, 3, 4, 5});
+  check_fn({6}, {1, 2, 3, 4, 5});
+  check_fn({1, 4}, {1, 2, 3, 4, 5});
+  check_fn({2, 3}, {1, 2, 3, 4, 5});
+  check_fn({0, 6}, {1, 2, 3, 4, 5});
+  check_fn({0, 1}, {2, 2, 2, 4, 5});
+  check_fn({4, 5}, {2, 2, 2, 2, 3});
+  check_fn({3, 3}, {3, 3, 3, 3, 3, 3, 3});
+  check_fn({3, 4}, {2, 2, 3, 3, 3, 3, 4});
+  check_fn({1, 2, 3, 4, 5}, {1, 2, 3, 4, 5});
+  check_fn({1, 2, 3, 4, 5}, {4, 5, 6, 7, 8});
+  check_fn({1, 2, 3, 4, 5}, {6, 7, 8, 9, 10});
+  check_fn({6, 7, 8, 9, 10}, {1, 2, 3, 4, 5});
+  check_fn({0, 0, 0, 0, 0}, {0, 0, 0, 0, 0});
 
   ito::fini();
   ori::fini();
 }
 
-template <typename W, typename RandomAccessIterator, typename Compare>
+template <bool Stable, typename W, typename RandomAccessIterator, typename Compare>
 inline void inplace_merge_aux(const execution::parallel_policy<W>& policy,
                               RandomAccessIterator                 first,
                               RandomAccessIterator                 middle,
@@ -130,80 +168,71 @@ inline void inplace_merge_aux(const execution::parallel_policy<W>& policy,
                        std::next(first_, std::distance(first, middle)),
                        std::next(first_, d),
                        comp);
+    return;
+  }
 
-  } else {
-    auto comp_mids = [&]{
-      auto&& [css, its] = checkout_global_iterators(2, std::prev(middle));
-      auto mids = std::get<0>(its);
-      return !comp(*std::next(mids), *mids);
-    };
-    if (comp_mids()) {
-      //     middle
-      // ... a || b ...   where   !(a > b) <=> a <= b
-      return;
-    }
+  auto comp_mids = [&]{
+    auto&& [css, its] = checkout_global_iterators(2, std::prev(middle));
+    auto mids = std::get<0>(its);
+    return !comp(*std::next(mids), *mids);
+  };
+  if (comp_mids()) {
+    //     middle
+    // ... a || b ...   where   !(a > b) <=> a <= b
+    return;
+  }
 
-    auto comp_ends = [&]{
-      auto&& [css, its] = checkout_global_iterators(1, std::prev(last), first);
-      auto [l, f] = its;
-      return comp(*l, *f);
-    };
-    if (comp_ends()) {
-      //     middle
-      // a ... || ... b   where   b < a
-      // (If b == a, we shall not rotate them for stability)
-      rotate(policy, first, middle, last);
-      return;
-    }
+  auto comp_ends = [&]{
+    auto&& [css, its] = checkout_global_iterators(1, std::prev(last), first);
+    auto [l, f] = its;
+    return comp(*l, *f);
+  };
+  if (comp_ends()) {
+    //     middle
+    // a ... || ... b   where   b < a
+    // (If b == a, we shall not rotate them for stability)
+    rotate(policy, first, middle, last);
+    return;
+  }
 
-    auto [s1, s2] = find_split_points_for_merge(first, middle, middle, last, comp);
+  auto [s1, s2] = find_split_points_for_merge(first, middle, middle, last, comp);
 
-    // do not split between the elements with an equal value (for stable merge)
-    // TODO: more efficient impl for cases where the number of equal values is small
-    using value_type = typename std::iterator_traits<RandomAccessIterator>::value_type;
-    if (first < s1) {
-      //        s1 -------> s1     middle
-      // ... x x | x x x x x | a ... || ...
-      auto&& [css, its] = checkout_global_iterators(1, std::prev(s1));
-      auto s1_ = std::get<0>(its);
-      s1 = std::partition_point(s1, middle, [&](const value_type& r) { return !comp(*s1_, r); });
-    }
-    if (s2 < last) {
-      //   middle     s2 <------- s2
-      // ... || ... b | x x x x x | x x ...
-      auto&& [css, its] = checkout_global_iterators(1, s2);
-      auto s2_ = std::get<0>(its);
-      s2 = std::partition_point(middle, s2, [&](const value_type& r) { return comp(r, *s2_); });
-    }
-    // Make sure that elements with an equal value are never swapped across the middle iterator
-    if (first < s1 && s2 < last) {
-      auto&& [css, its] = checkout_global_iterators(2, std::prev(s1), std::prev(s2));
-      auto [s1_, s2_] = its;
-
-      auto s1l = s1_;
-      auto s1r = std::next(s1_);
-      auto s2l = s2_;
-      auto s2r = std::next(s2_);
-
-      if (!comp(*s1l, *s2r)) {
-        //      s1     middle     s2
-        // ... x | a ... || ... b | x ...
-        // (do nothing)
-
-      } else if (!comp(*s2l, *s1r)) {
-        //      s1     middle     s2
-        // ... a | x ... || ... x | b ...
-        // we shall not swap these two `x`s for stability, so we move `s2` to left
-        s2 = std::partition_point(middle, std::prev(s2), [&](const value_type& r) { return comp(r, *s2l); });
+  if constexpr (Stable) {
+    if (s1 != middle && s2 != middle) {
+      // When equal values are swapped (rotated) across the middle point,
+      // the stability will be lost.
+      // In particular, we want to avoid the following situation:
+      //      s1     middle     s2
+      // ... a | x ... || ... x | b ...
+      auto&& [css, its] = checkout_global_iterators(1, s1, std::prev(s2));
+      auto [it1r, it2l] = its;
+      if (!comp(*it1r, *it2l) && !comp(*it2l, *it1r)) { // equal
+        // TODO: more efficient impl for cases where the number of equal values is small
+        using value_type = typename std::iterator_traits<RandomAccessIterator>::value_type;
+        if (s1 == first) {
+          //        s1 -------> s1     middle
+          // ... x x | x x x x x | a ... || ...
+          s1 = std::partition_point(s1, middle,
+              [&, it = it1r](const value_type& r) { return !comp(*it, r); });
+        } else {
+          // Move s2 so that equal elements are never swapped
+          //   middle     s2 <------- s2
+          // ... || ... b | x x x x x | x x ...
+          s2 = std::partition_point(middle, s2,
+              [&, it = it2l](const value_type& r) { return comp(r, *it); });
+        }
       }
     }
-
-    auto m = rotate(policy, s1, middle, s2);
-
-    parallel_invoke(
-        [=, s1 = s1] { inplace_merge_aux(policy, first, s1, m, comp); },
-        [=, s2 = s2] { inplace_merge_aux(policy, m, s2, last, comp); });
   }
+
+  auto m = rotate(policy, s1, middle, s2);
+
+  ITYR_CHECK(first < m);
+  ITYR_CHECK(m < last);
+
+  parallel_invoke(
+      [=, s1 = s1] { inplace_merge_aux<Stable>(policy, first, s1, m, comp); },
+      [=, s2 = s2] { inplace_merge_aux<Stable>(policy, m, s2, last, comp); });
 }
 
 }
@@ -255,7 +284,7 @@ inline void inplace_merge(const ExecutionPolicy& policy,
         comp);
 
   } else {
-    internal::inplace_merge_aux(policy, first, middle, last, comp);
+    internal::inplace_merge_aux<true>(policy, first, middle, last, comp);
   }
 }
 
@@ -326,7 +355,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
 
   ITYR_SUBCASE("pair (stability test)") {
     long n = 100000;
-    long nb = 1000;
+    long nb = 1738;
     ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
 
     ito::root_exec([=] {
@@ -357,7 +386,7 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
       for (long key = 0; key < m / nb; key++) {
         bool sorted = is_sorted(execution::parallel_policy(100),
                                 p + key * nb * 2,
-                                p + (key + 1) * nb * 2,
+                                p + std::min((key + 1) * nb * 2, n),
                                 [=](const auto& a, const auto& b) {
                                   ITYR_CHECK(a.first == key);
                                   ITYR_CHECK(b.first == key);
@@ -365,6 +394,34 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
                                 });
         ITYR_CHECK(sorted);
       }
+    });
+
+    ori::free_coll(p);
+  }
+
+  ITYR_SUBCASE("corner cases") {
+    long n = 1802;
+    ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+    ito::root_exec([=] {
+      auto p_ = ori::checkout(p, n, ori::mode::write);
+      for (int i = 0; i < 4; i++) {
+        p_[i] = 21;
+      }
+      for (int i = 4; i < 187; i++) {
+        p_[i] = 22;
+      }
+      for (int i = 187; i < 1635; i++) {
+        p_[i] = 23;
+      }
+      for (int i = 1635; i < 1802; i++) {
+        p_[i] = 22;
+      }
+      ori::checkin(p_, n, ori::mode::write);
+
+      inplace_merge(execution::parallel_policy(100), p, p + 1635, p + n);
+
+      ITYR_CHECK(is_sorted(execution::parallel_policy(100), p, p + n) == true);
     });
 
     ori::free_coll(p);

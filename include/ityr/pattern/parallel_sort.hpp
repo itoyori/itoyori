@@ -9,7 +9,7 @@ namespace ityr {
 
 namespace internal {
 
-template <typename W, typename RandomAccessIterator, typename Compare>
+template <bool Stable, typename W, typename RandomAccessIterator, typename Compare>
 inline void merge_sort(const execution::parallel_policy<W>& policy,
                        RandomAccessIterator                 first,
                        RandomAccessIterator                 last,
@@ -27,10 +27,10 @@ inline void merge_sort(const execution::parallel_policy<W>& policy,
     auto middle = std::next(first, d / 2);
 
     parallel_invoke(
-        [=] { merge_sort(policy, first, middle, comp); },
-        [=] { merge_sort(policy, middle, last, comp); });
+        [=] { merge_sort<Stable>(policy, first, middle, comp); },
+        [=] { merge_sort<Stable>(policy, middle, last, comp); });
 
-    inplace_merge(policy, first, middle, last, comp);
+    internal::inplace_merge_aux<Stable>(policy, first, middle, last, comp);
   }
 }
 
@@ -80,7 +80,7 @@ inline void stable_sort(const ExecutionPolicy& policy,
         comp);
 
   } else {
-    internal::merge_sort(policy, first, last, comp);
+    internal::merge_sort<true>(policy, first, last, comp);
   }
 }
 
@@ -111,37 +111,62 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_sort] stable_sort") {
   ito::init();
   ori::init();
 
-  long n = 100000;
-  long n_keys = 100;
-  ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
+  ITYR_SUBCASE("pair (stability test)") {
+    long n = 100000;
+    long n_keys = 100;
+    ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
 
-  ito::root_exec([=] {
-    transform(
-        execution::parallel_policy(100),
-        count_iterator<long>(0), count_iterator<long>(n), p,
-        [=](long i) { return std::make_pair(i % n_keys, (3 * i + 5) % 13); });
+    ito::root_exec([=] {
+      transform(
+          execution::parallel_policy(100),
+          count_iterator<long>(0), count_iterator<long>(n), p,
+          [=](long i) { return std::make_pair(i % n_keys, (3 * i + 5) % 13); });
 
-    stable_sort(execution::parallel_policy(100),
-                p, p + n, [](const auto& a, const auto& b) { return a.second < b.second; });
+      stable_sort(execution::parallel_policy(100),
+                  p, p + n, [](const auto& a, const auto& b) { return a.second < b.second; });
 
-    stable_sort(execution::parallel_policy(100),
-                p, p + n, [](const auto& a, const auto& b) { return a.first < b.first; });
+      stable_sort(execution::parallel_policy(100),
+                  p, p + n, [](const auto& a, const auto& b) { return a.first < b.first; });
 
-    long n_values_per_key = n / n_keys;
-    for (long key = 0; key < n_keys; key++) {
-      bool sorted = is_sorted(execution::parallel_policy(100),
-                              p + key * n_values_per_key,
-                              p + (key + 1) * n_values_per_key,
-                              [=](const auto& a, const auto& b) {
-                                ITYR_CHECK(a.first == key);
-                                ITYR_CHECK(b.first == key);
-                                return a.second < b.second;
-                              });
-      ITYR_CHECK(sorted);
-    }
-  });
+      long n_values_per_key = n / n_keys;
+      for (long key = 0; key < n_keys; key++) {
+        bool sorted = is_sorted(execution::parallel_policy(100),
+                                p + key * n_values_per_key,
+                                p + (key + 1) * n_values_per_key,
+                                [=](const auto& a, const auto& b) {
+                                  ITYR_CHECK(a.first == key);
+                                  ITYR_CHECK(b.first == key);
+                                  return a.second < b.second;
+                                });
+        ITYR_CHECK(sorted);
+      }
+    });
 
-  ori::free_coll(p);
+    ori::free_coll(p);
+  }
+
+  ITYR_SUBCASE("corner cases") {
+    long n = 100000;
+    ori::global_ptr<long> p = ori::malloc_coll<long>(n);
+
+    ito::root_exec([=] {
+      transform(
+          execution::parallel_policy(100),
+          count_iterator<long>(0), count_iterator<long>(n), p,
+          [=](long i) { return i; });
+
+      stable_sort(execution::parallel_policy(100),
+                  p, p + n, [](const auto&, const auto&) { return false; /* all equal */ });
+
+      for_each(
+          execution::parallel_policy(100),
+          count_iterator<long>(0), count_iterator<long>(n),
+          make_global_iterator(p, checkout_mode::read),
+          [=](long i, long v) { ITYR_CHECK(i == v); });
+    });
+
+    ori::free_coll(p);
+  }
 
   ori::fini();
   ito::fini();
@@ -180,8 +205,16 @@ inline void sort(const ExecutionPolicy& policy,
                  RandomAccessIterator   first,
                  RandomAccessIterator   last,
                  Compare                comp) {
-  // TODO: implement faster unstable sort
-  stable_sort(policy, first, last, comp);
+  if constexpr (ori::is_global_ptr_v<RandomAccessIterator>) {
+    sort(
+        policy,
+        internal::convert_to_global_iterator(first, checkout_mode::read_write),
+        internal::convert_to_global_iterator(last , checkout_mode::read_write),
+        comp);
+
+  } else {
+    internal::merge_sort<false>(policy, first, last, comp);
+  }
 }
 
 /**
