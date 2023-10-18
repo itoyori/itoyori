@@ -12,7 +12,7 @@
 
 namespace ityr::ori {
 
-template <typename T>
+template <typename T, typename = void>
 class global_ref;
 
 template <typename T>
@@ -84,6 +84,8 @@ public:
 private:
   T* raw_ptr_ = nullptr;
 };
+
+static_assert(std::is_trivially_copyable_v<global_ptr<int>>);
 
 template <typename T1, typename T2>
 inline auto operator-(const global_ptr<T1>& p1, const global_ptr<T2>& p2) {
@@ -165,7 +167,9 @@ inline global_ptr<T> reinterpret_pointer_cast(const global_ptr<U>& p) noexcept {
   return global_ptr<T>(reinterpret_cast<T*>(p.raw_ptr()));
 }
 
-template <typename T>
+// Implicit conversion, get(), and put() are not defined for global references of
+// nontrivially copyable types
+template <typename T, typename>
 class global_ref {
   using this_t = global_ref<T>;
 
@@ -174,14 +178,9 @@ public:
   using pointer    = global_ptr<T>;
 
   constexpr explicit global_ref(const global_ptr<T>& p) noexcept : ptr_(p) {}
-  constexpr global_ref(const this_t& r) noexcept = default;
+  constexpr global_ref(const this_t& r) noexcept : ptr_(&r) {};
 
   constexpr pointer operator&() const noexcept { return ptr_; }
-
-  operator T() const {
-    // TODO: reconsider if this implicit conversion is really what we want
-    return get();
-  }
 
   this_t& operator=(const T& v) {
     with_read_write([&](T& this_v) { this_v = v; });
@@ -194,12 +193,116 @@ public:
   }
 
   this_t& operator=(const this_t& r) {
-    T v = r;
-    return (*this = v);
+    with_read_write([&](T& this_v) {
+      r.with_read_write([&](T& v) {
+        this_v = v;
+      });
+    });
+    return *this;
   }
 
   this_t& operator=(this_t&& r) {
-    return (*this = T(r));
+    with_read_write([&](T& this_v) {
+      r.with_read_write([&](T& v) {
+        this_v = std::move(v);
+      });
+    });
+  }
+
+  this_t& operator+=(const T& v) {
+    with_read_write([&](T& this_v) { this_v += v; });
+    return *this;
+  }
+
+  this_t& operator-=(const T& v) {
+    with_read_write([&](T& this_v) { this_v -= v; });
+    return *this;
+  }
+
+  this_t& operator++() {
+    with_read_write([&](T& this_v) { ++this_v; });
+    return *this;
+  }
+
+  this_t& operator--() {
+    with_read_write([&](T& this_v) { --this_v; });
+    return *this;
+  }
+
+  T operator++(int) {
+    T ret;
+    with_read_write([&](T& this_v) { ret = this_v++; });
+    return ret;
+  }
+
+  T operator--(int) {
+    T ret;
+    with_read_write([&](T& this_v) { ret = this_v--; });
+    return ret;
+  }
+
+  void swap(this_t r) {
+    ITYR_CHECK(&r != ptr_);
+    with_read_write([&](T& this_v) {
+      r.with_read_write([&](T& v) {
+        using std::swap;
+        swap(this_v, v);
+      });
+    });
+  }
+
+private:
+  template <typename Fn>
+  void with_read_write(Fn&& f) {
+    if constexpr (ITYR_ORI_FORCE_GETPUT) {
+      T buf {};
+      core::instance::get().get(ptr_.raw_ptr(), &buf, sizeof(T));
+      std::forward<Fn>(f)(buf);
+      core::instance::get().put(&buf, ptr_.raw_ptr(), sizeof(T));
+      return;
+    }
+    core::instance::get().checkout(ptr_.raw_ptr(), sizeof(T), mode::read_write);
+    std::forward<Fn>(f)(*ptr_.raw_ptr());
+    core::instance::get().checkin(ptr_.raw_ptr(), sizeof(T), mode::read_write);
+  }
+
+  global_ptr<T> ptr_;
+};
+
+template <typename T>
+class global_ref<T, std::enable_if_t<std::is_trivially_copyable_v<T>>> {
+  using this_t = global_ref<T>;
+
+public:
+  using value_type = std::remove_cv_t<T>;
+  using pointer    = global_ptr<T>;
+
+  constexpr explicit global_ref(const global_ptr<T>& p) noexcept : ptr_(p) {}
+  constexpr global_ref(const this_t& r) noexcept : ptr_(&r) {};
+
+  constexpr pointer operator&() const noexcept { return ptr_; }
+
+  operator T() const {
+    // TODO: reconsider if this implicit conversion is really what we want
+    return get();
+  }
+
+  this_t& operator=(const T& v) {
+    with_write_only([&](T& this_v) { this_v = v; });
+    return *this;
+  }
+
+  this_t& operator=(T&& v) {
+    with_write_only([&](T& this_v) { this_v = std::move(v); });
+    return *this;
+  }
+
+  this_t& operator=(const this_t& r) {
+    return (*this = r.get());
+  }
+
+  this_t& operator=(this_t&& r) {
+    return (*this = r.get());
   }
 
   this_t& operator+=(const T& v) {
@@ -268,6 +371,19 @@ private:
     core::instance::get().checkout(ptr_.raw_ptr(), sizeof(T), mode::read_write);
     std::forward<Fn>(f)(*ptr_.raw_ptr());
     core::instance::get().checkin(ptr_.raw_ptr(), sizeof(T), mode::read_write);
+  }
+
+  template <typename Fn>
+  void with_write_only(Fn&& f) {
+    if constexpr (ITYR_ORI_FORCE_GETPUT) {
+      T buf {};
+      std::forward<Fn>(f)(buf);
+      core::instance::get().put(&buf, ptr_.raw_ptr(), sizeof(T));
+      return;
+    }
+    core::instance::get().checkout(ptr_.raw_ptr(), sizeof(T), mode::write);
+    std::forward<Fn>(f)(*ptr_.raw_ptr());
+    core::instance::get().checkin(ptr_.raw_ptr(), sizeof(T), mode::write);
   }
 
   global_ptr<T> ptr_;

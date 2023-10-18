@@ -935,8 +935,20 @@ inline ForwardIteratorD move(const ExecutionPolicy& policy,
                              ForwardIterator1       first1,
                              ForwardIterator1       last1,
                              ForwardIteratorD       first_d) {
-  using std::make_move_iterator;
-  return copy(policy, make_move_iterator(first1), make_move_iterator(last1), first_d);
+  if constexpr (ori::is_global_ptr_v<ForwardIterator1> ||
+                ori::is_global_ptr_v<ForwardIteratorD>) {
+    using value_type1  = typename std::iterator_traits<ForwardIterator1>::value_type;
+    using value_type_d = typename std::iterator_traits<ForwardIteratorD>::value_type;
+    return move(
+        policy,
+        internal::convert_to_global_iterator(first1 , internal::src_checkout_mode_t<value_type1>{}),
+        internal::convert_to_global_iterator(last1  , internal::src_checkout_mode_t<value_type1>{}),
+        internal::convert_to_global_iterator(first_d, internal::dest_checkout_mode_t<value_type_d>{}));
+
+  } else {
+    using std::make_move_iterator;
+    return copy(policy, make_move_iterator(first1), make_move_iterator(last1), first_d);
+  }
 }
 
 ITYR_TEST_CASE("[ityr::pattern::parallel_loop] move") {

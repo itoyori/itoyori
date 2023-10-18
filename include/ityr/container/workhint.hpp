@@ -15,6 +15,8 @@ class workhint_range {
 public:
   using value_type = W;
 
+  using bin_tree_node = typename workhint_range_view<W>::bin_tree_node;
+
   workhint_range() {}
 
   explicit workhint_range(std::size_t n_leaves)
@@ -48,23 +50,23 @@ public:
   }
 
   workhint_range_view<W> view() const {
-    return workhint_range_view<W>(global_span<std::pair<value_type, value_type>>(bin_tree_, size()));
+    return workhint_range_view<W>({bin_tree_, size()});
   }
 
 private:
-  ori::global_ptr<std::pair<value_type, value_type>> mem_alloc(std::size_t size) {
+  ori::global_ptr<bin_tree_node> mem_alloc(std::size_t size) {
     if (ito::is_spmd()) {
-      return ori::malloc_coll<std::pair<value_type, value_type>>(size);
+      return ori::malloc_coll<bin_tree_node>(size);
     } else if (ito::is_root()) {
-      return ito::coll_exec([=] { return ori::malloc_coll<std::pair<value_type, value_type>>(size); });
+      return ito::coll_exec([=] { return ori::malloc_coll<bin_tree_node>(size); });
     } else {
       common::die("workhint_range must be created on the root thread or SPMD region.");
     }
   }
 
-  void mem_free(ori::global_ptr<std::pair<value_type, value_type>> p) {
+  void mem_free(ori::global_ptr<bin_tree_node> p) {
     if (ito::is_spmd()) {
-      ori::free_coll<std::pair<value_type, value_type>>(p);
+      ori::free_coll<bin_tree_node>(p);
     } else if (ito::is_root()) {
       ito::coll_exec([=] { ori::free_coll(p); });
     } else {
@@ -72,8 +74,8 @@ private:
     }
   }
 
-  std::size_t                                        n_leaves_;
-  ori::global_ptr<std::pair<value_type, value_type>> bin_tree_;
+  std::size_t                    n_leaves_;
+  ori::global_ptr<bin_tree_node> bin_tree_;
 };
 
 template <>
@@ -168,8 +170,8 @@ inline auto create_workhint_range(const ExecutionPolicy& policy,
         n_leaves);
 
   } else {
-    using ref_t = typename std::iterator_traits<ForwardIterator>::reference;
-    using workhint_t = std::invoke_result_t<Op, ref_t>;
+    using value_type = typename std::iterator_traits<ForwardIterator>::value_type;
+    using workhint_t = std::invoke_result_t<Op, value_type>;
     workhint_range<workhint_t> workhint(n_leaves);
 
     auto rh = ori::release_lazy();

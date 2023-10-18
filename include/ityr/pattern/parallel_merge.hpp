@@ -353,10 +353,16 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
     ori::free_coll(p);
   }
 
-  ITYR_SUBCASE("pair (stability test)") {
+  ITYR_SUBCASE("stability test") {
+    // std::pair is not trivially copyable
+    struct item {
+      long key;
+      long val;
+    };
+
     long n = 100000;
     long nb = 1738;
-    ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
+    ori::global_ptr<item> p = ori::malloc_coll<item>(n);
 
     ito::root_exec([=] {
       long m = n / 2;
@@ -364,33 +370,33 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_merge] inplace_merge") {
       transform(
           execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(m), p,
-          [=](long i) { return std::make_pair(i / nb, i); });
+          [=](long i) { return item{i / nb, i}; });
 
       transform(
           execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n - m), p + m,
-          [=](long i) { return std::make_pair(i / nb, i + m); });
+          [=](long i) { return item{i / nb, i + m}; });
 
-      auto comp_first = [](const auto& a, const auto& b) { return a.first < b.first ; };
-      auto comp_second = [](const auto& a, const auto& b) { return a.second < b.second; };
+      auto comp_key = [](const auto& a, const auto& b) { return a.key < b.key ; };
+      auto comp_val = [](const auto& a, const auto& b) { return a.val < b.val; };
 
       ITYR_CHECK(is_sorted(execution::parallel_policy(100),
-                           p, p + n, comp_second) == true);
+                           p, p + n, comp_val) == true);
 
       inplace_merge(execution::parallel_policy(100),
-                    p, p + m, p + n, comp_first);
+                    p, p + m, p + n, comp_key);
 
       ITYR_CHECK(is_sorted(execution::parallel_policy(100),
-                           p, p + n, comp_first) == true);
+                           p, p + n, comp_key) == true);
 
       for (long key = 0; key < m / nb; key++) {
         bool sorted = is_sorted(execution::parallel_policy(100),
                                 p + key * nb * 2,
                                 p + std::min((key + 1) * nb * 2, n),
                                 [=](const auto& a, const auto& b) {
-                                  ITYR_CHECK(a.first == key);
-                                  ITYR_CHECK(b.first == key);
-                                  return a.second < b.second;
+                                  ITYR_CHECK(a.key == key);
+                                  ITYR_CHECK(b.key == key);
+                                  return a.val < b.val;
                                 });
         ITYR_CHECK(sorted);
       }

@@ -111,22 +111,28 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_sort] stable_sort") {
   ito::init();
   ori::init();
 
-  ITYR_SUBCASE("pair (stability test)") {
+  ITYR_SUBCASE("stability test") {
+    // std::pair is not trivially copyable
+    struct item {
+      long key;
+      long val;
+    };
+
     long n = 100000;
     long n_keys = 100;
-    ori::global_ptr<std::pair<long, long>> p = ori::malloc_coll<std::pair<long, long>>(n);
+    ori::global_ptr<item> p = ori::malloc_coll<item>(n);
 
     ito::root_exec([=] {
       transform(
           execution::parallel_policy(100),
           count_iterator<long>(0), count_iterator<long>(n), p,
-          [=](long i) { return std::make_pair(i % n_keys, (3 * i + 5) % 13); });
+          [=](long i) { return item{i % n_keys, (3 * i + 5) % 13}; });
 
       stable_sort(execution::parallel_policy(100),
-                  p, p + n, [](const auto& a, const auto& b) { return a.second < b.second; });
+                  p, p + n, [](const auto& a, const auto& b) { return a.val < b.val; });
 
       stable_sort(execution::parallel_policy(100),
-                  p, p + n, [](const auto& a, const auto& b) { return a.first < b.first; });
+                  p, p + n, [](const auto& a, const auto& b) { return a.key < b.key; });
 
       long n_values_per_key = n / n_keys;
       for (long key = 0; key < n_keys; key++) {
@@ -134,9 +140,9 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_sort] stable_sort") {
                                 p + key * n_values_per_key,
                                 p + (key + 1) * n_values_per_key,
                                 [=](const auto& a, const auto& b) {
-                                  ITYR_CHECK(a.first == key);
-                                  ITYR_CHECK(b.first == key);
-                                  return a.second < b.second;
+                                  ITYR_CHECK(a.key == key);
+                                  ITYR_CHECK(b.key == key);
+                                  return a.val < b.val;
                                 });
         ITYR_CHECK(sorted);
       }

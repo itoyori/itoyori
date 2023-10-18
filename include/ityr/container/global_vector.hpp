@@ -142,8 +142,10 @@ public:
             typename = std::enable_if_t<std::is_convertible_v<typename std::iterator_traits<InputIterator>::iterator_category,
                                                               std::input_iterator_tag>>>
   global_vector(const global_vector_options& opts, InputIterator first, InputIterator last) : opts_(opts) {
-    initialize_from_iter(first, last,
-                         typename std::iterator_traits<InputIterator>::iterator_category{});
+    // TODO: automatic checkout by making global iterators?
+    initialize_from_iter(
+        first, last,
+        typename std::iterator_traits<InputIterator>::iterator_category{});
   }
 
   global_vector(const global_vector_options& opts, std::initializer_list<T> il) : opts_(opts) {
@@ -158,14 +160,20 @@ public:
   }
 
   global_vector(const this_t& other) : opts_(other.options()) {
-    initialize_from_iter(other.cbegin(), other.cend(), std::random_access_iterator_tag{});
+    initialize_from_iter(
+        make_global_iterator(other.cbegin(), checkout_mode::read),
+        make_global_iterator(other.cend()  , checkout_mode::read),
+        std::random_access_iterator_tag{});
   }
   this_t& operator=(const this_t& other) {
     // TODO: skip freeing memory and reuse it when it has enough amount of memory
     this->~global_vector();
     // should we copy options?
     opts_ = other.options();
-    initialize_from_iter(other.cbegin(), other.cend(), std::random_access_iterator_tag{});
+    initialize_from_iter(
+        make_global_iterator(other.cbegin(), checkout_mode::read),
+        make_global_iterator(other.cend()  , checkout_mode::read),
+        std::random_access_iterator_tag{});
     return *this;
   }
 
@@ -488,9 +496,10 @@ private:
     reserved_end_ = begin_ + count;
 
     if (old_end - old_begin > 0) {
-      construct_elems_from_iter(make_move_iterator(old_begin),
-                                make_move_iterator(old_end),
-                                begin());
+      construct_elems_from_iter(
+          make_move_iterator(old_begin),
+          make_move_iterator(old_end),
+          begin());
 
       destruct_elems(old_begin, old_end);
     }
