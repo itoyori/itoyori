@@ -35,6 +35,7 @@ public:
       pm_(init_cache_pm()),
       cs_(cache_size / BlockSize, cache_block(this)),
       cache_win_(common::rma::create_win(reinterpret_cast<std::byte*>(vm_.addr()), vm_.size())),
+      cache_tlb_(nullptr, nullptr),
       max_dirty_cache_blocks_(max_dirty_cache_size_option::value() / BlockSize),
       cprof_(cs_.num_entries()) {
     ITYR_CHECK(cache_size_ > 0);
@@ -51,15 +52,17 @@ public:
 
     std::byte* blk_addr = common::round_down_pow2(addr, BlockSize);
     if (blk_addr + BlockSize < addr + size) {
-      // Fast path requires the requested region be within a single cache block
-      return false;
+      // Fast path requires the requested region be within a single cache block.
+      // If not, set blk_addr as nullptr (invalid key), which causes the TLB search to fail.
+      // This can reduce a branch here (using CMOV etc.).
+      blk_addr = nullptr;
     }
 
-    auto cbo = cache_tlb_.get(blk_addr);
-    if (!cbo.has_value()) {
-      return false;
-    }
-    cache_block& cb = **cbo;
+    auto cb_p = cache_tlb_.get(blk_addr);
+
+    if (!cb_p) return false;
+
+    cache_block& cb = *cb_p;
 
     block_region br = {addr - blk_addr, addr + size - blk_addr};
 
@@ -145,15 +148,17 @@ public:
 
     std::byte* blk_addr = common::round_down_pow2(addr, BlockSize);
     if (blk_addr + BlockSize < addr + size) {
-      // Fast path requires the requested region be within a single cache block
-      return false;
+      // Fast path requires the requested region be within a single cache block.
+      // If not, set blk_addr as nullptr (invalid key), which causes the TLB search to fail.
+      // This can reduce a branch here (using CMOV etc.).
+      blk_addr = nullptr;
     }
 
-    auto cbo = cache_tlb_.get(blk_addr);
-    if (!cbo.has_value()) {
-      return false;
-    }
-    cache_block& cb = **cbo;
+    auto cb_p = cache_tlb_.get(blk_addr);
+
+    if (!cb_p) return false;
+
+    cache_block& cb = *cb_p;
 
     if constexpr (RegisterDirty) {
       block_region br = {addr - blk_addr, addr + size - blk_addr};
@@ -340,7 +345,7 @@ private:
     block_region_set         dirty_regions;
     cache_manager*           outer;
 
-    cache_block(cache_manager* outer_p) : outer(outer_p) {}
+    explicit cache_block(cache_manager* outer_p) : outer(outer_p) {}
 
     bool is_writing_back() const {
       return writeback_epoch == outer->writeback_epoch_;

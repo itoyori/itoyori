@@ -24,7 +24,8 @@ class home_manager {
 public:
   home_manager(std::size_t mmap_entry_limit)
     : mmap_entry_limit_(mmap_entry_limit),
-      cs_(mmap_entry_limit_, mmap_entry(this)) {}
+      cs_(mmap_entry_limit_, mmap_entry(this)),
+      home_tlb_({nullptr, 0}, nullptr) {}
 
   template <bool IncrementRef>
   bool checkout_fast(std::byte* addr, std::size_t size) {
@@ -35,18 +36,15 @@ public:
       return false;
     }
 
-    auto meo = home_tlb_.get([&](const common::span<std::byte>& seg) {
-      return seg.data() <= addr && addr + size <= seg.data() + seg.size();
+    auto me_p = home_tlb_.get([&](const std::pair<std::byte*, std::size_t>& seg) {
+      return seg.first <= addr && addr + size <= seg.first + seg.second;
     });
-    if (!meo.has_value()) {
-      return false;
-    }
 
-    if (*meo) {
-      mmap_entry& me = **meo;
-      if constexpr (IncrementRef) {
-        me.ref_count++;
-      }
+    if (!me_p) return false;
+
+    if constexpr (IncrementRef) {
+      mmap_entry& me = *me_p;
+      me.ref_count++;
     }
 
     hprof_.record(size, true);
@@ -70,7 +68,7 @@ public:
     }
 
     if (mapped_always) {
-      home_tlb_.add({seg_addr, seg_size}, nullptr);
+      home_tlb_.add({seg_addr, seg_size}, &mmap_entry_dummy);
       hprof_.record(seg_addr, seg_size, req_addr, req_size, true);
       return;
     }
@@ -104,19 +102,14 @@ public:
       return false;
     }
 
-    if constexpr (!DecrementRef) {
-      return false;
-    }
-
-    auto meo = home_tlb_.get([&](const common::span<std::byte>& seg) {
-      return seg.data() <= addr && addr + size <= seg.data() + seg.size();
+    auto me_p = home_tlb_.get([&](const std::pair<std::byte*, std::size_t>& seg) {
+      return seg.first <= addr && addr + size <= seg.first + seg.second;
     });
-    if (!meo.has_value()) {
-      return false;
-    }
 
-    if (*meo) {
-      mmap_entry& me = **meo;
+    if (!me_p) return false;
+
+    if constexpr (DecrementRef) {
+      mmap_entry& me = *me_p;
       me.ref_count--;
     }
 
@@ -181,7 +174,7 @@ private:
     int                         ref_count   = 0;
     home_manager*               outer;
 
-    mmap_entry(home_manager* outer_p) : outer(outer_p) {}
+    explicit mmap_entry(home_manager* outer_p) : outer(outer_p) {}
 
     /* Callback functions for cache_system class */
 
@@ -235,11 +228,12 @@ private:
     return reinterpret_cast<uintptr_t>(addr) / BlockSize;
   }
 
-  std::size_t                               mmap_entry_limit_;
-  cache_system<cache_key_t, mmap_entry>     cs_;
-  tlb<common::span<std::byte>, mmap_entry*> home_tlb_;
-  std::vector<mmap_entry*>                  home_segments_to_map_;
-  home_profiler                             hprof_;
+  std::size_t                                          mmap_entry_limit_;
+  cache_system<cache_key_t, mmap_entry>                cs_;
+  mmap_entry                                           mmap_entry_dummy = mmap_entry{nullptr};
+  tlb<std::pair<std::byte*, std::size_t>, mmap_entry*> home_tlb_;
+  std::vector<mmap_entry*>                             home_segments_to_map_;
+  home_profiler                                        hprof_;
 };
 
 }
