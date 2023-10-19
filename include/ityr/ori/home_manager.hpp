@@ -29,6 +29,8 @@ public:
 
   template <bool IncrementRef>
   bool checkout_fast(std::byte* addr, std::size_t size) {
+    if constexpr (home_tlb::enabled) return false;
+
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
@@ -95,6 +97,8 @@ public:
 
   template <bool DecrementRef>
   bool checkin_fast(const std::byte* addr, std::size_t size) {
+    if constexpr (home_tlb::enabled) return false;
+
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
@@ -228,12 +232,16 @@ private:
     return reinterpret_cast<uintptr_t>(addr) / BlockSize;
   }
 
-  std::size_t                                          mmap_entry_limit_;
-  cache_system<cache_key_t, mmap_entry>                cs_;
-  mmap_entry                                           mmap_entry_dummy = mmap_entry{nullptr};
-  tlb<std::pair<std::byte*, std::size_t>, mmap_entry*> home_tlb_;
-  std::vector<mmap_entry*>                             home_segments_to_map_;
-  home_profiler                                        hprof_;
+  using home_tlb = tlb<std::pair<std::byte*, std::size_t>,
+                       mmap_entry*,
+                       ITYR_ORI_HOME_TLB_SIZE>;
+
+  std::size_t                             mmap_entry_limit_;
+  cache_system<cache_key_t, mmap_entry>   cs_;
+  mmap_entry                              mmap_entry_dummy = mmap_entry{nullptr};
+  home_tlb                                home_tlb_;
+  std::vector<mmap_entry*>                home_segments_to_map_;
+  home_profiler                           hprof_;
 };
 
 }

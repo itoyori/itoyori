@@ -11,12 +11,16 @@ namespace ityr::ori {
 template <typename Key, typename Entry, int NEntries = 3>
 class tlb {
 public:
+  constexpr static bool enabled = NEntries > 0;
+
   tlb() : tlb(Key{}, Entry{}) {}
   tlb(Key invalid_key, Entry invalid_entry) {
     entries_.fill({invalid_key, invalid_entry, 0});
   }
 
   void add(const Key& key, const Entry& entry) {
+    if constexpr (!enabled) return;
+
     // FIXME: the same entry can be duplicated?
     Key invalid_key = entries_[0].key;
     for (int i = 1; i <= NEntries; i++) {
@@ -41,6 +45,8 @@ public:
 
   template <typename Fn>
   Entry get(Fn fn) {
+    if constexpr (!enabled) return entries_[0].entry;
+
     int found_index = 0;
     for (int i = 1; i <= NEntries; i++) {
       if (fn(entries_[i].key)) {
@@ -53,6 +59,8 @@ public:
   }
 
   void clear() {
+    if constexpr (!enabled) return;
+
     tlb_entry invalid_te = entries_[0];
     entries_.fill(invalid_te);
     timestamp_ = 0;

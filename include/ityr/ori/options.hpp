@@ -45,6 +45,16 @@ inline void print_compile_options() {
 #define ITYR_ORI_CACHE_PROF disabled
 #endif
   ITYR_PRINT_MACRO(ITYR_ORI_CACHE_PROF);
+
+#ifndef ITYR_ORI_CACHE_TLB_SIZE
+#define ITYR_ORI_CACHE_TLB_SIZE 0
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_CACHE_TLB_SIZE);
+
+#ifndef ITYR_ORI_HOME_TLB_SIZE
+#define ITYR_ORI_HOME_TLB_SIZE 0
+#endif
+  ITYR_PRINT_MACRO(ITYR_ORI_HOME_TLB_SIZE);
 }
 
 struct cache_size_option : public common::option<cache_size_option, std::size_t> {

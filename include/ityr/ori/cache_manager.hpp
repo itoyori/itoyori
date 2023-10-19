@@ -47,6 +47,8 @@ public:
 
   template <bool SkipFetch, bool IncrementRef>
   bool checkout_fast(std::byte* addr, std::size_t size) {
+    if constexpr (cache_tlb::enabled) return false;
+
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
@@ -143,6 +145,8 @@ public:
 
   template <bool RegisterDirty, bool DecrementRef>
   bool checkin_fast(std::byte* addr, std::size_t size) {
+    if constexpr (cache_tlb::enabled) return false;
+
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
@@ -612,6 +616,8 @@ private:
     }
   }
 
+  using cache_tlb = tlb<std::byte*, cache_block*, ITYR_ORI_CACHE_TLB_SIZE>;
+
   std::size_t                            cache_size_;
   block_size_t                           sub_block_size_;
 
@@ -622,7 +628,7 @@ private:
 
   std::unique_ptr<common::rma::win>      cache_win_;
 
-  tlb<std::byte*, cache_block*>          cache_tlb_;
+  cache_tlb                              cache_tlb_;
 
   std::vector<const common::rma::win*>   fetching_wins_;
   std::vector<cache_block*>              cache_blocks_to_map_;
