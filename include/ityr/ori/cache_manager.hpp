@@ -47,7 +47,7 @@ public:
 
   template <bool SkipFetch, bool IncrementRef>
   bool checkout_fast(std::byte* addr, std::size_t size) {
-    if constexpr (cache_tlb::enabled) return false;
+    if constexpr (!cache_tlb::enabled) return false;
 
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
@@ -145,7 +145,7 @@ public:
 
   template <bool RegisterDirty, bool DecrementRef>
   bool checkin_fast(std::byte* addr, std::size_t size) {
-    if constexpr (cache_tlb::enabled) return false;
+    if constexpr (!cache_tlb::enabled) return false;
 
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
