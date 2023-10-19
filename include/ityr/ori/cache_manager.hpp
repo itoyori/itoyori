@@ -45,9 +45,10 @@ public:
     ITYR_CHECK(sub_block_size_ <= BlockSize);
   }
 
+  // return [entry_found, fetch_completed]
   template <bool SkipFetch, bool IncrementRef>
-  bool checkout_fast(std::byte* addr, std::size_t size) {
-    if constexpr (!cache_tlb::enabled) return false;
+  std::pair<bool, bool> checkout_fast(std::byte* addr, std::size_t size) {
+    if constexpr (!cache_tlb::enabled) return {false, false};
 
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
@@ -62,9 +63,11 @@ public:
 
     auto cb_p = cache_tlb_.get(blk_addr);
 
-    if (!cb_p) return false;
+    if (!cb_p) return {false, false};
 
     cache_block& cb = *cb_p;
+
+    bool fetch_completed = true;
 
     block_region br = {addr - blk_addr, addr + size - blk_addr};
 
@@ -74,6 +77,7 @@ public:
     } else {
       if (fetch_begin(cb, br)) {
         add_fetching_win(*cb.win);
+        fetch_completed = false;
       }
     }
 
@@ -81,11 +85,11 @@ public:
       cb.ref_count++;
     }
 
-    return true;
+    return {true, fetch_completed};
   }
 
   template <bool SkipFetch, bool IncrementRef>
-  void checkout_blk(std::byte*               blk_addr,
+  bool checkout_blk(std::byte*               blk_addr,
                     std::byte*               req_addr_b,
                     std::byte*               req_addr_e,
                     const common::rma::win&  win,
@@ -99,6 +103,8 @@ public:
 
     cache_block& cb = get_entry(blk_addr);
 
+    bool checkout_completed = true;
+
     if (blk_addr != cb.mapped_addr) {
       cb.addr      = blk_addr;
       cb.win       = &win;
@@ -106,6 +112,7 @@ public:
       cb.pm_offset = pm_offset;
       if constexpr (enable_vm_map) {
         cache_blocks_to_map_.push_back(&cb);
+        checkout_completed = false;
       } else {
         cb.mapped_addr = blk_addr;
       }
@@ -119,6 +126,7 @@ public:
     } else {
       if (fetch_begin(cb, br)) {
         add_fetching_win(win);
+        checkout_completed = false;
       }
     }
 
@@ -127,6 +135,8 @@ public:
     }
 
     cache_tlb_.add(blk_addr, &cb);
+
+    return checkout_completed;
   }
 
   void checkout_complete() {

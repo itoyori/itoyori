@@ -142,7 +142,7 @@ public:
    */
   void checkout_nb(ori::global_ptr<T> gptr, std::size_t n, Mode) {
     checkin();
-    ptr_ = ori::checkout_nb(gptr, n, Mode{});
+    ptr_ = ori::checkout_nb(gptr, n, Mode{}).first;
     n_ = n;
   }
 

@@ -193,7 +193,7 @@ public:
   }
 
   template <typename Mode>
-  void checkout_nb(void* addr, std::size_t size, Mode) {
+  bool checkout_nb(void* addr, std::size_t size, Mode) {
     if constexpr (!enable_vm_map) {
       common::die("ITYR_ORI_ENABLE_VM_MAP must be true for core::checkout/checkin");
     }
@@ -205,13 +205,14 @@ public:
     ITYR_CHECK(addr);
     ITYR_CHECK(size > 0);
 
-    checkout_impl_nb<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
+    return checkout_impl_nb<Mode, true>(reinterpret_cast<std::byte*>(addr), size);
   }
 
   template <typename Mode>
   void checkout(void* addr, std::size_t size, Mode mode) {
-    checkout_nb(addr, size, mode);
-    checkout_complete();
+    if (!checkout_nb(addr, size, mode)) {
+      checkout_complete();
+    }
   }
 
   void checkout_complete() {
@@ -327,46 +328,54 @@ private:
   }
 
   template <typename Mode, bool IncrementRef>
-  void checkout_impl_nb(std::byte* addr, std::size_t size) {
+  bool checkout_impl_nb(std::byte* addr, std::size_t size) {
     constexpr bool skip_fetch = std::is_same_v<Mode, mode::write_t>;
     if (noncoll_mem_.has(addr)) {
-      checkout_noncoll_nb<skip_fetch, IncrementRef>(addr, size);
+      return checkout_noncoll_nb<skip_fetch, IncrementRef>(addr, size);
     } else {
-      checkout_coll_nb<skip_fetch, IncrementRef>(addr, size);
+      return checkout_coll_nb<skip_fetch, IncrementRef>(addr, size);
     }
   }
 
   template <bool SkipFetch, bool IncrementRef>
-  void checkout_coll_nb(std::byte* addr, std::size_t size) {
+  bool checkout_coll_nb(std::byte* addr, std::size_t size) {
     if (home_manager_.template checkout_fast<IncrementRef>(addr, size)) {
-      return;
+      return true;
     }
 
-    if (cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size)) {
-      return;
+    auto [entry_found, fetch_completed] =
+      cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size);
+    if (entry_found) {
+      return fetch_completed;
     }
 
     coll_mem& cm = cm_manager_.get(addr);
 
+    bool checkout_completed = true;
+
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        home_manager_.template checkout_seg<IncrementRef>(
-            seg_addr, seg_size, addr, size,
-            cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset,
-            cm.home_all_mapped());
+        checkout_completed &=
+          home_manager_.template checkout_seg<IncrementRef>(
+              seg_addr, seg_size, addr, size,
+              cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset,
+              cm.home_all_mapped());
       },
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
-        cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
-            blk_addr, req_addr_b, req_addr_e,
-            cm.win(), owner, pm_offset);
+        checkout_completed &=
+          cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
+              blk_addr, req_addr_b, req_addr_e,
+              cm.win(), owner, pm_offset);
       });
+
+    return checkout_completed;
   }
 
   template <bool SkipFetch, bool IncrementRef>
-  void checkout_noncoll_nb(std::byte* addr, std::size_t size) {
+  bool checkout_noncoll_nb(std::byte* addr, std::size_t size) {
     ITYR_CHECK(noncoll_mem_.has(addr));
 
     auto target_rank = noncoll_mem_.get_owner(addr);
@@ -377,22 +386,29 @@ private:
       // There is no need to manage mmap entries for home blocks because
       // the remotable allocator employs block distribution policy.
       home_manager_.on_checkout_noncoll(size);
-      return;
+      return true;
     }
 
-    if (cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size)) {
-      return;
+    auto [entry_found, fetch_completed] =
+      cache_manager_.template checkout_fast<SkipFetch, IncrementRef>(addr, size);
+    if (entry_found) {
+      return fetch_completed;
     }
+
+    bool checkout_completed = true;
 
     for_each_block<BlockSize>(addr, size, [&](std::byte* blk_addr,
                                               std::byte* req_addr_b,
                                               std::byte* req_addr_e) {
-      cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
-          blk_addr, req_addr_b, req_addr_e,
-          noncoll_mem_.win(),
-          target_rank,
-          noncoll_mem_.get_disp(blk_addr));
+      checkout_completed &=
+        cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
+            blk_addr, req_addr_b, req_addr_e,
+            noncoll_mem_.win(),
+            target_rank,
+            noncoll_mem_.get_disp(blk_addr));
     });
+
+    return checkout_completed;
   }
 
   template <typename Mode, bool DecrementRef>
@@ -672,7 +688,7 @@ public:
   }
 
   template <typename Mode>
-  void checkout_nb(void*, std::size_t, Mode) {
+  bool checkout_nb(void*, std::size_t, Mode) {
     common::die("core::checkout/checkin is disabled");
   }
 
@@ -883,7 +899,7 @@ public:
   }
 
   template <typename Mode>
-  void checkout_nb(void*, std::size_t, Mode) {}
+  bool checkout_nb(void*, std::size_t, Mode) { return true; }
 
   template <typename Mode>
   void checkout(void*, std::size_t, Mode) {}

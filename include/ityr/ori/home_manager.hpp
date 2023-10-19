@@ -55,7 +55,7 @@ public:
   }
 
   template <bool IncrementRef>
-  void checkout_seg(std::byte*                  seg_addr,
+  bool checkout_seg(std::byte*                  seg_addr,
                     std::size_t                 seg_size,
                     std::byte*                  req_addr, // only required for profiling
                     std::size_t                 req_size, // only required for profiling
@@ -66,16 +66,18 @@ public:
     ITYR_CHECK(seg_size > 0);
 
     if constexpr (!enable_vm_map) {
-      return;
+      return true;
     }
 
     if (mapped_always) {
       home_tlb_.add({seg_addr, seg_size}, &mmap_entry_dummy);
       hprof_.record(seg_addr, seg_size, req_addr, req_size, true);
-      return;
+      return true;
     }
 
     mmap_entry& me = get_entry(seg_addr);
+
+    bool checkout_completed = true;
 
     bool mmap_hit = seg_addr == me.mapped_addr;
     if (!mmap_hit) {
@@ -84,6 +86,7 @@ public:
       me.pm        = &pm;
       me.pm_offset = pm_offset;
       home_segments_to_map_.push_back(&me);
+      checkout_completed = false;
     }
 
     if constexpr (IncrementRef) {
@@ -93,6 +96,8 @@ public:
     home_tlb_.add({seg_addr, seg_size}, &me);
 
     hprof_.record(seg_addr, seg_size, req_addr, req_size, mmap_hit);
+
+    return checkout_completed;
   }
 
   template <bool DecrementRef>

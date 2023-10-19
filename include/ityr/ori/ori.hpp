@@ -105,32 +105,35 @@ inline T* checkout_with_getput(global_ptr<T> ptr, std::size_t count) {
 }
 
 template <typename T>
-inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) {
+inline std::pair<T*, bool> checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_t) {
   if constexpr (force_getput) {
-    return checkout_with_getput<false>(ptr, count);
+    return {checkout_with_getput<false>(ptr, count), true};
   }
-  core::instance::get().checkout_nb(const_cast<std::remove_const_t<T>*>(ptr.raw_ptr()), count * sizeof(T), mode::read);
-  return ptr.raw_ptr();
+  bool completed =
+    core::instance::get().checkout_nb(const_cast<std::remove_const_t<T>*>(ptr.raw_ptr()), count * sizeof(T), mode::read);
+  return {ptr.raw_ptr(), completed};
 }
 
 template <typename T>
-inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::write_t) {
+inline std::pair<T*, bool> checkout_nb(global_ptr<T> ptr, std::size_t count, mode::write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with write access mode");
   if constexpr (force_getput) {
-    return checkout_with_getput<true>(ptr, count);
+    return {checkout_with_getput<true>(ptr, count), true};
   }
-  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::write);
-  return ptr.raw_ptr();
+  bool completed =
+    core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::write);
+  return {ptr.raw_ptr(), completed};
 }
 
 template <typename T>
-inline T* checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_write_t) {
+inline std::pair<T*, bool> checkout_nb(global_ptr<T> ptr, std::size_t count, mode::read_write_t) {
   static_assert(!std::is_const_v<T>, "Const pointers cannot be checked out with read+write access mode");
   if constexpr (force_getput) {
-    return checkout_with_getput<false>(ptr, count);
+    return {checkout_with_getput<false>(ptr, count), true};
   }
-  core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::read_write);
-  return ptr.raw_ptr();
+  bool completed =
+    core::instance::get().checkout_nb(ptr.raw_ptr(), count * sizeof(T), mode::read_write);
+  return {ptr.raw_ptr(), completed};
 }
 
 inline void checkout_complete() {
@@ -143,8 +146,10 @@ inline void checkout_complete() {
 
 template <typename T, typename Mode>
 inline auto checkout(global_ptr<T> ptr, std::size_t count, Mode mode) {
-  auto ret = checkout_nb(ptr, count, mode);
-  checkout_complete();
+  auto [ret, completed] = checkout_nb(ptr, count, mode);
+  if (!completed) {
+    checkout_complete();
+  }
   return ret;
 }
 
