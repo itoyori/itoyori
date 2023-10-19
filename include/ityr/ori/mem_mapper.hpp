@@ -37,6 +37,8 @@ public:
   // pm_offset is the offset from the beginning of the owner's local physical memory for the block.
   virtual segment get_segment(std::size_t offset) const = 0;
 
+  virtual bool should_map_all_home() const = 0;
+
 protected:
   std::size_t size_;
   int         n_ranks_;
@@ -75,6 +77,10 @@ public:
                    .offset_b  = blk_id_b * BlockSize,
                    .offset_e  = blk_id_e * BlockSize,
                    .pm_offset = 0};
+  }
+
+  bool should_map_all_home() const override {
+    return true;
   }
 
 private:
@@ -148,6 +154,10 @@ public:
                    .offset_b  = blk_id_g * seg_size_,
                    .offset_e  = (blk_id_g + 1) * seg_size_,
                    .pm_offset = blk_id_l * seg_size_};
+  }
+
+  bool should_map_all_home() const override {
+    return false;
   }
 
 private:
@@ -228,6 +238,10 @@ public:
                    .offset_b  = blk_id_b * BlockSize,
                    .offset_e  = blk_id_e * BlockSize,
                    .pm_offset = 0};
+  }
+
+  bool should_map_all_home() const override {
+    return true;
   }
 
 private:

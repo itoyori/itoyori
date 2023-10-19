@@ -353,7 +353,8 @@ private:
       [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
         home_manager_.template checkout_seg<IncrementRef>(
             seg_addr, seg_size, addr, size,
-            cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset);
+            cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset,
+            cm.home_all_mapped());
       },
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
@@ -424,7 +425,7 @@ private:
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
       [&](std::byte* seg_addr, std::size_t, common::topology::rank_t, std::size_t) {
-        home_manager_.template checkin_seg<DecrementRef>(seg_addr);
+        home_manager_.template checkin_seg<DecrementRef>(seg_addr, cm.home_all_mapped());
       },
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,

@@ -23,6 +23,7 @@ public:
     : size_(size),
       id_(id),
       mmapper_(std::move(mmapper)),
+      home_all_mapped_(mmapper_->should_map_all_home()),
       vm_(common::reserve_same_vm_coll(mmapper_->effective_size(), mmapper_->block_size())),
       intra_home_pms_(init_intra_home_pms()),
       intra_home_vms_(init_intra_home_vms()),
@@ -35,6 +36,7 @@ public:
   std::size_t size() const { return size_; }
   std::size_t local_size() const { return local_home_vm().size(); }
   std::size_t effective_size() const { return vm_.size(); }
+  bool home_all_mapped() const { return home_all_mapped_; }
 
   const mem_mapper::base& mem_mapper() const { return *mmapper_; }
 
@@ -87,6 +89,22 @@ private:
       }
     }
 
+    // mmap all home blocks ahead of time if the mem mapper does not consume
+    // too many mmap entries (e.g., for block distribution)
+    if (home_all_mapped_) {
+      std::size_t offset = 0;
+      while (offset < size_) {
+        auto seg = mmapper_->get_segment(offset);
+        if (common::topology::is_locally_accessible(seg.owner)) {
+          auto        intra_rank = common::topology::intra_rank(seg.owner);
+          std::byte*  seg_addr   = reinterpret_cast<std::byte*>(vm_.addr()) + seg.offset_b;
+          std::size_t seg_size   = seg.offset_e - seg.offset_b;
+          home_pms[intra_rank].map_to_vm(seg_addr, seg_size, seg.pm_offset);
+        }
+        offset = seg.offset_e;
+      }
+    }
+
     return home_pms;
   }
 
@@ -104,6 +122,7 @@ private:
   std::size_t                        size_;
   coll_mem_id_t                      id_;
   std::unique_ptr<mem_mapper::base>  mmapper_;
+  bool                               home_all_mapped_;
   common::virtual_mem                vm_;
   std::vector<common::physical_mem>  intra_home_pms_; // intra-rank -> pm
   std::vector<common::virtual_mem>   intra_home_vms_; // intra-rank -> vm
@@ -111,7 +130,7 @@ private:
 };
 
 template <typename Fn>
-void for_each_mem_segment(const coll_mem& cm, const void* addr, std::size_t size, Fn fn) {
+inline void for_each_mem_segment(const coll_mem& cm, const void* addr, std::size_t size, Fn fn) {
   ITYR_CHECK(addr >= cm.vm().addr());
 
   std::size_t offset_b = reinterpret_cast<uintptr_t>(addr) -

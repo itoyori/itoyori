@@ -41,10 +41,12 @@ public:
     if (!meo.has_value()) {
       return false;
     }
-    mmap_entry& me = **meo;
 
-    if constexpr (IncrementRef) {
-      me.ref_count++;
+    if (*meo) {
+      mmap_entry& me = **meo;
+      if constexpr (IncrementRef) {
+        me.ref_count++;
+      }
     }
 
     hprof_.record(size, true);
@@ -58,11 +60,18 @@ public:
                     std::byte*                  req_addr, // only required for profiling
                     std::size_t                 req_size, // only required for profiling
                     const common::physical_mem& pm,
-                    std::size_t                 pm_offset) {
+                    std::size_t                 pm_offset,
+                    bool                        mapped_always) {
     ITYR_CHECK(seg_addr);
     ITYR_CHECK(seg_size > 0);
 
     if constexpr (!enable_vm_map) {
+      return;
+    }
+
+    if (mapped_always) {
+      home_tlb_.add({seg_addr, seg_size}, nullptr);
+      hprof_.record(seg_addr, seg_size, req_addr, req_size, true);
       return;
     }
 
@@ -105,18 +114,22 @@ public:
     if (!meo.has_value()) {
       return false;
     }
-    mmap_entry& me = **meo;
 
-    me.ref_count--;
+    if (*meo) {
+      mmap_entry& me = **meo;
+      me.ref_count--;
+    }
 
     return true;
   }
 
   template <bool DecrementRef>
-  void checkin_seg(std::byte* seg_addr) {
+  void checkin_seg(std::byte* seg_addr, bool mapped_always) {
     if constexpr (!enable_vm_map) {
       return;
     }
+
+    if (mapped_always) return;
 
     if constexpr (DecrementRef) {
       mmap_entry& me = get_entry<false>(seg_addr);
