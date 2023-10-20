@@ -19,23 +19,56 @@ struct global_vector_options {
   /**
    * @brief A collective global vector is initialized if true.
    */
-  bool collective = false;
+  bool collective : 1;
 
   /**
    * @brief Construction of vector elements is parallelized if true.
    */
-  bool parallel_construct = false;
+  bool parallel_construct : 1;
 
   /**
    * @brief Destruction of vector elements is parallelized if true.
    */
-  bool parallel_destruct = false;
+  bool parallel_destruct : 1;
 
   /**
    * @brief The number of elements for leaf tasks to stop parallel recursion in construction and destruction.
    */
-  std::size_t cutoff_count = 1024;
+  int cutoff_count : 29;
+
+  constexpr static int default_cutoff_count = 1024;
+
+  global_vector_options()
+    : collective(false),
+      parallel_construct(false),
+      parallel_destruct(false),
+      cutoff_count(default_cutoff_count) {}
+
+  explicit global_vector_options(bool collective)
+    : collective(collective),
+      parallel_construct(collective),
+      parallel_destruct(collective),
+      cutoff_count(default_cutoff_count) {}
+
+  global_vector_options(bool collective,
+                        int  cutoff_count)
+    : collective(collective),
+      parallel_construct(collective),
+      parallel_destruct(collective),
+      cutoff_count(cutoff_count) {}
+
+  global_vector_options(bool collective,
+                        bool parallel_construct,
+                        bool parallel_destruct,
+                        int  cutoff_count = default_cutoff_count)
+    : collective(collective),
+      parallel_construct(parallel_construct),
+      parallel_destruct(parallel_destruct),
+      cutoff_count(cutoff_count) {}
 };
+
+// should be 32 bit long
+static_assert(sizeof(global_vector_options) == 4);
 
 /**
  * @brief Global vector to manage a global memory region.
@@ -650,10 +683,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
   long n = 10000;
 
   ITYR_SUBCASE("collective") {
-    global_vector<long> gv1({.collective         = true,
-                             .parallel_construct = true,
-                             .parallel_destruct  = true,
-                             .cutoff_count       = 256},
+    global_vector<long> gv1(global_vector_options{true, 256},
                             count_iterator<long>(0),
                             count_iterator<long>(n));
     ITYR_CHECK(!gv1.empty());
@@ -733,10 +763,7 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
     }
 
     ITYR_SUBCASE("move-only elems") {
-      global_vector<common::move_only_t> gv2({.collective         = true,
-                                              .parallel_construct = true,
-                                              .parallel_destruct  = true,
-                                              .cutoff_count       = 256},
+      global_vector<common::move_only_t> gv2(global_vector_options{true, 256},
                                              gv1.begin(),
                                              gv1.end());
       long next_size = gv2.capacity() * 2;
@@ -755,15 +782,11 @@ ITYR_TEST_CASE("[ityr::container::global_vector] test") {
   }
 
   ITYR_SUBCASE("noncollective") {
-    global_vector<global_vector<long>> gvs({.collective         = true,
-                                            .parallel_construct = false,
-                                            .parallel_destruct  = false});
+    global_vector<global_vector<long>> gvs(global_vector_options{true, false, false});
 
     gvs.resize(n_ranks);
 
-    global_vector<long> gv1({.collective         = false,
-                             .parallel_construct = false,
-                             .parallel_destruct  = false});
+    global_vector<long> gv1;
 
     for (long i = 0; i < n; i++) {
       gv1.push_back(i);

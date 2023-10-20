@@ -183,12 +183,7 @@ bool check_sorted(ityr::global_span<T> s) {
 }
 
 void run() {
-  ityr::global_vector_options gvec_coll_opts {
-    .collective         = true,
-    .parallel_construct = true,
-    .parallel_destruct  = true,
-    .cutoff_count       = cutoff_count,
-  };
+  ityr::global_vector_options gvec_coll_opts(true, cutoff_count);
 
   ityr::global_vector<elem_t> a_vec(gvec_coll_opts, n_input);
   ityr::global_vector<elem_t> b_vec(gvec_coll_opts, n_input);

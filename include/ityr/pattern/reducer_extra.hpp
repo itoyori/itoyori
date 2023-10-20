@@ -128,7 +128,7 @@ ITYR_TEST_CASE("[ityr::reducer] extra reducer test") {
     root_exec([=] {
       int n_samples = 100000;
       int n_bins = 1000;
-      global_vector<double> v({.collective = true}, n_samples);
+      global_vector<double> v(global_vector_options(true, 1024), n_samples);
 
       transform(
           execution::parallel_policy(128),
