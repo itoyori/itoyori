@@ -46,7 +46,7 @@ public:
 
     if constexpr (IncrementRef) {
       mmap_entry& me = *me_p;
-      ITYR_CHECK(me_p == &mmap_entry_dummy_ || me.ref_count >= 0);
+      ITYR_CHECK((me_p == &mmap_entry_dummy_ || me.ref_count >= 0));
       me.ref_count++;
     }
 
@@ -122,7 +122,7 @@ public:
     if constexpr (DecrementRef) {
       mmap_entry& me = *me_p;
       me.ref_count--;
-      ITYR_CHECK(me_p == &mmap_entry_dummy_ || me.ref_count >= 0);
+      ITYR_CHECK((me_p == &mmap_entry_dummy_ || me.ref_count >= 0));
     }
 
     return true;
