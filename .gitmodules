@@ -10,3 +10,6 @@
 [submodule "lxm_random"]
 	path = lxm_random
 	url = https://github.com/s417-lama/lxm_random.git
+[submodule "unordered_dense"]
+	path = unordered_dense
+	url = https://github.com/martinus/unordered_dense.git
