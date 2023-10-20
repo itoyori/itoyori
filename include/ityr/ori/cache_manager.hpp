@@ -282,6 +282,10 @@ public:
     cs_.ensure_evicted(cache_key(addr));
   }
 
+  void clear_tlb() {
+    cache_tlb_.clear();
+  }
+
   void discard_dirty(std::byte* blk_addr,
                      std::byte* req_addr_b,
                      std::byte* req_addr_e) {

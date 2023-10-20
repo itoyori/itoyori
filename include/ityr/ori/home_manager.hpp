@@ -46,7 +46,7 @@ public:
 
     if constexpr (IncrementRef) {
       mmap_entry& me = *me_p;
-      ITYR_CHECK(me.ref_count >= 0);
+      ITYR_CHECK(me_p == &mmap_entry_dummy_ || me.ref_count >= 0);
       me.ref_count++;
     }
 
@@ -71,7 +71,7 @@ public:
     }
 
     if (mapped_always) {
-      home_tlb_.add({seg_addr, seg_size}, &mmap_entry_dummy);
+      home_tlb_.add({seg_addr, seg_size}, &mmap_entry_dummy_);
       hprof_.record(seg_addr, seg_size, req_addr, req_size, true);
       return true;
     }
@@ -122,7 +122,7 @@ public:
     if constexpr (DecrementRef) {
       mmap_entry& me = *me_p;
       me.ref_count--;
-      ITYR_CHECK(me.ref_count >= 0);
+      ITYR_CHECK(me_p == &mmap_entry_dummy_ || me.ref_count >= 0);
     }
 
     return true;
@@ -162,6 +162,10 @@ public:
     }
 
     cs_.ensure_evicted(cache_key(addr));
+  }
+
+  void clear_tlb() {
+    home_tlb_.clear();
   }
 
   void on_checkout_noncoll(std::size_t size) {
@@ -247,7 +251,7 @@ private:
 
   std::size_t                             mmap_entry_limit_;
   cache_system<cache_key_t, mmap_entry>   cs_;
-  mmap_entry                              mmap_entry_dummy = mmap_entry{nullptr};
+  mmap_entry                              mmap_entry_dummy_ = mmap_entry{nullptr};
   home_tlb                                home_tlb_;
   std::vector<mmap_entry*>                home_segments_to_map_;
   home_profiler                           hprof_;

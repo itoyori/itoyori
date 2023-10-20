@@ -118,6 +118,9 @@ public:
       cache_manager_.ensure_evicted(addr);
     }
 
+    home_manager_.clear_tlb();
+    cache_manager_.clear_tlb();
+
     common::verbose("Deallocate collective memory [%p, %p) (%ld bytes) (win=%p)",
                     addr, reinterpret_cast<std::byte*>(addr) + cm.size(), cm.size(), &cm.win());
 
@@ -161,12 +164,14 @@ public:
     if (common::round_down_pow2(from_addr_, BlockSize) ==
         common::round_down_pow2(from_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl_nb<mode::read_t, false>(from_addr_, size);
-      checkout_complete_impl();
+      if (!checkout_impl_nb<mode::read_t, false>(from_addr_, size)) {
+        checkout_complete_impl();
+      }
       get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
     } else {
-      checkout_impl_nb<mode::read_t, true>(from_addr_, size);
-      checkout_complete_impl();
+      if (!checkout_impl_nb<mode::read_t, true>(from_addr_, size)) {
+        checkout_complete_impl();
+      }
       get_copy_impl(from_addr_, reinterpret_cast<std::byte*>(to_addr), size);
       checkin_impl<mode::read_t, true>(from_addr_, size);
     }
@@ -180,13 +185,15 @@ public:
     if (common::round_down_pow2(to_addr_, BlockSize) ==
         common::round_down_pow2(to_addr_ + size, BlockSize)) {
       // if the size is sufficiently small, it is safe to skip incrementing reference count for cache blocks
-      checkout_impl_nb<mode::write_t, false>(to_addr_, size);
-      checkout_complete_impl();
+      if (!checkout_impl_nb<mode::write_t, false>(to_addr_, size)) {
+        checkout_complete_impl();
+      }
       put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
       checkin_impl<mode::write_t, false>(to_addr_, size);
     } else {
-      checkout_impl_nb<mode::write_t, true>(to_addr_, size);
-      checkout_complete_impl();
+      if (!checkout_impl_nb<mode::write_t, true>(to_addr_, size)) {
+        checkout_complete_impl();
+      }
       put_copy_impl(reinterpret_cast<const std::byte*>(from_addr), to_addr_, size);
       checkin_impl<mode::write_t, true>(to_addr_, size);
     }
