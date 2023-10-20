@@ -7,10 +7,23 @@
 #include <vector>
 #include <list>
 #include <limits>
-#include <unordered_map>
 #include <iterator>
 
 #include "ityr/common/util.hpp"
+
+#if __has_include(<ankerl/unordered_dense.h>)
+#include <ankerl/unordered_dense.h>
+namespace ityr::ori {
+template <typename Key, typename Value>
+using unordered_map = ankerl::unordered_dense::map<Key, Value>;
+}
+#else
+#include <unordered_map>
+namespace ityr::ori {
+template <typename Key, typename Value>
+using unordered_map = std::unordered_map<Key, Value>;
+}
+#endif
 
 namespace ityr::ori {
 
@@ -115,8 +128,8 @@ private:
     return lru;
   }
 
-  std::unordered_map<Key, cache_entry_idx_t> init_table() {
-    std::unordered_map<Key, cache_entry_idx_t> table;
+  unordered_map<Key, cache_entry_idx_t> init_table() {
+    unordered_map<Key, cache_entry_idx_t> table;
     // To improve performance of the hash table
     table.reserve(nentries_);
     return table;
@@ -146,11 +159,11 @@ private:
     throw cache_full_exception{};
   }
 
-  cache_entry_idx_t                          nentries_;
-  Entry                                      entry_initial_state_;
-  std::vector<cache_entry>                   entries_; // index (cache_entry_idx_t) -> entry (cache_entry)
-  std::list<cache_entry_idx_t>               lru_; // front (oldest) <----> back (newest)
-  std::unordered_map<Key, cache_entry_idx_t> table_; // hash table (Key -> cache_entry_idx_t)
+  cache_entry_idx_t                     nentries_;
+  Entry                                 entry_initial_state_;
+  std::vector<cache_entry>              entries_; // index (cache_entry_idx_t) -> entry (cache_entry)
+  std::list<cache_entry_idx_t>          lru_; // front (oldest) <----> back (newest)
+  unordered_map<Key, cache_entry_idx_t> table_; // hash table (Key -> cache_entry_idx_t)
 };
 
 ITYR_TEST_CASE("[ityr::ori::cache_system] testing cache system") {
