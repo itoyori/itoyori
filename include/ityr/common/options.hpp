@@ -24,7 +24,7 @@ inline void print_compile_options() {
 #endif
   ITYR_PRINT_MACRO(ITYR_PROFILER_MODE);
 
-#if !defined(ITYR_RMA_IMPL) || ITYR_RMA_IMPL == default
+#ifndef ITYR_RMA_IMPL
 #if __has_include(<utofu.h>)
 #define ITYR_RMA_IMPL utofu
 #else
