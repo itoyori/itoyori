@@ -82,6 +82,7 @@ public:
     }
 
     if constexpr (IncrementRef) {
+      ITYR_CHECK(cb.ref_count >= 0);
       cb.ref_count++;
     }
 
@@ -131,6 +132,7 @@ public:
     }
 
     if constexpr (IncrementRef) {
+      ITYR_CHECK(cb.ref_count >= 0);
       cb.ref_count++;
     }
 
@@ -181,6 +183,7 @@ public:
 
     if constexpr (DecrementRef) {
       cb.ref_count--;
+      ITYR_CHECK(cb.ref_count >= 0);
     }
 
     return true;
@@ -205,6 +208,7 @@ public:
 
     if constexpr (DecrementRef) {
       cb.ref_count--;
+      ITYR_CHECK(cb.ref_count >= 0);
     }
   }
 
