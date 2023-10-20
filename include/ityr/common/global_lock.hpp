@@ -94,6 +94,8 @@ ITYR_TEST_CASE("[ityr::common::global_lock] lock and unlock") {
 
     ITYR_CHECK(value_win.local_buf()[0] == 0);
 
+    mpi_barrier(topology::mpicomm());
+
     auto n_ranks = topology::n_ranks();
 
     std::size_t n_updates = 100;
