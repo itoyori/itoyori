@@ -271,10 +271,10 @@ public:
     return (*this)[i];
   }
 
-  reference front() { return *begin(); }
-  reference back() { return *(end() - 1); }
-  const_reference front() const { return *begin(); }
-  const_reference back() const { return *(end() - 1); }
+  reference front() { ITYR_CHECK(!empty()); return *begin(); }
+  reference back() { ITYR_CHECK(!empty()); return *(end() - 1); }
+  const_reference front() const { ITYR_CHECK(!empty()); return *begin(); }
+  const_reference back() const { ITYR_CHECK(!empty()); return *(end() - 1); }
 
   bool empty() const noexcept { return size() == 0; }
 
@@ -287,8 +287,10 @@ public:
   }
 
   void clear() {
-    destruct_elems(begin(), end());
-    end_ = begin();
+    if (!empty()) {
+      destruct_elems(begin(), end());
+      end_ = begin();
+    }
   }
 
   void reserve(size_type new_cap) {
