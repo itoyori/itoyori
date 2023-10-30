@@ -112,7 +112,7 @@ public:
         // nested root/coll_exec()
         tls_->dag_prof.merge_serial(retval.dag_prof);
       } else {
-        dag_prof_result_ = retval.dag_prof;
+        dag_prof_result_.merge_serial(retval.dag_prof);
       }
     }
 
@@ -373,7 +373,7 @@ public:
     tls_->dag_prof.increment_strand_count();
   }
 
-  void dag_prof_begin() { dag_prof_enabled_ = true; }
+  void dag_prof_begin() { dag_prof_enabled_ = true; dag_prof_result_.clear(); }
   void dag_prof_end() { dag_prof_enabled_ = false; }
 
   void dag_prof_print() const {
