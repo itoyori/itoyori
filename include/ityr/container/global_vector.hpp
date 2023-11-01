@@ -38,29 +38,29 @@ struct global_vector_options {
 
   constexpr static int default_cutoff_count = 1024;
 
-  global_vector_options()
+  constexpr global_vector_options()
     : collective(false),
       parallel_construct(false),
       parallel_destruct(false),
       cutoff_count(default_cutoff_count) {}
 
-  explicit global_vector_options(bool collective)
+  constexpr explicit global_vector_options(bool collective)
     : collective(collective),
       parallel_construct(collective),
       parallel_destruct(collective),
       cutoff_count(default_cutoff_count) {}
 
-  global_vector_options(bool collective,
-                        int  cutoff_count)
+  constexpr global_vector_options(bool collective,
+                                  int  cutoff_count)
     : collective(collective),
       parallel_construct(collective),
       parallel_destruct(collective),
       cutoff_count(cutoff_count) {}
 
-  global_vector_options(bool collective,
-                        bool parallel_construct,
-                        bool parallel_destruct,
-                        int  cutoff_count = default_cutoff_count)
+  constexpr global_vector_options(bool collective,
+                                  bool parallel_construct,
+                                  bool parallel_destruct,
+                                  int  cutoff_count = default_cutoff_count)
     : collective(collective),
       parallel_construct(parallel_construct),
       parallel_destruct(parallel_destruct),
