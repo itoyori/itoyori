@@ -10,6 +10,12 @@
 
 namespace ityr {
 
+template <typename W>
+struct workhint {
+  constexpr explicit workhint(W w) : value(w) {}
+  W value;
+};
+
 namespace internal {
 
 template <typename... Args>
@@ -41,6 +47,26 @@ static_assert(count_num_tasks<void (*)(), int (*)()>::value                     
 static_assert(count_num_tasks<void (*)(int, int), std::tuple<int, int>, void (*)()>::value  == 2);
 static_assert(count_num_tasks<void (*)(int), std::tuple<int>, int (*)(), void (*)()>::value == 3);
 
+template <typename Fn, typename W>
+constexpr inline W get_total_work(const Fn&, workhint<W> wh) {
+  return wh.value;
+}
+
+template <typename Fn, typename... Args, typename W>
+constexpr inline W get_total_work(const Fn&, const std::tuple<Args...>&, workhint<W> wh) {
+  return wh.value;
+}
+
+template <typename Fn, typename W, typename... Rest>
+constexpr inline W get_total_work(const Fn&, workhint<W> wh, const Rest&... rest) {
+  return wh.value + get_total_work(rest...);
+}
+
+template <typename Fn, typename... Args, typename W, typename... Rest>
+constexpr inline W get_total_work(const Fn&, const std::tuple<Args...>&, workhint<W> wh, const Rest&... rest) {
+  return wh.value + get_total_work(rest...);
+}
+
 template <typename ReleaseHandler>
 struct parallel_invoke_state {
 public:
@@ -55,21 +81,19 @@ public:
   template <typename Fn>
   inline auto parallel_invoke_aux(Fn&& fn) {
     // insert an empty arg tuple
-    return parallel_invoke_aux(std::forward<Fn>(fn),
-                               std::make_tuple());
+    return parallel_invoke_with_args(std::forward<Fn>(fn), std::make_tuple());
   }
 
   template <typename Fn1, typename Fn2, typename... Rest>
   inline auto parallel_invoke_aux(Fn1&& fn1, Fn2&& fn2, Rest&&... rest) {
     // insert an empty arg tuple
-    return parallel_invoke_aux(std::forward<Fn1>(fn1),
-                               std::make_tuple(),
-                               std::forward<Fn2>(fn2),
-                               std::forward<Rest>(rest)...);
+    return parallel_invoke_with_args(std::forward<Fn1>(fn1), std::make_tuple(),
+                                     std::forward<Fn2>(fn2), std::forward<Rest>(rest)...);
   }
 
   template <typename Fn, typename... Args, typename... Rest>
   inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args, Rest&&... rest) {
+    // universal reference is not available for concrete types (std::tuple in this case)
     return parallel_invoke_with_args(std::forward<Fn>(fn), args, std::forward<Rest>(rest)...);
   }
 
@@ -78,9 +102,51 @@ public:
     return parallel_invoke_with_args(std::forward<Fn>(fn), std::move(args), std::forward<Rest>(rest)...);
   }
 
+  /* with work hints */
+
+  template <typename Fn, typename W, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, workhint<W> wh, Rest&&... rest) {
+    return parallel_invoke_with_args(std::forward<Fn>(fn), std::make_tuple(), wh, std::forward<Rest>(rest)...);
+  }
+
+  template <typename Fn, typename... Args, typename W, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args, workhint<W> wh, Rest&&... rest) {
+    return parallel_invoke_with_args(std::forward<Fn>(fn), args, wh, std::forward<Rest>(rest)...);
+  }
+
+  template <typename Fn, typename... Args, typename W, typename... Rest>
+  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args, workhint<W> wh, Rest&&... rest) {
+    return parallel_invoke_with_args(std::forward<Fn>(fn), std::move(args), wh, std::forward<Rest>(rest)...);
+  }
+
 private:
   template <typename Fn, typename ArgsTuple>
   inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple) {
+    return do_parallel_invoke(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+  }
+
+  template <typename Fn, typename ArgsTuple, typename... Rest>
+  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple, Rest&&... rest) {
+    constexpr int n_rest_tasks = count_num_tasks<Rest...>::value;
+    static_assert(n_rest_tasks > 0);
+    return do_parallel_invoke(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple),
+                              ito::workhint(1, n_rest_tasks), std::forward<Rest>(rest)...);
+  }
+
+  template <typename Fn, typename ArgsTuple, typename W>
+  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple, workhint<W>) {
+    return do_parallel_invoke(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple));
+  }
+
+  template <typename Fn, typename ArgsTuple, typename W, typename... Rest>
+  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple, workhint<W> wh, Rest&&... rest) {
+    W wh_rest = get_total_work(rest...);
+    return do_parallel_invoke(std::forward<Fn>(fn), std::forward<ArgsTuple>(args_tuple),
+                              ito::workhint(wh.value, wh_rest), std::forward<Rest>(rest)...);
+  }
+
+  template <typename Fn, typename ArgsTuple>
+  inline auto do_parallel_invoke(Fn&& fn, ArgsTuple&& args_tuple) {
     using retval_t = std::invoke_result_t<decltype(std::apply<Fn, ArgsTuple>), Fn, ArgsTuple>;
 
     if constexpr (std::is_void_v<retval_t>) {
@@ -93,12 +159,9 @@ private:
     }
   }
 
-  template <typename Fn, typename ArgsTuple, typename... Rest>
-  inline auto parallel_invoke_with_args(Fn&& fn, ArgsTuple&& args_tuple, Rest&&... rest) {
+  template <typename Fn, typename ArgsTuple, typename W, typename... Rest>
+  inline auto do_parallel_invoke(Fn&& fn, ArgsTuple&& args_tuple, ito::workhint<W> iwh, Rest&&... rest) {
     using retval_t = std::invoke_result_t<decltype(std::apply<Fn, ArgsTuple>), Fn, ArgsTuple>;
-
-    constexpr int n_rest_tasks = count_num_tasks<Rest...>::value;
-    static_assert(n_rest_tasks > 0);
 
     ori::poll();
 
@@ -108,8 +171,7 @@ private:
               [&](ori::release_handler rh) { ori::acquire(rh); ori::acquire(rh_); });
 
     ito::thread<retval_t> th(
-        ito::with_callback, [rh = rh_] { ori::acquire(rh); }, [] { ori::release(); },
-        ito::workhint(1, n_rest_tasks),
+        ito::with_callback, [rh = rh_] { ori::acquire(rh); }, [] { ori::release(); }, iwh,
         [fn         = std::forward<Fn>(fn),
          args_tuple = std::forward<ArgsTuple>(args_tuple)]() mutable {
           return std::apply(std::forward<decltype(fn)>(fn),
@@ -236,6 +298,37 @@ ITYR_TEST_CASE("[ityr::pattern::parallel_invoke] parallel invoke") {
       );
       ITYR_CHECK(x == 3);
       ITYR_CHECK(y == 12);
+    });
+  }
+
+  ITYR_SUBCASE("with work hints") {
+    ito::root_exec([=] {
+      auto [x, y] = parallel_invoke(
+        []() { return 1; }, workhint(1),
+        []() { return 2; }, workhint(1)
+      );
+      ITYR_CHECK(x == 1);
+      ITYR_CHECK(y == 2);
+    });
+
+    ito::root_exec([=] {
+      auto [x, y] = parallel_invoke(
+        [](int i) { return i    ; }, std::make_tuple(1), workhint(1.0),
+        [](int i) { return i * 2; }, std::make_tuple(2), workhint(2.0)
+      );
+      ITYR_CHECK(x == 1);
+      ITYR_CHECK(y == 4);
+    });
+
+    ito::root_exec([=] {
+      auto [x, y, z] = parallel_invoke(
+        [](            ) { return 1;         },                        workhint(1),
+        [](int i, int j) { return i + j + 1; }, std::make_tuple(2, 4), workhint(2),
+        [](int i       ) { return i * 2;     }, std::make_tuple(2)   , workhint(3)
+      );
+      ITYR_CHECK(x == 1);
+      ITYR_CHECK(y == 7);
+      ITYR_CHECK(z == 4);
     });
   }
 
