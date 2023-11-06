@@ -28,11 +28,14 @@ namespace internal {
 class random_engine_dummy {
   void report_error() { common::die("<lxm_random/lxm_random.hpp> was not loaded but a ityr::default_random_engine is used."); }
 public:
+  using result_type = uint64_t;
   template <typename... Args>
   random_engine_dummy(Args&&...) { report_error(); }
-  uint64_t operator()() { report_error(); return {}; }
+  result_type operator()() { report_error(); return {}; }
   template <typename... Args>
   random_engine_dummy split(Args&&...) { report_error(); return {}; }
+  constexpr static result_type min() { return 0; }
+  constexpr static result_type max() { return std::numeric_limits<result_type>::max(); }
 };
 }
 using default_random_engine = internal::random_engine_dummy;
