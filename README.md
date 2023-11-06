@@ -1,13 +1,30 @@
 # Welcome to Itoyori
 
-Itoyori is a distributed multi-threading runtime system for global-view fork-join task parallelism.
+Itoyori is a distributed multithreading runtime system for global-view fork-join task parallelism.
 It is implemented as a C++17 header-only library over MPI (which must have a full support of MPI-3 RMA).
 
 This README explains the basic usage of Itoyori for running example programs.
 For more information, please see [publications](#publications).
 
-- Tutorial: https://itoyori.github.io/itoyori/md_01_tutorial.html
-- API Documentation: https://itoyori.github.io/itoyori/namespaceityr.html
+- Tutorial: https://itoyori.github.io/md_01_tutorial.html
+- API Documentation: https://itoyori.github.io/namespaceityr.html
+
+## Features
+
+Itoyori offers a simple, unified programming model for both shared-memory and distributed-memory computers.
+
+- **Distributed Multithreading:**
+  Programmers can dynamically create a massive number of tasks (user-level threads) by calling fork/join APIs.
+  The threads are automatically scheduled even across different computing nodes for global load balancing.
+- **Global Address Space:**
+  Itoyori also provides a view of shared memory over distributed memory, often referred to as Partitioned Global Address Space (PGAS).
+  Global memory can be uniformly accessed from any computing nodes by calling checkout/checkin APIs.
+- **High-Level C++ Parallel Loops:**
+  Higher-level parallel loops, including map/reduce patterns, are built on top of lower-level fork/join APIs and checkout/checkin APIs.
+  They resemble the C++17 parallel STL but have slight differences (e.g., Itoyori supports more general *reducers* for parallel reduction).
+- **Task Schedulers:**
+  The default task (thread) scheduler is the randomized work-stealing scheduler with the child-first (work-first) policy.
+  Another option is *Almost Deterministic Work Stealing (ADWS)*, which offers good data locality on deep memory hierarchies.
 
 ## Supported Architectures
 
@@ -177,7 +194,7 @@ Therefore, for the debugging purpose on local machines, we recommend to use MPIC
 ## Publications
 
 Overview of the Itoyori runtime system and its PGAS implementation:
-- Shumpei Shiina and Kenjiro Taura. *Itoyori: Reconciling Global Address Space and Global Fork-Join Task Parallelism.* in SC '23 (to appear)
+- [Shumpei Shiina and Kenjiro Taura. *Itoyori: Reconciling Global Address Space and Global Fork-Join Task Parallelism.* in SC '23](https://dl.acm.org/doi/abs/10.1145/3581784.3607049)
 
 About the threading layer (formarly called *uni-address threads*):
 - [Shumpei Shiina and Kenjiro Taura. *Distributed Continuation Stealing is More Scalable than You Might Think.* in Cluster '22](https://sshiina.gitlab.io/papers/cluster22.pdf)
