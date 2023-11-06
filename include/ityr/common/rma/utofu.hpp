@@ -49,6 +49,7 @@ public:
       bytes_    = w.bytes_;
       stadds_   = std::move(w.stadds_);
       w.stadds_ = {};
+      return *this;
     }
 
     utofu_stadd_t stadd(topology::rank_t target_rank) const {
