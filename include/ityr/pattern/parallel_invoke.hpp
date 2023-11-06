@@ -68,17 +68,6 @@ public:
                                std::forward<Rest>(rest)...);
   }
 
-  template <typename Fn, typename... Args>
-  inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args) {
-    // universal reference is not available for concrete types (std::tuple in this case)
-    return parallel_invoke_with_args(std::forward<Fn>(fn), args);
-  }
-
-  template <typename Fn, typename... Args>
-  inline auto parallel_invoke_aux(Fn&& fn, std::tuple<Args...>&& args) {
-    return parallel_invoke_with_args(std::forward<Fn>(fn), std::move(args));
-  }
-
   template <typename Fn, typename... Args, typename... Rest>
   inline auto parallel_invoke_aux(Fn&& fn, const std::tuple<Args...>& args, Rest&&... rest) {
     return parallel_invoke_with_args(std::forward<Fn>(fn), args, std::forward<Rest>(rest)...);
