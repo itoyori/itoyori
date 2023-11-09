@@ -20,7 +20,7 @@ public:
 
     auto s = freelist_.get(bytes, alignment);
     if (!s.has_value()) {
-      common::die("[ityr::ori::noncoll_mem] Could not allocate memory for malloc_local()");
+      throw std::bad_alloc();
     }
 
     return reinterpret_cast<void*>(*s);
@@ -85,13 +85,22 @@ public:
 
     if (allocated_size_ >= collect_threshold_) {
       collect_deallocated();
-      collect_threshold_ = allocated_size_ * 2;
-      if (collect_threshold_ > collect_threshold_max_) {
-        collect_threshold_ = (collect_threshold_max_ + allocated_size_) / 2;
-      }
     }
 
-    std::byte* p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
+    std::byte* p;
+    try {
+      p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
+    } catch (std::bad_alloc& e) {
+      // collect remotely freed objects and try allocation again
+      collect_deallocated();
+      try {
+        p = reinterpret_cast<std::byte*>(std_pool_mr_.allocate(real_bytes, alignment));
+      } catch (std::bad_alloc& e) {
+        // TODO: throw std::bad_alloc?
+        common::die("[ityr::ori::noncoll_mem] Could not allocate memory for malloc_local()");
+      }
+    };
+
     std::byte* ret = p + pad_bytes;
 
     ITYR_CHECK(ret + bytes <= p + real_bytes);
@@ -171,6 +180,11 @@ public:
         h = h->next;
       }
     }
+
+    collect_threshold_ = allocated_size_ * 2;
+    if (collect_threshold_ > collect_threshold_max_) {
+      collect_threshold_ = (collect_threshold_max_ + allocated_size_) / 2;
+    }
   }
 
   bool is_locally_accessible(const void* p) const {
@@ -228,11 +242,9 @@ private:
     return pm;
   }
 
-  // FIXME: workaround for boost
-  // Ideally: pmr::pool_options{.max_blocks_per_chunk = (std::size_t)16 * 1024 * 1024 * 1024}
   common::pmr::pool_options my_std_pool_options() const {
     common::pmr::pool_options opts;
-    opts.max_blocks_per_chunk = std::size_t(16) * 1024 * 1024 * 1024;
+    opts.max_blocks_per_chunk = local_max_size_ / 10;
     return opts;
   }
 
