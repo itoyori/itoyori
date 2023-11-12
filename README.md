@@ -1,4 +1,11 @@
-# Welcome to Itoyori
+<h1 align="center">
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/itoyori/itoyori/master/logo/itoyori-logo-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/itoyori/itoyori/master/logo/itoyori-logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/itoyori/itoyori/master/logo/itoyori-logo-light.svg" width="300">
+</picture>
+</h1>
+<br>
 
 Itoyori is a distributed multithreading runtime system for global-view fork-join task parallelism.
 It is implemented as a C++17 header-only library over MPI (which must have a full support of MPI-3 RMA).
