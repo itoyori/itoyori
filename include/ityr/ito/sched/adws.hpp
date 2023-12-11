@@ -806,8 +806,29 @@ public:
     return th.serialized;
   }
 
-  void dag_prof_begin() { dag_prof_enabled_ = true; dag_prof_result_.clear(); }
-  void dag_prof_end() { dag_prof_enabled_ = false; }
+  void dag_prof_begin() {
+    dag_prof_enabled_ = true;
+    dag_prof_result_.clear();
+    if (tls_) {
+      // nested root/coll_exec()
+      tls_->dag_prof.clear();
+      tls_->dag_prof.increment_thread_count();
+    }
+  }
+
+  void dag_prof_end() {
+    dag_prof_enabled_ = false;
+    if constexpr (dag_profiler::enabled) {
+      common::topology::rank_t result_owner = 0;
+      if (tls_) {
+        // nested root/coll_exec()
+        dag_prof_result_ = tls_->dag_prof;
+        result_owner = common::topology::my_rank();
+      }
+      result_owner = common::mpi_allreduce_value(result_owner, common::topology::mpicomm(), MPI_MAX);
+      dag_prof_result_ = common::mpi_bcast_value(dag_prof_result_, result_owner, common::topology::mpicomm());
+    }
+  }
 
   void dag_prof_print() const {
     if (common::topology::my_rank() == 0) {
