@@ -83,7 +83,7 @@ private:
         home_pms[i] = std::move(pm_local);
       } else {
         int target_rank = common::topology::intra2global_rank(i);
-        int target_local_size = mmapper_->local_size(target_rank);
+        std::size_t target_local_size = mmapper_->local_size(target_rank);
         common::physical_mem pm(home_shmem_name(id_, target_rank), target_local_size, false);
         home_pms[i] = std::move(pm);
       }
