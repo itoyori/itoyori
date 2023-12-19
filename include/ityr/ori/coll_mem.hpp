@@ -23,18 +23,18 @@ public:
     : size_(size),
       id_(id),
       mmapper_(std::move(mmapper)),
-      home_all_mapped_(mmapper_->should_map_all_home()),
+      home_all_mapped_(common::topology::inter_n_ranks() == 1 || mmapper_->should_map_all_home()),
       vm_(common::reserve_same_vm_coll(mmapper_->effective_size(), mmapper_->block_size())),
-      intra_home_pms_(init_intra_home_pms()),
-      intra_home_vms_(init_intra_home_vms()),
-      win_(common::rma::create_win(reinterpret_cast<std::byte*>(local_home_vm().addr()), local_home_vm().size())) {}
+      home_pm_(init_intra_home_pm()),
+      home_vm_(init_intra_home_vm()),
+      win_(common::rma::create_win(reinterpret_cast<std::byte*>(home_vm().addr()), home_vm().size())) {}
 
   coll_mem(coll_mem&&) = default;
   coll_mem& operator=(coll_mem&&) = default;
 
   coll_mem_id_t id() const { return id_; }
   std::size_t size() const { return size_; }
-  std::size_t local_size() const { return local_home_vm().size(); }
+  std::size_t local_size() const { return home_vm().size(); }
   std::size_t effective_size() const { return vm_.size(); }
   bool home_all_mapped() const { return home_all_mapped_; }
 
@@ -42,91 +42,76 @@ public:
 
   const common::virtual_mem& vm() const { return vm_; }
 
-  const common::physical_mem& local_home_pm() const {
-    return intra_home_pm(common::topology::intra_my_rank());
+  const common::physical_mem& home_pm() const {
+    return home_pm_;
   }
 
-  const common::physical_mem& intra_home_pm(common::topology::rank_t intra_rank) const {
-    ITYR_CHECK(intra_rank < common::topology::intra_n_ranks());
-    return intra_home_pms_[intra_rank];
-  }
-
-  const common::virtual_mem& local_home_vm() const {
-    return intra_home_vm(common::topology::intra_my_rank());
-  }
-
-  const common::virtual_mem& intra_home_vm(common::topology::rank_t intra_rank) const {
-    ITYR_CHECK(intra_rank < common::topology::intra_n_ranks());
-    return intra_home_vms_[intra_rank];
+  const common::virtual_mem& home_vm() const {
+    return home_vm_;
   }
 
   const common::rma::win& win() const { return *win_; }
 
 private:
-  static std::string home_shmem_name(coll_mem_id_t id, int global_rank) {
+  static std::string home_shmem_name(coll_mem_id_t id, int inter_rank) {
     std::stringstream ss;
-    ss << "/ityr_ori_coll_mem_" << id << "_" << global_rank;
+    ss << "/ityr_ori_coll_mem_" << id << "_" << inter_rank;
     return ss.str();
   }
 
-  std::vector<common::physical_mem> init_intra_home_pms() const {
-    common::physical_mem pm_local(home_shmem_name(id_, common::topology::my_rank()),
-                                  mmapper_->local_size(common::topology::my_rank()),
-                                  true);
-
-    common::mpi_barrier(common::topology::intra_mpicomm());
-
-    // Open home physical memory of other intra-node processes
-    std::vector<common::physical_mem> home_pms(common::topology::intra_n_ranks());
-    for (int i = 0; i < common::topology::intra_n_ranks(); i++) {
-      if (i == common::topology::intra_my_rank()) {
-        home_pms[i] = std::move(pm_local);
-      } else {
-        int target_rank = common::topology::intra2global_rank(i);
-        std::size_t target_local_size = mmapper_->local_size(target_rank);
-        common::physical_mem pm(home_shmem_name(id_, target_rank), target_local_size, false);
-        home_pms[i] = std::move(pm);
-      }
-    }
-
+  void map_ahead_of_time(common::physical_mem& pm) const {
     // mmap all home blocks ahead of time if the mem mapper does not consume
     // too many mmap entries (e.g., for block distribution)
     if (home_all_mapped_) {
       std::size_t offset = 0;
       while (offset < size_) {
         auto seg = mmapper_->get_segment(offset);
-        if (common::topology::is_locally_accessible(seg.owner)) {
-          auto        intra_rank = common::topology::intra_rank(seg.owner);
-          std::byte*  seg_addr   = reinterpret_cast<std::byte*>(vm_.addr()) + seg.offset_b;
-          std::size_t seg_size   = seg.offset_e - seg.offset_b;
-          home_pms[intra_rank].map_to_vm(seg_addr, seg_size, seg.pm_offset);
+        if (seg.owner == common::topology::inter_my_rank()) {
+          std::byte*  seg_addr = reinterpret_cast<std::byte*>(vm_.addr()) + seg.offset_b;
+          std::size_t seg_size = seg.offset_e - seg.offset_b;
+          pm.map_to_vm(seg_addr, seg_size, seg.pm_offset);
         }
         offset = seg.offset_e;
       }
     }
-
-    return home_pms;
   }
 
-  std::vector<common::virtual_mem> init_intra_home_vms() const {
-    std::vector<common::virtual_mem> home_vms;
+  common::physical_mem init_intra_home_pm() const {
+    if (common::topology::intra_my_rank() == 0) {
+      common::physical_mem pm(home_shmem_name(id_, common::topology::inter_my_rank()),
+                              mmapper_->local_size(common::topology::inter_my_rank()),
+                              true);
 
-    for (const auto& pm : intra_home_pms_) {
-      common::virtual_mem& vm = home_vms.emplace_back(pm.size(), mmapper_->block_size());
-      pm.map_to_vm(vm.addr(), vm.size(), 0);
+      common::mpi_barrier(common::topology::intra_mpicomm());
+
+      map_ahead_of_time(pm);
+      return pm;
+    } else {
+      common::mpi_barrier(common::topology::intra_mpicomm());
+
+      common::physical_mem pm(home_shmem_name(id_, common::topology::inter_my_rank()),
+                              mmapper_->local_size(common::topology::inter_my_rank()),
+                              false);
+
+      map_ahead_of_time(pm);
+      return pm;
     }
-
-    return home_vms;
   }
 
-  std::size_t                        size_;
-  coll_mem_id_t                      id_;
-  std::unique_ptr<mem_mapper::base>  mmapper_;
-  bool                               home_all_mapped_;
-  common::virtual_mem                vm_;
-  std::vector<common::physical_mem>  intra_home_pms_; // intra-rank -> pm
-  std::vector<common::virtual_mem>   intra_home_vms_; // intra-rank -> vm
-  std::unique_ptr<common::rma::win>  win_;
+  common::virtual_mem init_intra_home_vm() const {
+    common::virtual_mem vm(home_pm_.size(), mmapper_->block_size());
+    home_pm_.map_to_vm(vm.addr(), vm.size(), 0);
+    return vm;
+  }
+
+  std::size_t                       size_;
+  coll_mem_id_t                     id_;
+  std::unique_ptr<mem_mapper::base> mmapper_;
+  bool                              home_all_mapped_;
+  common::virtual_mem               vm_;
+  common::physical_mem              home_pm_;
+  common::virtual_mem               home_vm_;
+  std::unique_ptr<common::rma::win> win_;
 };
 
 template <typename Fn>

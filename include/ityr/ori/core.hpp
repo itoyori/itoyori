@@ -39,9 +39,9 @@ void for_each_seg_blk(const coll_mem& cm, void* addr, std::size_t size,
     std::byte*  seg_addr = reinterpret_cast<std::byte*>(cm.vm().addr()) + seg.offset_b;
     std::size_t seg_size = seg.offset_e - seg.offset_b;
 
-    if (common::topology::is_locally_accessible(seg.owner)) {
+    if (seg.owner == common::topology::inter_my_rank()) {
       // no need to iterate over memory blocks (of BlockSize) for home segments
-      home_seg_fn(seg_addr, seg_size, seg.owner, seg.pm_offset);
+      home_seg_fn(seg_addr, seg_size, seg.pm_offset);
 
     } else {
       // iterate over memory blocks within the memory segment for cache blocks
@@ -78,7 +78,7 @@ public:
     ITYR_REQUIRE_MESSAGE(size == common::mpi_bcast_value(size, 0, common::topology::mpicomm()),
                          "The size passed to malloc_coll() is different among workers");
 
-    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
+    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::inter_n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
     coll_mem& cm = cm_manager_.create(size, std::move(mmapper));
     void* addr = cm.vm().addr();
@@ -319,7 +319,7 @@ public:
 
   void* get_local_mem(void* addr) {
     coll_mem& cm = cm_manager_.get(addr);
-    return cm.local_home_vm().addr();
+    return cm.home_vm().addr();
   }
 
 private:
@@ -362,12 +362,11 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
+      [&](std::byte* seg_addr, std::size_t seg_size, std::size_t pm_offset) {
         checkout_completed &=
           home_manager_.template checkout_seg<IncrementRef>(
               seg_addr, seg_size, addr, size,
-              cm.intra_home_pm(common::topology::intra_rank(owner)), pm_offset,
-              cm.home_all_mapped());
+              cm.home_pm(), pm_offset, cm.home_all_mapped());
       },
       // cache block
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
@@ -375,7 +374,7 @@ private:
         checkout_completed &=
           cache_manager_.template checkout_blk<SkipFetch, IncrementRef>(
               blk_addr, req_addr_b, req_addr_e,
-              cm.win(), owner, pm_offset);
+              cm.win(), common::topology::inter2global_rank(owner), pm_offset);
       });
 
     return checkout_completed;
@@ -447,7 +446,7 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t, common::topology::rank_t, std::size_t) {
+      [&](std::byte* seg_addr, std::size_t, std::size_t) {
         home_manager_.template checkin_seg<DecrementRef>(seg_addr, cm.home_all_mapped());
       },
       // cache block
@@ -508,8 +507,8 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, from_addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+      [&](std::byte* seg_addr, std::size_t seg_size, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.home_vm();
         std::byte* seg_addr_b         = std::max(from_addr, seg_addr);
         std::byte* seg_addr_e         = std::min(seg_addr + seg_size, from_addr + size);
         std::size_t seg_offset        = seg_addr_b - seg_addr;
@@ -562,8 +561,8 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, to_addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+      [&](std::byte* seg_addr, std::size_t seg_size, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.home_vm();
         std::byte* seg_addr_b         = std::max(to_addr, seg_addr);
         std::byte* seg_addr_e         = std::min(seg_addr + seg_size, to_addr + size);
         std::size_t seg_offset        = seg_addr_b - seg_addr;
@@ -740,7 +739,7 @@ public:
 
   void* get_local_mem(void* addr) {
     coll_mem& cm = cm_manager_.get(addr);
-    return cm.local_home_vm().addr();
+    return cm.home_vm().addr();
   }
 
 private:
@@ -759,8 +758,8 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, from_addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+      [&](std::byte* seg_addr, std::size_t seg_size, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.home_vm();
         std::byte* seg_addr_b         = std::max(from_addr, seg_addr);
         std::byte* seg_addr_e         = std::min(seg_addr + seg_size, from_addr + size);
         std::size_t seg_offset        = seg_addr_b - seg_addr;
@@ -772,7 +771,8 @@ private:
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
         common::rma::get_nb(to_addr + (req_addr_b - from_addr), req_addr_e - req_addr_b,
-                            cm.win(), owner, pm_offset + (req_addr_b - blk_addr));
+                            cm.win(), common::topology::inter2global_rank(owner),
+                            pm_offset + (req_addr_b - blk_addr));
         fetching = true;
       });
 
@@ -819,8 +819,8 @@ private:
 
     for_each_seg_blk<BlockSize>(cm, to_addr, size,
       // home segment
-      [&](std::byte* seg_addr, std::size_t seg_size, common::topology::rank_t owner, std::size_t pm_offset) {
-        const common::virtual_mem& vm = cm.intra_home_vm(common::topology::intra_rank(owner));
+      [&](std::byte* seg_addr, std::size_t seg_size, std::size_t pm_offset) {
+        const common::virtual_mem& vm = cm.home_vm();
         std::byte* seg_addr_b         = std::max(to_addr, seg_addr);
         std::byte* seg_addr_e         = std::min(seg_addr + seg_size, to_addr + size);
         std::size_t seg_offset        = seg_addr_b - seg_addr;
@@ -832,7 +832,8 @@ private:
       [&](std::byte* blk_addr, std::byte* req_addr_b, std::byte* req_addr_e,
           common::topology::rank_t owner, std::size_t pm_offset) {
         common::rma::put_nb(from_addr + (req_addr_b - to_addr), req_addr_e - req_addr_b,
-                            cm.win(), owner, pm_offset + (req_addr_b - blk_addr));
+                            cm.win(), common::topology::inter2global_rank(owner),
+                            pm_offset + (req_addr_b - blk_addr));
         putting = true;
       });
 

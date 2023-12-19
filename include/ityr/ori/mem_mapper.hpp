@@ -21,14 +21,14 @@ struct segment {
 
 class base {
 public:
-  base(std::size_t size, int n_ranks)
-    : size_(size), n_ranks_(n_ranks) {}
+  base(std::size_t size, int n_nodes)
+    : size_(size), n_nodes_(n_nodes) {}
 
   virtual ~base() = default;
 
   virtual std::size_t block_size() const = 0;
 
-  virtual std::size_t local_size(int rank) const = 0;
+  virtual std::size_t local_size(int node_id) const = 0;
 
   virtual std::size_t effective_size() const = 0;
 
@@ -41,20 +41,20 @@ public:
 
 protected:
   std::size_t size_;
-  int         n_ranks_;
+  int         n_nodes_;
 };
 
 template <block_size_t BlockSize>
 class block : public base {
 public:
-  block(std::size_t size, int n_ranks)
-    : base(size, n_ranks),
+  block(std::size_t size, int n_nodes)
+    : base(size, n_nodes),
       n_blk_((size + BlockSize - 1) / BlockSize) {}
 
   std::size_t block_size() const override { return BlockSize; }
 
-  std::size_t local_size(int rank) const override {
-    int seg_id = rank;
+  std::size_t local_size(int node_id) const override {
+    int seg_id = node_id;
     auto [blk_id_b, blk_id_e] = get_seg_range(seg_id);
     return std::max(std::size_t(1), blk_id_e - blk_id_b) * BlockSize;
   }
@@ -67,7 +67,7 @@ public:
     ITYR_CHECK(offset < effective_size());
 
     std::size_t blk_id = offset / BlockSize;
-    int         seg_id = blk_id * n_ranks_ / n_blk_;
+    int         seg_id = blk_id * n_nodes_ / n_blk_;
 
     auto [blk_id_b, blk_id_e] = get_seg_range(seg_id);
     ITYR_CHECK(blk_id_b <= blk_id);
@@ -85,8 +85,8 @@ public:
 
 private:
   std::tuple<std::size_t, std::size_t> get_seg_range(int seg_id) const {
-    std::size_t blk_id_b = (seg_id * n_blk_ + n_ranks_ - 1) / n_ranks_;
-    std::size_t blk_id_e = ((seg_id + 1) * n_blk_ + n_ranks_ - 1) / n_ranks_;
+    std::size_t blk_id_b = (seg_id * n_blk_ + n_nodes_ - 1) / n_nodes_;
+    std::size_t blk_id_e = ((seg_id + 1) * n_blk_ + n_nodes_ - 1) / n_nodes_;
     return {blk_id_b, blk_id_e};
   }
 
@@ -95,8 +95,8 @@ private:
 
 ITYR_TEST_CASE("[ityr::ori::mem_mapper::block] calculate local block size") {
   constexpr block_size_t bs = 65536;
-  auto local_block_size = [](std::size_t size, int n_ranks, int rank) -> std::size_t {
-    return block<bs>(size, n_ranks).local_size(rank);
+  auto local_block_size = [](std::size_t size, int n_nodes, int node_id) -> std::size_t {
+    return block<bs>(size, n_nodes).local_size(node_id);
   };
   ITYR_CHECK(local_block_size(bs * 4     , 4, 0) == bs    );
   ITYR_CHECK(local_block_size(bs * 12    , 4, 0) == bs * 3);
@@ -112,8 +112,8 @@ ITYR_TEST_CASE("[ityr::ori::mem_mapper::block] calculate local block size") {
 
 ITYR_TEST_CASE("[ityr::ori::mem_mapper::block] get block information at specified offset") {
   constexpr block_size_t bs = 65536;
-  auto get_segment = [](std::size_t size, int n_ranks, std::size_t offset) -> segment {
-    return block<bs>(size, n_ranks).get_segment(offset);
+  auto get_segment = [](std::size_t size, int n_nodes, std::size_t offset) -> segment {
+    return block<bs>(size, n_nodes).get_segment(offset);
   };
   ITYR_CHECK(get_segment(bs * 4     , 4, 0          ) == (segment{0, 0      , bs     , 0}));
   ITYR_CHECK(get_segment(bs * 4     , 4, bs         ) == (segment{1, bs     , bs * 2 , 0}));
@@ -129,8 +129,8 @@ ITYR_TEST_CASE("[ityr::ori::mem_mapper::block] get block information at specifie
 template <block_size_t BlockSize>
 class cyclic : public base {
 public:
-  cyclic(std::size_t size, int n_ranks, std::size_t seg_size = BlockSize)
-    : base(size, n_ranks),
+  cyclic(std::size_t size, int n_nodes, std::size_t seg_size = BlockSize)
+    : base(size, n_nodes),
       seg_size_(seg_size) {
     ITYR_CHECK(seg_size >= BlockSize);
     ITYR_CHECK(seg_size % BlockSize == 0);
@@ -143,14 +143,14 @@ public:
   }
 
   std::size_t effective_size() const override {
-    return local_size_impl() * n_ranks_;
+    return local_size_impl() * n_nodes_;
   }
 
   segment get_segment(std::size_t offset) const override {
     ITYR_CHECK(offset < effective_size());
     std::size_t blk_id_g = offset / seg_size_;
-    std::size_t blk_id_l = blk_id_g / n_ranks_;
-    return segment{.owner     = static_cast<int>(blk_id_g % n_ranks_),
+    std::size_t blk_id_l = blk_id_g / n_nodes_;
+    return segment{.owner     = static_cast<int>(blk_id_g % n_nodes_),
                    .offset_b  = blk_id_g * seg_size_,
                    .offset_e  = (blk_id_g + 1) * seg_size_,
                    .pm_offset = blk_id_l * seg_size_};
@@ -164,7 +164,7 @@ private:
   // non-virtual common part
   std::size_t local_size_impl() const {
     std::size_t n_blk_g = (size_ + seg_size_ - 1) / seg_size_;
-    std::size_t n_blk_l = (n_blk_g + n_ranks_ - 1) / n_ranks_;
+    std::size_t n_blk_l = (n_blk_g + n_nodes_ - 1) / n_nodes_;
     return n_blk_l * seg_size_;
   }
 
@@ -174,8 +174,8 @@ private:
 ITYR_TEST_CASE("[ityr::ori::mem_mapper::cyclic] calculate local block size") {
   constexpr block_size_t bs = 65536;
   std::size_t ss = bs * 2;
-  auto local_block_size = [=](std::size_t size, int n_ranks, int rank) -> std::size_t {
-    return cyclic<bs>(size, n_ranks, ss).local_size(rank);
+  auto local_block_size = [=](std::size_t size, int n_nodes, int node_id) -> std::size_t {
+    return cyclic<bs>(size, n_nodes, ss).local_size(node_id);
   };
   ITYR_CHECK(local_block_size(ss * 4     , 4, 0) == ss    );
   ITYR_CHECK(local_block_size(ss * 12    , 4, 0) == ss * 3);
@@ -190,8 +190,8 @@ ITYR_TEST_CASE("[ityr::ori::mem_mapper::cyclic] calculate local block size") {
 ITYR_TEST_CASE("[ityr::ori::mem_mapper::cyclic] get block information at specified offset") {
   constexpr block_size_t bs = 65536;
   std::size_t ss = bs * 2;
-  auto get_segment = [=](std::size_t size, int n_ranks, std::size_t offset) -> segment {
-    return cyclic<bs>(size, n_ranks, ss).get_segment(offset);
+  auto get_segment = [=](std::size_t size, int n_nodes, std::size_t offset) -> segment {
+    return cyclic<bs>(size, n_nodes, ss).get_segment(offset);
   };
   ITYR_CHECK(get_segment(ss * 4     , 4, 0         ) == (segment{0, 0      , ss     , 0     }));
   ITYR_CHECK(get_segment(ss * 4     , 4, ss        ) == (segment{1, ss     , ss * 2 , 0     }));
@@ -208,14 +208,14 @@ ITYR_TEST_CASE("[ityr::ori::mem_mapper::cyclic] get block information at specifi
 template <block_size_t BlockSize>
 class block_adws : public base {
 public:
-  block_adws(std::size_t size, int n_ranks)
-    : base(size, n_ranks),
+  block_adws(std::size_t size, int n_nodes)
+    : base(size, n_nodes),
       n_blk_((size + BlockSize - 1) / BlockSize) {}
 
   std::size_t block_size() const override { return BlockSize; }
 
-  std::size_t local_size(int rank) const override {
-    int seg_id = n_ranks_ - rank - 1;
+  std::size_t local_size(int node_id) const override {
+    int seg_id = n_nodes_ - node_id - 1;
     auto [blk_id_b, blk_id_e] = get_seg_range(seg_id);
     return std::max(std::size_t(1), blk_id_e - blk_id_b) * BlockSize;
   }
@@ -228,13 +228,13 @@ public:
     ITYR_CHECK(offset < effective_size());
 
     std::size_t blk_id = offset / BlockSize;
-    int         seg_id = ((blk_id + 1) * n_ranks_ + n_blk_ - 1) / n_blk_ - 1;
+    int         seg_id = ((blk_id + 1) * n_nodes_ + n_blk_ - 1) / n_blk_ - 1;
 
     auto [blk_id_b, blk_id_e] = get_seg_range(seg_id);
     ITYR_CHECK(blk_id_b <= blk_id);
     ITYR_CHECK(blk_id < blk_id_e);
 
-    return segment{.owner     = n_ranks_ - seg_id - 1,
+    return segment{.owner     = n_nodes_ - seg_id - 1,
                    .offset_b  = blk_id_b * BlockSize,
                    .offset_e  = blk_id_e * BlockSize,
                    .pm_offset = 0};
@@ -246,8 +246,8 @@ public:
 
 private:
   std::tuple<std::size_t, std::size_t> get_seg_range(int seg_id) const {
-    std::size_t blk_id_b = (seg_id * n_blk_) / n_ranks_;
-    std::size_t blk_id_e = ((seg_id + 1) * n_blk_) / n_ranks_;
+    std::size_t blk_id_b = (seg_id * n_blk_) / n_nodes_;
+    std::size_t blk_id_e = ((seg_id + 1) * n_blk_) / n_nodes_;
     return {blk_id_b, blk_id_e};
   }
 

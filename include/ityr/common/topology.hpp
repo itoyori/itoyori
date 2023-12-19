@@ -19,7 +19,8 @@ public:
       cg_intra_(create_intra_comm(), enable_shared_memory_),
       cg_inter_(create_inter_comm(), enable_shared_memory_),
       process_map_(create_process_map()),
-      intra2global_rank_(create_intra2global_rank()) {}
+      intra2global_rank_(create_intra2global_rank()),
+      inter2global_rank_(create_inter2global_rank()) {}
 
   topology(const topology&) = delete;
   topology& operator=(const topology&) = delete;
@@ -52,6 +53,12 @@ public:
     ITYR_CHECK(0 <= intra_rank);
     ITYR_CHECK(intra_rank < intra_n_ranks());
     return intra2global_rank_[intra_rank];
+  }
+
+  rank_t inter2global_rank(rank_t inter_rank) const {
+    ITYR_CHECK(0 <= inter_rank);
+    ITYR_CHECK(inter_rank < inter_n_ranks());
+    return inter2global_rank_[inter_rank];
   }
 
   bool is_locally_accessible(rank_t target_global_rank) const {
@@ -125,12 +132,25 @@ private:
     return ret;
   }
 
+  std::vector<rank_t> create_inter2global_rank() {
+    std::vector<rank_t> ret;
+    for (rank_t i = 0; i < n_ranks(); i++) {
+      if (process_map_[i].intra_rank == intra_my_rank()) {
+        ITYR_CHECK(process_map_[i].inter_rank == ret.size());
+        ret.push_back(i);
+      }
+    }
+    ITYR_CHECK(ret.size() == std::size_t(inter_n_ranks()));
+    return ret;
+  }
+
   bool                           enable_shared_memory_;
   comm_group                     cg_global_;
   comm_group                     cg_intra_;
   comm_group                     cg_inter_;
   std::vector<process_map_entry> process_map_; // global_rank -> (intra, inter rank)
   std::vector<rank_t>            intra2global_rank_;
+  std::vector<rank_t>            inter2global_rank_;
 };
 
 using instance = singleton<topology>;
@@ -151,6 +171,7 @@ inline rank_t intra_rank(rank_t global_rank) { return instance::get().intra_rank
 inline rank_t inter_rank(rank_t global_rank) { return instance::get().inter_rank(global_rank); };
 
 inline rank_t intra2global_rank(rank_t intra_rank) { return instance::get().intra2global_rank(intra_rank); }
+inline rank_t inter2global_rank(rank_t inter_rank) { return instance::get().inter2global_rank(inter_rank); }
 
 inline bool is_locally_accessible(rank_t target_global_rank) { return instance::get().is_locally_accessible(target_global_rank); };
 
