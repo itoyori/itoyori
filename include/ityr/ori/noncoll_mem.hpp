@@ -49,8 +49,8 @@ public:
     : local_max_size_(local_max_size),
       global_max_size_(local_max_size_ * common::topology::n_ranks()),
       vm_(common::reserve_same_vm_coll(global_max_size_, local_max_size_)),
-      pm_(init_pm()),
       local_base_addr_(reinterpret_cast<std::byte*>(vm_.addr()) + local_max_size_ * common::topology::my_rank()),
+      pm_(init_pm()),
       win_(common::rma::create_win(local_base_addr_, local_max_size_)),
       root_mr_(local_base_addr_, local_max_size_ - sizeof(int)), // The last element is used for a flag value for deallocation
       std_pool_mr_(my_std_pool_options(), &root_mr_),
@@ -295,8 +295,8 @@ private:
   std::size_t                               local_max_size_;
   std::size_t                               global_max_size_;
   common::virtual_mem                       vm_;
-  common::physical_mem                      pm_;
   void*                                     local_base_addr_;
+  common::physical_mem                      pm_;
   std::unique_ptr<common::rma::win>         win_;
   root_resource                             root_mr_;
   common::pmr::unsynchronized_pool_resource std_pool_mr_;

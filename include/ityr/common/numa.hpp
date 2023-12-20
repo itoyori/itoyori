@@ -9,7 +9,7 @@
 namespace ityr::common::numa {
 
 inline bool enabled() {
-  return numa_available();
+  return numa_available() >= 0;
 }
 
 using node_t = int;
