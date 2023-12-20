@@ -13,6 +13,8 @@
 #include <limits>
 #include <vector>
 #include <tuple>
+#include <memory>
+#include <utility>
 
 #define ITYR_CONCAT_(x, y) x##y
 #define ITYR_CONCAT(x, y) ITYR_CONCAT_(x, y)

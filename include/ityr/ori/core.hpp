@@ -78,7 +78,9 @@ public:
     ITYR_REQUIRE_MESSAGE(size == common::mpi_bcast_value(size, 0, common::topology::mpicomm()),
                          "The size passed to malloc_coll() is different among workers");
 
-    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::inter_n_ranks(),
+    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size,
+                                                          common::topology::inter_n_ranks(),
+                                                          common::topology::intra_n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
     coll_mem& cm = cm_manager_.create(size, std::move(mmapper));
     void* addr = cm.vm().addr();
@@ -623,7 +625,9 @@ public:
       common::die("Memory allocation size cannot be 0");
     }
 
-    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size, common::topology::n_ranks(),
+    auto mmapper = std::make_unique<MemMapper<BlockSize>>(size,
+                                                          common::topology::inter_n_ranks(),
+                                                          common::topology::intra_n_ranks(),
                                                           std::forward<MemMapperArgs>(mmargs)...);
     coll_mem& cm = cm_manager_.create(size, std::move(mmapper));
     void* addr = cm.vm().addr();

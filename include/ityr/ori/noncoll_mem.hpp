@@ -239,6 +239,11 @@ private:
       pm.map_to_vm(begin_addr, local_max_size_, offset);
     }
 
+    if (common::topology::numa_enabled()) {
+      common::numa::bind_to(local_base_addr_, local_max_size_, common::topology::numa_my_node());
+      common::mpi_barrier(common::topology::intra_mpicomm());
+    }
+
     return pm;
   }
 

@@ -189,6 +189,29 @@ inline T mpi_allreduce_value(const T& value,
 }
 
 template <typename T>
+inline void mpi_allgather(const T*    sendbuf,
+                          std::size_t sendcount,
+                          T*          recvbuf,
+                          std::size_t recvcount,
+                          MPI_Comm    comm) {
+  MPI_Allgather(sendbuf,
+                sendcount,
+                mpi_type<T>(),
+                recvbuf,
+                recvcount,
+                mpi_type<T>(),
+                comm);
+}
+
+template <typename T>
+inline std::vector<T> mpi_allgather_value(const T& value,
+                                          MPI_Comm comm) {
+  std::vector<T> result(mpi_comm_size(comm));
+  mpi_allgather(&value, 1, result.data(), 1, comm);
+  return result;
+}
+
+template <typename T>
 inline void mpi_scatter(const T*    sendbuf,
                         T*          recvbuf,
                         std::size_t count,
