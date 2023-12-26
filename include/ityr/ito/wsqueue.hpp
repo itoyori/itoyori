@@ -254,6 +254,12 @@ public:
       fn(entries[i]);
     }
 
+    if constexpr (!EnablePass) {
+      if (t <= b) {
+        local_empty_[idx] = true;
+      }
+    }
+
     queue_lock_.unlock(common::topology::my_rank(), idx);
   }
 
