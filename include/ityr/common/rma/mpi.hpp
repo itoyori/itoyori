@@ -50,9 +50,8 @@ public:
   }
 
   void flush(const win& win) {
-    MPI_Win_flush_all(win.win());
+    mpi_win_flush_all(win.win());
   }
 };
 
 }
-

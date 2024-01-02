@@ -4,6 +4,7 @@
 
 #include "ityr/common/util.hpp"
 #include "ityr/common/mpi_util.hpp"
+#include "ityr/common/topology.hpp"
 #include "ityr/common/span.hpp"
 #include "ityr/common/options.hpp"
 #include "ityr/common/profiler.hpp"
@@ -13,12 +14,34 @@ namespace ityr::common {
 
 inline void mpi_win_flush(int target_rank, MPI_Win win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_flush);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d", topology::my_rank(), target_rank);
+  auto t0 = wallclock::gettime_ns();
+#endif
   MPI_Win_flush(target_rank, win);
+#if ITYR_DEBUG_UCX
+  auto t1 = wallclock::gettime_ns();
+  ucs_trace_func("time: %d ns", t1 - t0);
+  if (t1 - t0 > 1000000000L) {
+    ucs_info("MPI_Win_flush() took too long time: %f s", (double)(t1 - t0) / 1000000000.0);
+  }
+#endif
 }
 
 inline void mpi_win_flush_all(MPI_Win win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_flush);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d", topology::my_rank());
+  auto t0 = wallclock::gettime_ns();
+#endif
   MPI_Win_flush_all(win);
+#if ITYR_DEBUG_UCX
+  auto t1 = wallclock::gettime_ns();
+  ucs_trace_func("time: %d ns", t1 - t0);
+  if (t1 - t0 > 1000000000L) {
+    ucs_info("MPI_Win_flush_all() took too long time: %f s", (double)(t1 - t0) / 1000000000.0);
+  }
+#endif
 }
 
 template <typename T>
@@ -28,6 +51,9 @@ inline void mpi_get_nb(T*          origin,
                        std::size_t target_disp,
                        MPI_Win     win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_get, target_rank);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d, %ld bytes", topology::my_rank(), target_rank, sizeof(T) * count);
+#endif
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Get(origin,
           sizeof(T) * count,
@@ -56,6 +82,9 @@ inline MPI_Request mpi_rget(T*          origin,
                             std::size_t target_disp,
                             MPI_Win     win) {
   ITYR_CHECK(win != MPI_WIN_NULL);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d, %ld bytes", topology::my_rank(), target_rank, sizeof(T) * count);
+#endif
   MPI_Request req;
   MPI_Rget(origin,
            sizeof(T) * count,
@@ -85,6 +114,9 @@ inline void mpi_put_nb(const T*    origin,
                        std::size_t target_disp,
                        MPI_Win     win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_put, target_rank);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d, %ld bytes", topology::my_rank(), target_rank, sizeof(T) * count);
+#endif
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Put(origin,
           sizeof(T) * count,
@@ -113,6 +145,9 @@ inline MPI_Request mpi_rput(const T*    origin,
                             std::size_t target_disp,
                             MPI_Win     win) {
   ITYR_CHECK(win != MPI_WIN_NULL);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d, %ld bytes", topology::my_rank(), target_rank, sizeof(T) * count);
+#endif
   MPI_Request req;
   MPI_Rput(origin,
            sizeof(T) * count,
@@ -141,6 +176,9 @@ inline void mpi_atomic_faa_nb(const T*    origin,
                               std::size_t target_disp,
                               MPI_Win     win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_faa, target_rank);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d", topology::my_rank(), target_rank);
+#endif
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(origin,
                    result,
@@ -198,6 +236,9 @@ inline void mpi_atomic_get_nb(T*          origin,
                               std::size_t target_disp,
                               MPI_Win     win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_get, target_rank);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d", topology::my_rank(), target_rank);
+#endif
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(nullptr,
                    origin,
@@ -225,6 +266,9 @@ inline void mpi_atomic_put_nb(const T*    origin,
                               std::size_t target_disp,
                               MPI_Win     win) {
   ITYR_PROFILER_RECORD(prof_event_mpi_rma_atomic_put, target_rank);
+#if ITYR_DEBUG_UCX
+  ucs_trace_func("origin: %d, target: %d", topology::my_rank(), target_rank);
+#endif
   ITYR_CHECK(win != MPI_WIN_NULL);
   MPI_Fetch_and_op(origin,
                    result,

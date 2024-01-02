@@ -182,6 +182,10 @@ inline void profiler_begin() {
   ori::cache_prof_begin();
   ito::dag_prof_begin();
   common::profiler::begin();
+#if ITYR_DEBUG_UCX
+  common::ityr_ucx_log_enable(1);
+  ucs_info("Itoyori profiler begin");
+#endif
 }
 
 /**
@@ -191,6 +195,10 @@ inline void profiler_begin() {
  */
 inline void profiler_end() {
   ITYR_CHECK(is_spmd());
+#if ITYR_DEBUG_UCX
+  ucs_info("Itoyori profiler end");
+  common::ityr_ucx_log_enable(0);
+#endif
   common::profiler::end();
   ito::dag_prof_end();
   ori::cache_prof_end();
@@ -203,6 +211,9 @@ inline void profiler_end() {
  */
 inline void profiler_flush() {
   ITYR_CHECK(is_spmd());
+#if ITYR_DEBUG_UCX
+  common::ityr_ucx_log_flush();
+#endif
   common::profiler::flush();
   ito::dag_prof_print();
   ori::cache_prof_print();
