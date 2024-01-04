@@ -45,10 +45,10 @@ private:
 
 class noncoll_mem final : public common::pmr::memory_resource {
 public:
-  noncoll_mem(std::size_t local_max_size)
-    : local_max_size_(local_max_size),
+  noncoll_mem(std::size_t local_max_size, std::size_t alignment)
+    : local_max_size_(common::round_up_pow2(local_max_size, alignment)),
       global_max_size_(local_max_size_ * common::topology::n_ranks()),
-      vm_(common::reserve_same_vm_coll(global_max_size_, local_max_size_)),
+      vm_(common::reserve_same_vm_coll(global_max_size_, alignment)),
       local_base_addr_(reinterpret_cast<std::byte*>(vm_.addr()) + local_max_size_ * common::topology::my_rank()),
       pm_(init_pm()),
       win_(common::rma::create_win(local_base_addr_, local_max_size_)),

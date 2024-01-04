@@ -64,7 +64,7 @@ class core_default {
 
 public:
   core_default(std::size_t cache_size, std::size_t sub_block_size)
-    : noncoll_mem_(noncoll_allocator_size_option::value()),
+    : noncoll_mem_(noncoll_allocator_size_option::value(), BlockSize),
       home_manager_(calc_home_mmap_limit(cache_size / BlockSize)),
       cache_manager_(cache_size, sub_block_size) {}
 
@@ -613,7 +613,7 @@ template <block_size_t BlockSize>
 class core_nocache {
 public:
   core_nocache(std::size_t, std::size_t)
-    : noncoll_mem_(noncoll_allocator_size_option::value()) {}
+    : noncoll_mem_(noncoll_allocator_size_option::value(), BlockSize) {}
 
   static constexpr block_size_t block_size = BlockSize;
 
