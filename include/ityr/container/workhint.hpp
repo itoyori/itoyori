@@ -174,8 +174,18 @@ inline auto create_workhint_range(const ExecutionPolicy& policy,
     using workhint_t = std::invoke_result_t<Op, value_type>;
     workhint_range<workhint_t> workhint(n_leaves);
 
-    auto rh = ori::release_lazy();
-    internal::create_workhint_range_aux(workhint.view(), policy.checkout_count, op, rh, first, last);
+    if (ito::is_spmd()) {
+      root_exec([=, wh = workhint.view()] {
+        auto rh = ori::release_lazy();
+        internal::create_workhint_range_aux(wh, policy.checkout_count, op, rh, first, last);
+      });
+    } else if (ito::is_root()) {
+      auto rh = ori::release_lazy();
+      internal::create_workhint_range_aux(workhint.view(), policy.checkout_count, op, rh, first, last);
+    } else {
+      common::die("workhint_range must be created on the root thread or SPMD region.");
+    }
+
     return workhint;
   }
 }

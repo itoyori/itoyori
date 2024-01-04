@@ -85,8 +85,9 @@ public:
   void print() const {
     printf("work: %ld ns span: %ld ns parallelism: %f\n"
            "n_threads: %ld (ave: %ld ns) n_strands: %ld (ave: %ld ns)\n\n",
-           work_, span_, static_cast<double>(work_) / span_,
-           n_threads_, work_ / n_threads_, n_strands_, work_ / n_strands_);
+           work_, span_, (span_ == 0) ? 0 : static_cast<double>(work_) / span_,
+           n_threads_, (n_threads_ == 0) ? 0 : work_ / n_threads_,
+           n_strands_, (n_strands_ == 0) ? 0 : work_ / n_strands_);
     fflush(stdout);
   }
 
