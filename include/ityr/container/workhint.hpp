@@ -43,6 +43,7 @@ public:
     n_leaves_ = r.n_leaves_;
     bin_tree_ = r.bin_tree_;
     r.bin_tree_ = nullptr;
+    return *this;
   }
 
   std::size_t size() const {
