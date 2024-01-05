@@ -29,18 +29,14 @@ public:
   virtual_mem(void* addr, std::size_t size, std::size_t alignment = alignof(max_align_t))
     : addr_(mmap_no_physical_mem(addr, size, false, alignment)), size_(size) {}
 
-  ~virtual_mem() {
-    if (addr_) {
-      munmap(addr_, size_);
-    }
-  }
+  ~virtual_mem() { destroy(); }
 
   virtual_mem(const virtual_mem&) = delete;
   virtual_mem& operator=(const virtual_mem&) = delete;
 
   virtual_mem(virtual_mem&& vm) : addr_(vm.addr_), size_(vm.size_) { vm.addr_ = nullptr; }
   virtual_mem& operator=(virtual_mem&& vm) {
-    this->~virtual_mem();
+    destroy();
     addr_ = vm.addr();
     size_ = vm.size();
     vm.addr_ = nullptr;
@@ -66,6 +62,12 @@ public:
   }
 
 private:
+  void destroy() {
+    if (addr_) {
+      munmap(addr_, size_);
+    }
+  }
+
   void* addr_ = nullptr;
   std::size_t size_;
 };

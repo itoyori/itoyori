@@ -92,18 +92,19 @@ public:
   /**
    * @brief Perform the checkin operation when destroyed.
    */
-  ~checkout_span() { if (ptr_) ori::checkin(ptr_, n_, Mode{}); }
+  ~checkout_span() { destroy(); }
 
   checkout_span(const checkout_span&) = delete;
   checkout_span& operator=(const checkout_span&) = delete;
 
   checkout_span(checkout_span&& cs) : ptr_(cs.ptr_), n_(cs.n_) { cs.ptr_ = nullptr; cs.n_ = 0; }
   checkout_span& operator=(checkout_span&& cs) {
-    this->~checkout_span();
+    destroy();
     ptr_ = cs.ptr_;
     n_   = cs.n_;
     cs.ptr_ = nullptr;
     cs.n_   = 0;
+    return *this;
   }
 
   constexpr pointer data() const noexcept { return ptr_; }
@@ -158,6 +159,12 @@ public:
   }
 
 private:
+  void destroy() {
+    if (ptr_) {
+      ori::checkin(ptr_, n_, Mode{});
+    }
+  }
+
   pointer   ptr_ = nullptr;
   size_type n_   = 0;
 };

@@ -21,15 +21,7 @@ public:
   physical_mem(const std::string& shm_name, std::size_t size, bool own)
     : shm_name_(shm_name), size_(size), own_(own), fd_(init_shmem_fd()) {}
 
-  ~physical_mem() {
-    if (fd_ != -1) {
-      close(fd_);
-      if (own_ && shm_unlink(shm_name_.c_str()) == -1) {
-        perror("shm_unlink");
-        die("[ityr::common::physical_mem] shm_unlink() failed");
-      }
-    }
-  }
+  ~physical_mem() { destroy(); }
 
   physical_mem(const physical_mem&) = delete;
   physical_mem& operator=(const physical_mem&) = delete;
@@ -37,7 +29,7 @@ public:
   physical_mem(physical_mem&& pm)
     : shm_name_(std::move(pm.shm_name_)), size_(pm.size_), own_(pm.own_), fd_(pm.fd_) { pm.fd_ = -1; }
   physical_mem& operator=(physical_mem&& pm) {
-    this->~physical_mem();
+    destroy();
     shm_name_ = std::move(pm.shm_name_);
     size_     = pm.size_;
     own_      = pm.own_;
@@ -63,6 +55,16 @@ public:
   }
 
 private:
+  void destroy() {
+    if (fd_ != -1) {
+      close(fd_);
+      if (own_ && shm_unlink(shm_name_.c_str()) == -1) {
+        perror("shm_unlink");
+        die("[ityr::common::physical_mem] shm_unlink() failed");
+      }
+    }
+  }
+
   int init_shmem_fd() const {
     int oflag = O_RDWR;
     if (own_) oflag |= O_CREAT | O_TRUNC;

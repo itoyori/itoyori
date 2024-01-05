@@ -185,12 +185,7 @@ public:
     initialize_from_iter(il.begin(), il.end(), std::random_access_iterator_tag{});
   }
 
-  ~global_vector() {
-    if (begin() != nullptr) {
-      destruct_elems(begin(), end());
-      free_mem(begin(), capacity());
-    }
-  }
+  ~global_vector() { destroy(); }
 
   global_vector(const this_t& other) : opts_(other.options()) {
     initialize_from_iter(
@@ -200,7 +195,7 @@ public:
   }
   this_t& operator=(const this_t& other) {
     // TODO: skip freeing memory and reuse it when it has enough amount of memory
-    this->~global_vector();
+    destroy();
     // should we copy options?
     opts_ = other.options();
     initialize_from_iter(
@@ -218,7 +213,7 @@ public:
     other.begin_ = other.end_ = other.reserved_end_ = nullptr;
   }
   this_t& operator=(this_t&& other) noexcept {
-    this->~global_vector();
+    destroy();
     opts_         = other.opts_;
     begin_        = other.begin_;
     end_          = other.end_;
@@ -366,6 +361,13 @@ public:
   }
 
 private:
+  void destroy() {
+    if (begin() != nullptr) {
+      destruct_elems(begin(), end());
+      free_mem(begin(), capacity());
+    }
+  }
+
   void check_range(size_type i) const {
     if (i >= size()) {
       std::stringstream ss;

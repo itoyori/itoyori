@@ -328,22 +328,15 @@ public:
     wireup(comm);
   }
 
-  ~mpi_win_manager() {
-    if (win_ != MPI_WIN_NULL) {
-      MPI_Win_unlock_all(win_);
-      MPI_Win_free(&win_);
-      // TODO: free baseptr_ when ITYR_RMA_USE_MPI_WIN_ALLOCATE=false and the user
-      // did not provide a buffer (or remove the option)
-    }
-  }
+  ~mpi_win_manager() { destroy(); }
 
   mpi_win_manager(const mpi_win_manager&) = delete;
   mpi_win_manager& operator=(const mpi_win_manager&) = delete;
 
   mpi_win_manager(mpi_win_manager&& wm) noexcept : win_(wm.win_) { wm.win_ = MPI_WIN_NULL; }
   mpi_win_manager& operator=(mpi_win_manager&& wm) noexcept {
-    this->~mpi_win_manager();
-    this->win_ = wm.win_;
+    destroy();
+    win_ = wm.win_;
     wm.win_ = MPI_WIN_NULL;
     return *this;
   }
@@ -352,6 +345,15 @@ public:
   void* baseptr() const { return baseptr_; }
 
 private:
+  void destroy() {
+    if (win_ != MPI_WIN_NULL) {
+      MPI_Win_unlock_all(win_);
+      MPI_Win_free(&win_);
+      // TODO: free baseptr_ when ITYR_RMA_USE_MPI_WIN_ALLOCATE=false and the user
+      // did not provide a buffer (or remove the option)
+    }
+  }
+
   void wireup(MPI_Comm comm) {
     static std::once_flag flag;
     std::call_once(flag, [&]() {

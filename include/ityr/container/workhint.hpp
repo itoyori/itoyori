@@ -25,11 +25,7 @@ public:
     ITYR_CHECK(common::is_pow2(n_leaves));
   }
 
-  ~workhint_range() {
-    if (bin_tree_) {
-      mem_free(bin_tree_);
-    }
-  }
+  ~workhint_range() { destroy(); }
 
   workhint_range(const workhint_range&) = delete;
   workhint_range& operator=(const workhint_range&) = delete;
@@ -39,7 +35,7 @@ public:
     r.bin_tree_ = nullptr;
   }
   workhint_range& operator=(workhint_range&& r) {
-    this->~workhint_range();
+    destroy();
     n_leaves_ = r.n_leaves_;
     bin_tree_ = r.bin_tree_;
     r.bin_tree_ = nullptr;
@@ -55,6 +51,12 @@ public:
   }
 
 private:
+  void destroy() {
+    if (bin_tree_) {
+      mem_free(bin_tree_);
+    }
+  }
+
   ori::global_ptr<bin_tree_node> mem_alloc(std::size_t size) {
     if (ito::is_spmd()) {
       return ori::malloc_coll<bin_tree_node>(size);

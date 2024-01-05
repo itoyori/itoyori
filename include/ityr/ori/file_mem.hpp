@@ -17,11 +17,7 @@ public:
     : fd_(file_open(fpath)),
       size_(file_size(fd_)) {}
 
-  ~file_mem() {
-    if (fd_ != -1) {
-      file_close(fd_);
-    }
-  }
+  ~file_mem() { destroy(); }
 
   file_mem(const file_mem&) = delete;
   file_mem& operator=(const file_mem&) = delete;
@@ -29,7 +25,7 @@ public:
   file_mem(file_mem&& fm)
     : fd_(fm.fd_), size_(fm.size_) { fm.fd_ = -1; }
   file_mem& operator=(file_mem&& fm) {
-    this->~file_mem();
+    destroy();
     fd_    = fm.fd_;
     size_  = fm.size_;
     fm.fd_ = -1;
@@ -52,6 +48,12 @@ public:
   }
 
 private:
+  void destroy() {
+    if (fd_ != -1) {
+      file_close(fd_);
+    }
+  }
+
   static int file_open(const std::string& fpath) {
     int fd = open(fpath.c_str(), O_RDONLY);
     if (fd == -1) {

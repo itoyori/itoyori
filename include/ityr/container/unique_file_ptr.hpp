@@ -44,7 +44,7 @@ public:
 
   unique_file_ptr(std::nullptr_t) noexcept {}
   unique_file_ptr& operator=(std::nullptr_t) noexcept {
-    this->~unique_file_ptr();
+    destroy();
     ptr_ = nullptr;
     return *this;
   }
@@ -52,7 +52,7 @@ public:
   unique_file_ptr(unique_file_ptr&& ufp) noexcept
     : ptr_(ufp.ptr_) { ufp.ptr_ = nullptr; }
   unique_file_ptr& operator=(unique_file_ptr&& ufp) noexcept {
-    this->~unique_file_ptr();
+    destroy();
     ptr_ = ufp.ptr_;
     ufp.ptr_ = nullptr;
     return *this;
@@ -63,17 +63,13 @@ public:
     : ptr_(ufp.ptr_) { ufp.ptr_ = nullptr; }
   template <typename U>
   unique_file_ptr& operator=(unique_file_ptr<U>&& ufp) noexcept {
-    this->~unique_file_ptr();
+    destroy();
     ptr_ = ufp.ptr_;
     ufp.ptr_ = nullptr;
     return *this;
   }
 
-  ~unique_file_ptr() {
-    if (ptr_) {
-      free_coll(ptr_);
-    }
-  }
+  ~unique_file_ptr() { destroy(); }
 
   explicit operator bool() const noexcept {
     return ptr_;
@@ -114,6 +110,12 @@ public:
   }
 
 private:
+  void destroy() {
+    if (ptr_) {
+      free_coll(ptr_);
+    }
+  }
+
   static void* alloc_coll(const std::string& fpath) {
     if (ito::is_spmd()) {
       return ori::file_mem_alloc_coll(fpath);

@@ -29,12 +29,7 @@ public:
         bytes_(bytes),
         stadds_(init_stadds()) {}
 
-    ~win() {
-      if (stadds_.size() == topology::n_ranks()) {
-        mpi_barrier(topology::mpicomm());
-        utofu_dereg_mem(vcq_hdl_, my_stadd(), 0);
-      }
-    }
+    ~win() { destroy(); }
 
     win(const win&) = delete;
     win& operator=(const win&) = delete;
@@ -43,7 +38,7 @@ public:
       w.stadds_ = {};
     }
     win& operator=(win&& w) {
-      this->~win();
+      destroy();
       vcq_hdl_  = w.vcq_hdl_;
       baseptr_  = w.baseptr_;
       bytes_    = w.bytes_;
@@ -69,6 +64,13 @@ public:
     }
 
   private:
+    void destroy() {
+      if (stadds_.size() == topology::n_ranks()) {
+        mpi_barrier(topology::mpicomm());
+        utofu_dereg_mem(vcq_hdl_, my_stadd(), 0);
+      }
+    }
+
     std::vector<utofu_stadd_t> init_stadds() {
       utofu_stadd_t my_stadd;
       int r = utofu_reg_mem(vcq_hdl_, baseptr_, bytes_, 0, &my_stadd);
