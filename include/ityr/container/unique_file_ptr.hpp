@@ -34,8 +34,8 @@ public:
 
   constexpr unique_file_ptr() noexcept {}
 
-  explicit unique_file_ptr(const std::string& fpath)
-    : ptr_(reinterpret_cast<pointer>(alloc_coll(fpath))) {
+  explicit unique_file_ptr(const std::string& fpath, bool mlock = false)
+    : ptr_(reinterpret_cast<pointer>(alloc_coll(fpath, mlock))) {
     ITYR_CHECK(ori::file_mem_get(ptr_).size() % sizeof(T) == 0);
   }
 
@@ -116,9 +116,9 @@ private:
     }
   }
 
-  static void* alloc_coll(const std::string& fpath) {
+  static void* alloc_coll(const std::string& fpath, bool mlock) {
     if (ito::is_spmd()) {
-      return ori::file_mem_alloc_coll(fpath);
+      return ori::file_mem_alloc_coll(fpath, mlock);
     } else if (ito::is_root()) {
       // FIXME: ugly hack to pass heap-allocated string to other processes
       constexpr std::size_t max_chars = 256;
@@ -128,8 +128,8 @@ private:
       std::array<char, max_chars> buf;
       std::strncpy(buf.data(), fpath.c_str(), max_chars - 1);
       buf.back() = '\0';
-      return ito::coll_exec([buf] {
-        return ori::file_mem_alloc_coll(buf.data());
+      return ito::coll_exec([=] {
+        return ori::file_mem_alloc_coll(buf.data(), mlock);
       });
     } else {
       common::die("Collective operations for ityr::global_vector must be executed on the root thread or SPMD region.");
@@ -257,8 +257,8 @@ operator<<(std::basic_ostream<CharT, Traits>& ostream, const unique_file_ptr<T>&
  * @see `ityr::unique_file_ptr`
  */
 template <typename T>
-inline unique_file_ptr<T> make_unique_file(const std::string& fpath) {
-  return unique_file_ptr<T>(fpath);
+inline unique_file_ptr<T> make_unique_file(const std::string& fpath, bool mlock = false) {
+  return unique_file_ptr<T>(fpath, mlock);
 }
 
 ITYR_TEST_CASE("[ityr::unique_file_ptr] unique_file_ptr") {
