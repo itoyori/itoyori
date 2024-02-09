@@ -1,0 +1,72 @@
+name: Setup MPI
+inputs:
+  mpi:
+    required: true
+  compiler:
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set compiler envs
+      shell: bash
+      run: |
+        echo "CC=${{ inputs.compiler }}" >> "$GITHUB_ENV"
+        echo "CXX=$(echo ${{ inputs.compiler }} | sed -e 's/gcc/g++/' -e 's/clang/clang++/')" >> "$GITHUB_ENV"
+    - name: Cache MPI installations
+      id: cache-mpi
+      uses: actions/cache@v4
+      with:
+        path: ~/.local
+        key: mpi-build-${{ runner.os }}-${{ inputs.compiler }}-${{ inputs.mpi }}
+    - if: ${{ inputs.mpi == 'openmpi' && steps.cache-mpi.outputs.cache-hit != 'true' }}
+      name: Build and install UCX
+      env:
+        UCX_VERSION: 1.15.0
+      shell: bash
+      run: |
+        echo "Installing UCX v${UCX_VERSION}..."
+        wget -q https://github.com/openucx/ucx/releases/download/v${UCX_VERSION}/ucx-${UCX_VERSION}.tar.gz
+        tar xf ucx-${UCX_VERSION}.tar.gz
+        cd ucx-${UCX_VERSION}/
+        ./configure CFLAGS="-Wno-error" --prefix=${HOME}/.local --without-go
+        make -j$(nproc)
+        make install
+    - if: ${{ inputs.mpi == 'openmpi' && steps.cache-mpi.outputs.cache-hit != 'true' }}
+      name: Build and install Open MPI
+      env:
+        OPENMPI_VERSION: 5.0.1
+      shell: bash
+      run: |
+        echo "Installing Open MPI v${OPENMPI_VERSION}..."
+        wget -q https://download.open-mpi.org/release/open-mpi/v$(echo $OPENMPI_VERSION | sed 's/\.[0-9]*$//')/openmpi-${OPENMPI_VERSION}.tar.bz2
+        tar xf openmpi-${OPENMPI_VERSION}.tar.bz2
+        cd openmpi-${OPENMPI_VERSION}
+        ./configure --prefix=${HOME}/.local --with-ucx=${HOME}/.local --disable-man-pages --with-pmix=internal --with-hwloc=internal --with-libevent=internal
+        make -j$(nproc)
+        make install
+    - if: ${{ inputs.mpi == 'mpich' && steps.cache-mpi.outputs.cache-hit != 'true' }}
+      name: Build and install MPICH
+      env:
+        MPICH_VERSION: 4.1.2
+      shell: bash
+      run: |
+        echo "Installing MPICH v${MPICH_VERSION}..."
+        wget -q https://www.mpich.org/static/downloads/${MPICH_VERSION}/mpich-${MPICH_VERSION}.tar.gz
+        tar xf mpich-${MPICH_VERSION}.tar.gz
+        cd mpich-${MPICH_VERSION}
+        ./configure --prefix=${HOME}/.local
+        make -j$(nproc)
+        make install
+    - if: ${{ inputs.mpi == 'openmpi' }}
+      name: Set environment variables for Open MPI
+      shell: bash
+      run: |
+          echo "OMPI_MCA_prte_set_default_slots=hwthreads" >> "$GITHUB_ENV"
+          echo "OMPI_MCA_osc=ucx" >> "$GITHUB_ENV"
+          echo "OMPI_MCA_pml_ucx_tls=any" >> "$GITHUB_ENV"
+          echo "OMPI_MCA_pml_ucx_devices=any" >> "$GITHUB_ENV"
+    - if: ${{ inputs.mpi == 'mpich' }}
+      name: Set environment variables for MPICH
+      shell: bash
+      run: |
+          echo "MPICH_ASYNC_PROGRESS=1" >> "$GITHUB_ENV"

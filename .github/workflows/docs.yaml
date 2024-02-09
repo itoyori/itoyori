@@ -23,6 +23,7 @@ concurrency:
 jobs:
   # Build job
   build:
+    if: github.repository == 'itoyori/itoyori.github.io'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -46,6 +47,7 @@ jobs:
 
   # Deployment job
   deploy:
+    if: github.repository == 'itoyori/itoyori.github.io'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

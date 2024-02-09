@@ -1,0 +1,60 @@
+name: Test Itoyori
+on: [push]
+jobs:
+  mpi:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang-15]
+        # TODO: fix deadlock with Open MPI
+        # mpi: [openmpi, mpich]
+        mpi: [mpich]
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup MPI
+        uses: ./.github/actions/setup-mpi
+        with:
+          compiler: ${{ matrix.compiler }}
+          mpi: ${{ matrix.mpi }}
+      - name: Print environments
+        run: |
+          echo "Compiler : ${{ matrix.compiler }}"
+          echo "MPI      : ${{ matrix.mpi }}"
+          echo "nproc    : $(nproc)"
+          echo "hostname : $(hostname)"
+          echo
+          echo "$ mpicc --version"
+          mpicc --version
+          echo
+          echo "$ mpicxx --version"
+          mpicxx --version
+          echo
+          echo "$ mpiexec --version"
+          mpiexec --version
+      - name: Build
+        run: |
+          cmake .
+          make -j$(nproc)
+      - name: Test
+        timeout-minutes: 10
+        run: |
+          make test
+      - name: Run examples
+        timeout-minutes: 10
+        run: |
+          export ITYR_ENABLE_SHARED_MEMORY=1
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/fib.out -n 28
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/nqueens.out -n 10
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/cilksort.out -n 1000000
+          export ITYR_ENABLE_SHARED_MEMORY=0
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/fib.out -n 28
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/nqueens.out -n 10
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/cilksort.out -n 1000000
+          export ITYR_ENABLE_SHARED_MEMORY=1
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/fib_prof_stats.out -n 28
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/nqueens_prof_stats.out -n 10
+          mpirun -n $(nproc) setarch $(uname -m) --addr-no-randomize ./examples/cilksort_prof_stats.out -n 1000000
