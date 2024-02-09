@@ -19,13 +19,13 @@ struct prof_event_sched_steal : public common::prof_event_target_base {
   }
 
   void interval_end(common::profiler::mode_trace,
-                    common::wallclock::wallclock_t                    t,
-                    common::profiler::mode_trace::interval_begin_data ibd,
-                    bool                                              success) {
+                    common::wallclock::wallclock_t                    t [[maybe_unused]],
+                    common::profiler::mode_trace::interval_begin_data ibd [[maybe_unused]],
+                    bool                                              success [[maybe_unused]]) {
     MLOG_END(&state_.trace_md, 0, ibd, trace_decoder_base, this, t, success);
   }
 
-  void* trace_decoder(FILE* stream, void* buf0, void* buf1) override {
+  void* trace_decoder(FILE* stream, void* buf0 [[maybe_unused]], void* buf1) override {
     auto t0          = MLOG_READ_ARG(&buf0, common::wallclock::wallclock_t);
     auto target_rank = MLOG_READ_ARG(&buf0, common::topology::rank_t);
     auto t1          = MLOG_READ_ARG(&buf1, common::wallclock::wallclock_t);

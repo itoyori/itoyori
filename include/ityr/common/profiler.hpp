@@ -68,12 +68,12 @@ public:
     do_acc(t - ibd);
   }
 
-  mode_trace::interval_begin_data interval_begin(mode_trace, wallclock::wallclock_t t) {
+  mode_trace::interval_begin_data interval_begin(mode_trace, wallclock::wallclock_t t [[maybe_unused]]) {
     auto ibd = MLOG_BEGIN(&state_.trace_md, 0, t);
     return ibd;
   }
 
-  void interval_end(mode_trace, wallclock::wallclock_t t, mode_trace::interval_begin_data ibd) {
+  void interval_end(mode_trace, wallclock::wallclock_t t [[maybe_unused]], mode_trace::interval_begin_data ibd [[maybe_unused]]) {
     MLOG_END(&state_.trace_md, 0, ibd, trace_decoder_base, this, t);
   }
 
@@ -82,7 +82,7 @@ public:
     return e->trace_decoder(stream, buf0, buf1);
   }
 
-  virtual void* trace_decoder(FILE* stream, void* buf0, void* buf1) {
+  virtual void* trace_decoder(FILE* stream, void* buf0 [[maybe_unused]], void* buf1) {
     auto t0 = MLOG_READ_ARG(&buf0, wallclock::wallclock_t);
     auto t1 = MLOG_READ_ARG(&buf1, wallclock::wallclock_t);
 

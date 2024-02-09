@@ -12,18 +12,18 @@ struct prof_event_target_base : public profiler::event {
 
   auto interval_begin(profiler::mode_stats,
                       wallclock::wallclock_t t,
-                      topology::rank_t       target_rank [[maybe_unused]]) {
+                      topology::rank_t) {
     return t;
   }
 
   auto interval_begin(profiler::mode_trace,
-                      wallclock::wallclock_t t,
-                      topology::rank_t       target_rank) {
+                      wallclock::wallclock_t t [[maybe_unused]],
+                      topology::rank_t       target_rank [[maybe_unused]]) {
     auto ibd = MLOG_BEGIN(&state_.trace_md, 0, t, target_rank);
     return ibd;
   }
 
-  void* trace_decoder(FILE* stream, void* buf0, void* buf1) override {
+  void* trace_decoder(FILE* stream, void* buf0 [[maybe_unused]], void* buf1) override {
     auto t0          = MLOG_READ_ARG(&buf0, wallclock::wallclock_t);
     auto target_rank = MLOG_READ_ARG(&buf0, topology::rank_t);
     auto t1          = MLOG_READ_ARG(&buf1, wallclock::wallclock_t);
