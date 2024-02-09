@@ -5,6 +5,7 @@ using result_t = uint64_t;
 int  n_input       = 20;
 int  n_repeats     = 10;
 bool verify_result = true;
+bool print_options = false;
 
 result_t fib_fast(int n) {
   result_t px[2] = {1, 1};
@@ -78,7 +79,7 @@ int main(int argc, char** argv) {
   ityr::init();
 
   int opt;
-  while ((opt = getopt(argc, argv, "n:r:v:h")) != EOF) {
+  while ((opt = getopt(argc, argv, "n:r:v:ph")) != EOF) {
     switch (opt) {
       case 'n':
         n_input = atoi(optarg);
@@ -88,6 +89,9 @@ int main(int argc, char** argv) {
         break;
       case 'v':
         verify_result = atoi(optarg);
+        break;
+      case 'p':
+        print_options = true;
         break;
       case 'h':
       default:
@@ -102,15 +106,17 @@ int main(int argc, char** argv) {
            "# of processes:               %d\n"
            "N:                            %d\n"
            "# of repeats:                 %d\n"
-           "Verify result:                %d\n"
-           "-------------------------------------------------------------\n",
+           "Verify result:                %d\n",
            ityr::n_ranks(), n_input, n_repeats, verify_result);
 
-    printf("[Compile Options]\n");
-    ityr::print_compile_options();
-    printf("-------------------------------------------------------------\n");
-    printf("[Runtime Options]\n");
-    ityr::print_runtime_options();
+    if (print_options) {
+      printf("-------------------------------------------------------------\n");
+      printf("[Compile Options]\n");
+      ityr::print_compile_options();
+      printf("-------------------------------------------------------------\n");
+      printf("[Runtime Options]\n");
+      ityr::print_runtime_options();
+    }
     printf("=============================================================\n\n");
     fflush(stdout);
   }

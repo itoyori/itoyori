@@ -64,6 +64,7 @@ std::size_t n_input       = std::size_t(1) * 1024 * 1024;
 int         n_repeats     = 10;
 std::size_t cutoff_count  = std::size_t(4) * 1024;
 bool        verify_result = true;
+bool        print_options = false;
 
 template <typename T>
 auto divide(const ityr::global_span<T>& s, typename ityr::global_span<T>::size_type at) {
@@ -246,7 +247,7 @@ int main(int argc, char** argv) {
   ityr::init();
 
   int opt;
-  while ((opt = getopt(argc, argv, "n:r:c:m:v:h")) != EOF) {
+  while ((opt = getopt(argc, argv, "n:r:c:m:v:ph")) != EOF) {
     switch (opt) {
       case 'n':
         n_input = atoll(optarg);
@@ -259,6 +260,9 @@ int main(int argc, char** argv) {
         break;
       case 'v':
         verify_result = atoi(optarg);
+        break;
+      case 'p':
+        print_options = true;
         break;
       case 'h':
       default:
@@ -275,16 +279,18 @@ int main(int argc, char** argv) {
            "N:                            %ld\n"
            "# of repeats:                 %d\n"
            "Cutoff count:                 %ld\n"
-           "Verify result:                %d\n"
-           "-------------------------------------------------------------\n",
+           "Verify result:                %d\n",
            ityr::n_ranks(), sizeof(elem_t), n_input, n_repeats,
            cutoff_count, verify_result);
 
-    printf("[Compile Options]\n");
-    ityr::print_compile_options();
-    printf("-------------------------------------------------------------\n");
-    printf("[Runtime Options]\n");
-    ityr::print_runtime_options();
+    if (print_options) {
+      printf("-------------------------------------------------------------\n");
+      printf("[Compile Options]\n");
+      ityr::print_compile_options();
+      printf("-------------------------------------------------------------\n");
+      printf("[Runtime Options]\n");
+      ityr::print_runtime_options();
+    }
     printf("=============================================================\n\n");
     fflush(stdout);
   }
