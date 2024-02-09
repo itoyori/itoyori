@@ -50,7 +50,7 @@ public:
     utofu_stadd_t stadd(topology::rank_t target_rank) const {
       ITYR_CHECK(0 <= target_rank);
       ITYR_CHECK(target_rank < topology::n_ranks());
-      ITYR_CHECK(stadds_.size() == topology::n_ranks());
+      ITYR_CHECK(static_cast<int>(stadds_.size()) == topology::n_ranks());
       return stadds_[target_rank];
     }
 
@@ -65,7 +65,7 @@ public:
 
   private:
     void destroy() {
-      if (stadds_.size() == topology::n_ranks()) {
+      if (static_cast<int>(stadds_.size()) == topology::n_ranks()) {
         mpi_barrier(topology::mpicomm());
         utofu_dereg_mem(vcq_hdl_, my_stadd(), 0);
       }

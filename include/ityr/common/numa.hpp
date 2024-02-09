@@ -79,7 +79,7 @@ class node_bitmask {
 public:
   node_bitmask() {}
   void* get() const { return nullptr; }
-  void setbit(node_t node) {}
+  void setbit(node_t) {}
   void clear() {}
 };
 
